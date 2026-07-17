@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+# Ignore every .env* by default and only allowlist the committed templates —
+# safer than listing exact filenames, catches .env.production etc. too.
+.env*
+!.env.example
+!.env.production.example
+*.log
+.turbo/
+apps/api/generated/
+packages/shared/dist/
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep
+.DS_Store

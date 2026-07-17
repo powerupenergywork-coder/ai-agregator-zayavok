@@ -1,0 +1,346 @@
+// Data model for the AI order aggregator MVP.
+// Order status string values must stay in sync with
+// packages/shared/src/statuses.ts (ORDER_STATUSES).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity ----------
+
+model User {
+  id               String              @id @default(uuid())
+  phone            String              @unique
+  name             String?
+  // Which channel gets order/offer notifications — set to WHATSAPP the first
+  // time someone reaches us through the WhatsApp bot, defaults to SMS for
+  // web-only users.
+  preferredChannel NotificationChannel @default(SMS)
+  createdAt        DateTime            @default(now())
+  clientProfile    ClientProfile?
+  supplierProfile  SupplierProfile?
+  otpCodes         OtpCode[]
+  trustedDevices   TrustedDevice[]
+}
+
+// One row per WhatsApp chat — WhatsApp has no browser-style session, so this
+// is what remembers "which order/onboarding step is this phone number
+// mid-way through" between messages.
+model WhatsAppSession {
+  id             String   @id @default(uuid())
+  chatId         String   @unique // Green API chatId, e.g. "77011234567@c.us"
+  phone          String
+  flow           String   @default("client_order") // "client_order" today; "supplier_onboarding" etc. later
+  currentOrderId String?
+  stateData      Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([phone])
+}
+
+model TrustedDevice {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  deviceId   String
+  verifiedAt DateTime @default(now())
+  expiresAt  DateTime
+
+  @@unique([userId, deviceId])
+}
+
+model OtpCode {
+  id         String     @id @default(uuid())
+  phone      String
+  code       String
+  purpose    OtpPurpose
+  expiresAt  DateTime
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  ipAddress  String?
+  deviceId   String?
+  createdAt  DateTime   @default(now())
+  User       User?      @relation(fields: [userId], references: [id])
+  userId     String?
+
+  @@index([phone, purpose])
+}
+
+enum OtpPurpose {
+  CLIENT_LOGIN
+  SUPPLIER_LOGIN
+}
+
+// ---------- Client ----------
+
+model ClientProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  orders    Order[]
+}
+
+// ---------- Supplier ----------
+
+model SupplierProfile {
+  id                         String                 @id @default(uuid())
+  userId                     String                 @unique
+  user                       User                   @relation(fields: [userId], references: [id])
+  companyName                String?
+  rating                     Float                  @default(0)
+  completedOrders            Int                    @default(0)
+  cancelledOrders            Int                    @default(0)
+  declinedAfterSelected      Int                    @default(0)
+  responseSpeedAvgSeconds    Int?
+  activityStatus             SupplierActivityStatus @default(ACTIVE)
+  isBlocked                  Boolean                @default(false)
+  // Self-registered via WhatsApp without an operator setting it up — surfaced
+  // in the admin panel as a moderation queue (ТЗ п.25's manual-blocking spirit
+  // applied to onboarding, not just after-the-fact abuse).
+  needsReview                Boolean                @default(false)
+  workingHoursStart          String?
+  workingHoursEnd            String?
+  acceptsUrgent              Boolean                @default(true)
+  // First 10 order notifications each calendar month are free; beyond that,
+  // sendWave() skips this supplier unless subscription.status is ACTIVE.
+  // See billing/billing.service.ts.
+  notificationsUsedThisMonth Int                    @default(0)
+  quotaResetAt               DateTime               @default(now())
+  lastQuotaReminderAt        DateTime?
+  createdAt                  DateTime               @default(now())
+  categories                 SupplierCategory[]
+  serviceAreas               ServiceArea[]
+  notifications              NotificationLog[]
+  subscription               SupplierSubscription?
+}
+
+model SupplierSubscription {
+  id                 String          @id @default(uuid())
+  supplierId         String          @unique
+  supplier           SupplierProfile @relation(fields: [supplierId], references: [id])
+  status             String          @default("NONE") // NONE | ACTIVE | EXPIRED
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  paymentProvider    String?
+  paymentReference   String?         @unique
+  autoRenew          Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+}
+
+enum SupplierActivityStatus {
+  ACTIVE
+  PAUSED
+  BLOCKED
+}
+
+model SupplierCategory {
+  id         String          @id @default(uuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id])
+  categoryId String
+  category   Category        @relation(fields: [categoryId], references: [id])
+
+  @@unique([supplierId, categoryId])
+}
+
+model ServiceArea {
+  id         String          @id @default(uuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id])
+  city       String
+  district   String?
+
+  @@index([city, district])
+}
+
+// ---------- Categories / templates ----------
+
+model Category {
+  id                 String             @id @default(uuid())
+  slug               String             @unique
+  name               String
+  icon               String?
+  examples           Json
+  fields             Json
+  isActive           Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  orders             Order[]
+  supplierCategories SupplierCategory[]
+}
+
+// ---------- Orders ----------
+
+model Order {
+  id                          String             @id @default(uuid())
+  number                      Int                @unique @default(autoincrement())
+  // Nullable until publish: drafts are anonymous per ТЗ п.3.3 ("не должно
+  // быть обязательной регистрации") — the order is claimed by a ClientProfile
+  // only once the phone is confirmed at publish time.
+  clientId                    String?
+  client                      ClientProfile?     @relation(fields: [clientId], references: [id])
+  categoryId                  String?
+  category                    Category?          @relation(fields: [categoryId], references: [id])
+  status                      String             @default("DRAFT")
+  urgent                      Boolean            @default(false)
+  fieldsData                  Json               @default("{}")
+  progressPercent             Int                @default(0)
+  addressFrom                 String?
+  addressTo                   String?
+  city                        String?
+  district                    String?
+  dateNeeded                  DateTime?
+  timeWindow                  String?
+  description                 String?
+  publicToken                 String             @unique @default(uuid())
+  publishedAt                 DateTime?
+  completedAt                 DateTime?
+  cancelledAt                 DateTime?
+  cancelReason                String?
+  clientRatingPositive        Boolean?
+  clientRatingComment         String?
+  repeatOfOrderId             String?
+  repeatOfOrder               Order?             @relation("RepeatOrder", fields: [repeatOfOrderId], references: [id])
+  repeats                     Order[]            @relation("RepeatOrder")
+  createdAt                   DateTime           @default(now())
+  updatedAt                   DateTime           @updatedAt
+  photos                      Photo[]
+  chatMessages                ChatMessage[]
+  statusHistory               OrderStatusEvent[]
+  dispatchWaves               DispatchWave[]
+
+  @@index([status])
+  @@index([categoryId, city, district])
+}
+
+model ChatMessage {
+  id        String          @id @default(uuid())
+  orderId   String
+  order     Order           @relation(fields: [orderId], references: [id])
+  role      ChatMessageRole
+  content   String
+  createdAt DateTime        @default(now())
+}
+
+enum ChatMessageRole {
+  USER
+  ASSISTANT
+}
+
+model Photo {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id])
+  url       String
+  createdAt DateTime @default(now())
+}
+
+model OrderStatusEvent {
+  id         String   @id @default(uuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id])
+  fromStatus String?
+  toStatus   String
+  actor      String?
+  note       String?
+  createdAt  DateTime @default(now())
+}
+
+// Records which suppliers got notified about an order and when — so a manual
+// admin redispatch only reaches new suppliers, not ones already called.
+model DispatchWave {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  waveNumber  Int
+  supplierIds Json
+  sentAt      DateTime @default(now())
+}
+
+// ---------- Notifications / analytics / audit ----------
+
+model NotificationLog {
+  id             String              @id @default(uuid())
+  channel        NotificationChannel
+  templateKey    String
+  recipientPhone String?
+  supplierId     String?
+  supplier       SupplierProfile?    @relation(fields: [supplierId], references: [id])
+  orderId        String?
+  payload        Json
+  renderedText   String
+  status         NotificationStatus  @default(SENT)
+  errorMessage   String?
+  createdAt      DateTime            @default(now())
+
+  @@index([orderId])
+}
+
+enum NotificationChannel {
+  SMS
+  WHATSAPP
+  TELEGRAM
+  EMAIL
+  PUSH
+  CONSOLE
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  eventType String
+  userId    String?
+  orderId   String?
+  channel   String?
+  device    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([eventType, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorType  String
+  actorId    String?
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+}
+
+// ---------- Admin ----------
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(OPERATOR)
+  name         String?
+  createdAt    DateTime  @default(now())
+}
+
+enum AdminRole {
+  ADMIN
+  OPERATOR
+}
+
+model DispatchSettings {
+  id        String   @id @default(uuid())
+  // Max suppliers notified per broadcast (per publish or manual redispatch).
+  waveSize  Int      @default(15)
+  updatedAt DateTime @updatedAt
+}
