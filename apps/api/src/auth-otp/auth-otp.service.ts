@@ -85,15 +85,34 @@ export class AuthOtpService {
     });
 
     // WhatsApp first — cheaper and the channel clients already expect, per
-    // product decision. Falls back to SMS if delivery fails (e.g. this
-    // number has no WhatsApp). Note the trade-off: WebOTP auto-fill on the
-    // web form only works for real SMS — a WhatsApp-delivered code has to be
-    // typed in by hand, browsers have no way to read WhatsApp messages.
+    // product decision. Falls back to SMS if delivery fails, or if the
+    // number simply has no WhatsApp account — sendText() doesn't error for
+    // that case (the platform just silently never delivers), so it has to be
+    // checked explicitly instead of relying on a thrown exception. Note the
+    // trade-off: WebOTP auto-fill on the web form only works for real SMS —
+    // a WhatsApp-delivered code has to be typed in by hand, browsers have no
+    // way to read WhatsApp messages.
     let channel: "whatsapp" | "sms" = "whatsapp";
+    let hasWhatsapp = true;
     try {
-      await this.whatsapp.sendText(phone, `Ваш код подтверждения: ${code}`);
+      hasWhatsapp = await this.whatsapp.checkExists(phone);
     } catch (err) {
-      this.logger.warn(`WhatsApp OTP delivery failed for ${phone}, falling back to SMS: ${(err as Error).message}`);
+      // Couldn't determine either way (e.g. provider network error) —
+      // assume yes and let the send attempt below be the real signal, same
+      // as before this check existed.
+      this.logger.warn(`WhatsApp checkExists failed for ${phone}, assuming it has WhatsApp: ${(err as Error).message}`);
+    }
+
+    if (hasWhatsapp) {
+      try {
+        await this.whatsapp.sendText(phone, `Ваш код подтверждения: ${code}`);
+      } catch (err) {
+        this.logger.warn(`WhatsApp OTP delivery failed for ${phone}, falling back to SMS: ${(err as Error).message}`);
+        hasWhatsapp = false;
+      }
+    }
+
+    if (!hasWhatsapp) {
       channel = "sms";
       await this.sms.send(phone, `Ваш код подтверждения: ${code}`);
     }

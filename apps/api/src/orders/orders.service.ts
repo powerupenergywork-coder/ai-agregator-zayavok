@@ -18,6 +18,7 @@ import { CategoriesService } from "../categories/categories.service";
 import { AI_PROVIDER, AiProvider, AiUnavailableError, CLASSIFY_CONFIDENCE_THRESHOLD } from "../ai/ai.types";
 import {
   calculateProgressPercent,
+  isValidFieldValue,
   missingRequiredFields,
   nextQuestionFields,
 } from "../ai/field-completion.util";
@@ -131,8 +132,12 @@ export class OrdersService {
     if (!order.categoryId) throw new BadRequestException("Сначала определите категорию заявки");
     const category = await this.categories.findByIdOrThrow(order.categoryId);
     const fields = category.fields as unknown as CategoryField[];
-    if (!fields.some((f) => f.key === key)) {
+    const field = fields.find((f) => f.key === key);
+    if (!field) {
       throw new BadRequestException(`Неизвестное поле: ${key}`);
+    }
+    if (!isValidFieldValue(field, value)) {
+      throw new BadRequestException(`Некорректное значение для поля «${field.label}»`);
     }
     const knownFields = { ...((order.fieldsData ?? {}) as Record<string, unknown>), [key]: value };
     return this.applyFieldUpdate(orderId, category, knownFields);
@@ -169,14 +174,24 @@ export class OrdersService {
     mergedFields: Record<string, unknown>,
   ): Promise<ChatTurnResponse> {
     const fields = category.fields as unknown as CategoryField[];
-    const progress = calculateProgressPercent(fields, mergedFields);
-    const missing = nextQuestionFields(fields, mergedFields);
-    const derived = deriveDenormalizedColumns(fields, mergedFields);
+    // Defense in depth against AI extraction (chat/pickCategory path): an
+    // LLM isn't guaranteed to return a clean number just because the prompt
+    // asked for one — drop anything that doesn't match its field's declared
+    // type instead of saving garbage, so the question just gets asked again.
+    const validatedFields = Object.fromEntries(
+      Object.entries(mergedFields).filter(([key, value]) => {
+        const field = fields.find((f) => f.key === key);
+        return !field || isValidFieldValue(field, value);
+      }),
+    );
+    const progress = calculateProgressPercent(fields, validatedFields);
+    const missing = nextQuestionFields(fields, validatedFields);
+    const derived = deriveDenormalizedColumns(fields, validatedFields);
 
     await this.prisma.order.update({
       where: { id: orderId },
       data: {
-        fieldsData: mergedFields as any,
+        fieldsData: validatedFields as any,
         progressPercent: progress,
         addressFrom: derived.addressFrom,
         addressTo: derived.addressTo,
@@ -232,18 +247,25 @@ export class OrdersService {
     });
     await this.analytics.track("order_published", { orderId, userId: user.sub });
     await this.matchingQueue.add("start", { orderId });
-    // Suppliers now contact the client directly, so nothing in the system
-    // ever tells us the order is done — we have to proactively ask instead
-    // of waiting for the client to come back and close it themselves.
+    await this.scheduleCompletionCheckins(orderId);
+    this.realtime.emitOrderUpdated(orderId, dto);
+
+    return dto;
+  }
+
+  /** Suppliers now contact the client directly, so nothing in the system
+   * ever tells us the order is done — we have to proactively ask instead of
+   * waiting for the client to come back and close it themselves. Called from
+   * publish() and again from AdminService.redispatch() — a redispatched
+   * order needs its own fresh check-in window, not the original one (which
+   * may have already fired a no-op against the since-changed status). */
+  async scheduleCompletionCheckins(orderId: string) {
     await this.matchingQueue.add("checkin", { orderId }, { delay: env.orderCheckinDelayHours * 3600 * 1000 });
     await this.matchingQueue.add(
       "checkin-escalate",
       { orderId },
       { delay: env.orderCheckinEscalateHours * 3600 * 1000 },
     );
-    this.realtime.emitOrderUpdated(orderId, dto);
-
-    return dto;
   }
 
   async cancel(orderId: string, user: AuthUser, dto: CancelOrderDto) {
@@ -450,7 +472,7 @@ export class OrdersService {
   }
 
   async toDto(orderId: string): Promise<OrderDto> {
-    const order = await this.prisma.order.findUniqueOrThrow({
+    const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
         category: true,
@@ -460,6 +482,7 @@ export class OrdersService {
         dispatchWaves: true,
       },
     });
+    if (!order) throw new NotFoundException("Заявка не найдена");
     const notifiedSuppliersCount = new Set(
       order.dispatchWaves.flatMap((w) => w.supplierIds as string[]),
     ).size;

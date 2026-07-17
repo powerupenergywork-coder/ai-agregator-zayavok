@@ -45,7 +45,17 @@ export class GreenApiProvider implements WhatsAppProvider {
     return Buffer.from(await res.arrayBuffer());
   }
 
-  private async call(method: string, body: Record<string, unknown>): Promise<void> {
+  /** GREEN-API's checkWhatsapp — sendMessage/sendInteractiveButtons don't
+   * fail for a number with no WhatsApp account, they just never deliver, so
+   * this is the only way to get a real signal before committing to the
+   * WhatsApp channel (see AuthOtpService.requestCode). */
+  async checkExists(phone: string): Promise<boolean> {
+    const digits = phoneToChatId(phone).split("@")[0];
+    const result = await this.call("checkWhatsapp", { phoneNumber: Number(digits) });
+    return result?.existsWhatsapp === true;
+  }
+
+  private async call(method: string, body: Record<string, unknown>): Promise<any> {
     const url = `${this.baseUrl}/${method}/${env.greenApiTokenInstance}`;
     const res = await fetch(url, {
       method: "POST",
@@ -57,5 +67,6 @@ export class GreenApiProvider implements WhatsAppProvider {
       this.logger.error(`GREEN-API ${method} failed: ${res.status} ${errorBody}`);
       throw new Error(`GREEN-API ${method} failed: ${res.status}`);
     }
+    return res.json().catch(() => undefined);
   }
 }

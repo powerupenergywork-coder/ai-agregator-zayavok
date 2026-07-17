@@ -18,4 +18,8 @@ export class ConsoleWhatsAppProvider implements WhatsAppProvider {
   async downloadMedia(url: string): Promise<Buffer> {
     throw new Error(`ConsoleWhatsAppProvider cannot download media in dev mode (url: ${url})`);
   }
+
+  async checkExists(): Promise<boolean> {
+    return true;
+  }
 }

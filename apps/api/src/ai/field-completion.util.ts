@@ -1,4 +1,30 @@
-import { CategoryField } from "@ai-zayavki/shared";
+import { CategoryField, UNKNOWN_VALUE_OPTIONS } from "@ai-zayavki/shared";
+
+const UNKNOWN_VALUES = new Set(UNKNOWN_VALUE_OPTIONS.map((o) => o.value));
+
+/** Guards against a value that doesn't match its field's declared type —
+ * reachable both from direct API calls and from AI extraction (an LLM isn't
+ * guaranteed to return a clean number for a "number" field just because the
+ * prompt asked for one). Callers decide what to do with an invalid value:
+ * setField() rejects it outright, chat-driven extraction just drops it so
+ * the question gets asked again. */
+export function isValidFieldValue(field: CategoryField, value: unknown): boolean {
+  if (typeof value === "string" && UNKNOWN_VALUES.has(value)) return true;
+  switch (field.type) {
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "date":
+      return typeof value === "string" && !Number.isNaN(Date.parse(value));
+    case "time":
+      return typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value);
+    case "enum":
+      return typeof value === "string" && (field.options?.some((o) => o.value === value) ?? false);
+    default:
+      return typeof value === "string" && value.trim().length > 0;
+  }
+}
 
 export function isFieldFilled(field: CategoryField, knownFields: Record<string, unknown>): boolean {
   const v = knownFields[field.key];

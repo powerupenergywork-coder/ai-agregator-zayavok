@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import { ORDER_STATUS_LABELS_RU, OrderStatus } from "@ai-zayavki/shared";
+import { CategoryField, ORDER_STATUS_LABELS_RU, OrderStatus } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { OrdersService } from "../orders/orders.service";
+import { deriveDenormalizedColumns } from "../orders/order-derive.util";
 import { AuditLogService } from "../common/audit-log.service";
 import { normalizePhone } from "../common/phone.util";
 import { env } from "../config/env";
@@ -174,13 +175,24 @@ export class AdminService {
     const order = await this.orders.getRawOrThrow(orderId);
     const data: Record<string, unknown> = {};
 
+    let category = order.categoryId
+      ? await this.prisma.category.findUnique({ where: { id: order.categoryId } })
+      : null;
     if (dto.categorySlug) {
-      const category = await this.prisma.category.findUnique({ where: { slug: dto.categorySlug } });
+      category = await this.prisma.category.findUnique({ where: { slug: dto.categorySlug } });
       if (!category) throw new BadRequestException("Категория не найдена");
       data.categoryId = category.id;
     }
+
     if (dto.fieldsData) {
-      data.fieldsData = { ...((order.fieldsData ?? {}) as Record<string, unknown>), ...dto.fieldsData };
+      const mergedFields = { ...((order.fieldsData ?? {}) as Record<string, unknown>), ...dto.fieldsData };
+      data.fieldsData = mergedFields;
+      // Keep addressFrom/city/dateNeeded/timeWindow in sync — matching reads
+      // those plain columns, not fieldsData, so an admin correction here
+      // would otherwise silently keep dispatching against the old city.
+      if (category) {
+        Object.assign(data, deriveDenormalizedColumns(category.fields as unknown as CategoryField[], mergedFields));
+      }
     }
     if (Object.keys(data).length > 0) {
       await this.prisma.order.update({ where: { id: orderId }, data });
@@ -202,6 +214,11 @@ export class AdminService {
     const order = await this.orders.getRawOrThrow(orderId);
     if (order.status === "NEEDS_OPERATOR") {
       await this.orders.transitionStatus(orderId, "PUBLISHED", `operator:${admin.sub}`, "Повторная рассылка");
+      // The original publish()'s check-in/escalate timers already fired a
+      // no-op against this order's since-changed (NEEDS_OPERATOR) status —
+      // reactivating it needs its own fresh window, or it can sit in
+      // PUBLISHED forever with nothing prompting the client to close it.
+      await this.orders.scheduleCompletionCheckins(orderId);
     } else if (order.status !== "PUBLISHED") {
       throw new BadRequestException("Повторная рассылка недоступна в текущем статусе заявки");
     }

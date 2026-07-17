@@ -78,20 +78,22 @@ export class BillingService {
   }
 
   /** True = go ahead and send the notification (and, if this was a free-quota send, count it). */
+  /** Two orders dispatching to the same supplier at nearly the same moment
+   * must not both slip through on the last free slot — the quota check and
+   * the increment have to be one atomic statement, not read-then-write
+   * (same race class as the offer-claim fix elsewhere in this codebase). */
   async checkAndConsumeQuota(supplierId: string): Promise<boolean> {
     const supplier = await this.prisma.supplierProfile.findUniqueOrThrow({
       where: { id: supplierId },
       include: { subscription: true },
     });
     if (this.isSubscriptionActive(supplier.subscription)) return true;
-    if (supplier.notificationsUsedThisMonth < env.freeNotificationsPerMonth) {
-      await this.prisma.supplierProfile.update({
-        where: { id: supplierId },
-        data: { notificationsUsedThisMonth: { increment: 1 } },
-      });
-      return true;
-    }
-    return false;
+
+    const result = await this.prisma.supplierProfile.updateMany({
+      where: { id: supplierId, notificationsUsedThisMonth: { lt: env.freeNotificationsPerMonth } },
+      data: { notificationsUsedThisMonth: { increment: 1 } },
+    });
+    return result.count > 0;
   }
 
   /** Rate-limited to once/day per supplier so a busy category doesn't spam them. */
