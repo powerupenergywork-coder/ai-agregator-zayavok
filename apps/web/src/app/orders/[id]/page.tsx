@@ -201,19 +201,30 @@ export default function OrderPage() {
             </div>
           )}
 
-          <form
-            className="mt-4 flex gap-2 border-t border-slate-100 pt-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendChat();
-            }}
-          >
-            <input
-              value={chatText}
-              onChange={(e) => setChatText(e.target.value)}
-              placeholder="Напишите ответ..."
-              className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-brand-500"
-            />
+          <div className="mt-4 flex gap-2 border-t border-slate-100 pt-3">
+            {/* While a specific field question is on screen (FieldInput above),
+                a second free-text box right under it reads as a confusing
+                duplicate — only show general chat when nothing structured is
+                pending (picking a category, or the very first message). */}
+            {nextFields.length === 0 && (
+              <form
+                className="flex flex-1 gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  sendChat();
+                }}
+              >
+                <input
+                  value={chatText}
+                  onChange={(e) => setChatText(e.target.value)}
+                  placeholder="Напишите ответ..."
+                  className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-brand-500"
+                />
+                <Button type="submit" disabled={busy || !chatText.trim()}>
+                  Ок
+                </Button>
+              </form>
+            )}
             <label className="cursor-pointer rounded-full border border-slate-300 px-3 py-2 text-sm">
               📷
               <input
@@ -224,10 +235,7 @@ export default function OrderPage() {
                 onChange={(e) => e.target.files?.[0] && onPhoto(e.target.files[0])}
               />
             </label>
-            <Button type="submit" disabled={busy || !chatText.trim()}>
-              Ок
-            </Button>
-          </form>
+          </div>
         </Card>
       )}
 
