@@ -109,6 +109,20 @@ export class OrdersService {
       // question deterministically from the template.
     }
 
+    if (Object.keys(extracted).length === 0) {
+      // AI unavailable (or found nothing) — if exactly one free-text field
+      // is pending, just take the message as-is instead of silently
+      // re-asking the same question forever. Text/address fields have no
+      // chip alternative in WhatsApp, so without this the client's answer
+      // has nowhere to go whenever the AI provider is down.
+      const pendingTextFields = nextQuestionFields(fields, knownFields).filter(
+        (f) => f.type === "text" || f.type === "address",
+      );
+      if (pendingTextFields.length === 1 && message.trim()) {
+        extracted = { [pendingTextFields[0].key]: message.trim() };
+      }
+    }
+
     return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted });
   }
 
