@@ -1,4 +1,8 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { detectLanguage, Language } from "@ai-zayavki/shared";
+import { PrismaService } from "../prisma/prisma.service";
+import { toLang } from "../common/language.util";
+import { normalizePhone } from "../common/phone.util";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
@@ -17,12 +21,17 @@ export { IncomingWhatsAppMessage } from "./whatsapp.types";
 
 const DRAFT_STATUSES = ["DRAFT", "CLARIFYING"];
 const BALANCE_TRIGGER_PHRASES = new Set(["баланс", "мой баланс", "подписка"]);
+// Explicit language-override phrases — same exact-match idiom as the
+// supplier-onboarding trigger phrases below, checked before auto-detection.
+const RU_TRIGGER_PHRASES = new Set(["по-русски", "на русском", "русский"]);
+const KK_TRIGGER_PHRASES = new Set(["қазақша", "қазақ тілінде", "қазақша сөйлесейік"]);
 
 @Injectable()
 export class WhatsAppRouterService {
   private readonly logger = new Logger(WhatsAppRouterService.name);
 
   constructor(
+    private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly authOtp: AuthOtpService,
     private readonly sessions: WhatsAppSessionService,
@@ -32,16 +41,17 @@ export class WhatsAppRouterService {
   ) {}
 
   async handleIncoming(msg: IncomingWhatsAppMessage): Promise<void> {
+    const lang = await this.resolveLanguage(msg.phone, msg.text);
     try {
       // Reply to a completion check-in — may arrive long after the drafting
       // conversation ended, so handle it standalone regardless of session.flow.
       if (msg.buttonReplyId?.startsWith("complete|")) {
-        await this.handleCompletionReply(msg.phone, msg.buttonReplyId);
+        await this.handleCompletionReply(msg.phone, msg.buttonReplyId, lang);
         return;
       }
 
       if (msg.buttonReplyId === "billing|subscribe") {
-        await this.handleSubscribeRequest(msg.phone);
+        await this.handleSubscribeRequest(msg.phone, lang);
         return;
       }
 
@@ -49,24 +59,24 @@ export class WhatsAppRouterService {
       // standalone handling as complete| above, since it can arrive with no
       // active session (the order was drafted entirely on the web).
       if (msg.buttonReplyId?.startsWith("confirm_publish|")) {
-        await this.handleConfirmPublish(msg.phone, msg.buttonReplyId);
+        await this.handleConfirmPublish(msg.phone, msg.buttonReplyId, lang);
         return;
       }
 
       if (msg.text && BALANCE_TRIGGER_PHRASES.has(msg.text.trim().toLowerCase())) {
-        await this.handleBalanceCommand(msg.phone);
+        await this.handleBalanceCommand(msg.phone, lang);
         return;
       }
 
       const session = await this.sessions.findOrCreate(msg.chatId, msg.phone);
 
       if (session.flow === "supplier_onboarding") {
-        await this.onboarding.handleIncoming(msg.chatId, msg.phone, msg);
+        await this.onboarding.handleIncoming(msg.chatId, msg.phone, msg, lang);
         return;
       }
 
       if (msg.text && isOnboardingTrigger(msg.text)) {
-        await this.onboarding.start(msg.chatId, msg.phone);
+        await this.onboarding.start(msg.chatId, msg.phone, lang);
         return;
       }
 
@@ -80,112 +90,169 @@ export class WhatsAppRouterService {
       }
 
       if (token) {
-        await this.handleToken(msg.chatId, msg.phone, token);
+        await this.handleToken(msg.chatId, msg.phone, token, lang);
       } else if (msg.imageUrl) {
-        await this.handlePhoto(msg.chatId, msg.phone, msg.imageUrl);
+        await this.handlePhoto(msg.chatId, msg.phone, msg.imageUrl, lang);
       } else if (msg.text) {
-        await this.handleText(msg.chatId, msg.phone, msg.text);
+        await this.handleText(msg.chatId, msg.phone, msg.text, lang);
       }
     } catch (err) {
       this.logger.error(`Failed to handle WhatsApp message from ${msg.phone}: ${(err as Error).message}`);
-      await this.whatsapp.sendText(msg.phone, "Что-то пошло не так, попробуйте ещё раз чуть позже.");
+      await this.whatsapp.sendText(
+        msg.phone,
+        lang === "kk" ? "Бір қате кетті, сәлден соң қайталап көріңіз." : "Что-то пошло не так, попробуйте ещё раз чуть позже.",
+      );
     }
   }
 
-  private async handleCompletionReply(phone: string, token: string): Promise<void> {
+  /** Auto-detects Kazakh from unique letters in the message text (no
+   * blocking language-picker menu — see packages/shared/src/language.ts),
+   * self-correcting on every incoming message; explicit trigger phrases
+   * override it either way. Persists to User.preferredLanguage so WhatsApp
+   * and web stay consistent for the same phone number. */
+  private async resolveLanguage(phone: string, text: string | undefined): Promise<Language> {
+    const normalized = normalizePhone(phone);
+    const trimmed = text?.trim().toLowerCase();
+    const override: Language | null = trimmed && RU_TRIGGER_PHRASES.has(trimmed)
+      ? "ru"
+      : trimmed && KK_TRIGGER_PHRASES.has(trimmed)
+        ? "kk"
+        : null;
+    const resolved = override ?? (text ? detectLanguage(text) : null);
+
+    const user = await this.prisma.user.upsert({
+      where: { phone: normalized },
+      create: { phone: normalized, preferredLanguage: resolved === "kk" ? "KK" : "RU" },
+      update: resolved ? { preferredLanguage: resolved === "kk" ? "KK" : "RU" } : {},
+    });
+    return toLang(user.preferredLanguage);
+  }
+
+  private async handleCompletionReply(phone: string, token: string, lang: Language): Promise<void> {
     const [, result, orderId] = token.split("|");
     const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
     try {
       await this.orders.completeOrder(orderId, authUser, result === "yes");
       await this.whatsapp.sendText(
         phone,
-        result === "yes" ? "Отлично, спасибо! Заявка закрыта." : "Понял, передаю оператору — скоро свяжемся.",
+        result === "yes"
+          ? lang === "kk"
+            ? "Керемет, рахмет! Өтінім жабылды."
+            : "Отлично, спасибо! Заявка закрыта."
+          : lang === "kk"
+            ? "Түсінікті, операторға беремін — жақында хабарласамыз."
+            : "Понял, передаю оператору — скоро свяжемся.",
       );
     } catch (err) {
       await this.whatsapp.sendText(phone, (err as Error).message);
     }
   }
 
-  private async handleConfirmPublish(phone: string, token: string): Promise<void> {
+  private async handleConfirmPublish(phone: string, token: string, lang: Language): Promise<void> {
     const [, orderId] = token.split("|");
     try {
       await this.orders.confirmPublish(orderId, phone);
-      await this.whatsapp.sendText(phone, "Заявка опубликована, начали искать исполнителей.");
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk" ? "Өтінім жарияланды, орындаушыларды іздей бастадық." : "Заявка опубликована, начали искать исполнителей.",
+      );
     } catch (err) {
       await this.whatsapp.sendText(phone, (err as Error).message);
     }
   }
 
-  private async handleBalanceCommand(phone: string): Promise<void> {
+  private async handleBalanceCommand(phone: string, lang: Language): Promise<void> {
     const authUser = await this.authOtp.getOrCreateSupplierAuthUser(phone);
     const status = await this.billing.getStatus(authUser.profileId);
-    const lines = [
-      `Бесплатных заявок в этом месяце: ${status.remainingFree} из ${status.freeQuota}`,
-      status.subscriptionActive
-        ? `Подписка активна до ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("ru-RU")}`
-        : `Подписка не оформлена — ${status.priceTenge} ₸ за ${status.periodDays} дней безлимита`,
-    ];
+    const lines =
+      lang === "kk"
+        ? [
+            `Осы айда тегін өтінімдер: ${status.remainingFree} / ${status.freeQuota}`,
+            status.subscriptionActive
+              ? `Жазылым ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("kk-KZ")} дейін белсенді`
+              : `Жазылым рәсімделмеген — шексіз үшін ${status.periodDays} күнге ${status.priceTenge} ₸`,
+          ]
+        : [
+            `Бесплатных заявок в этом месяце: ${status.remainingFree} из ${status.freeQuota}`,
+            status.subscriptionActive
+              ? `Подписка активна до ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("ru-RU")}`
+              : `Подписка не оформлена — ${status.priceTenge} ₸ за ${status.periodDays} дней безлимита`,
+          ];
     const body = lines.join("\n");
     if (status.subscriptionActive) {
       await this.whatsapp.sendText(phone, body);
     } else {
-      await this.whatsapp.sendButtons(phone, body, [{ id: "billing|subscribe", text: "Оформить подписку" }]);
+      await this.whatsapp.sendButtons(phone, body, [
+        { id: "billing|subscribe", text: lang === "kk" ? "Жазылу рәсімдеу" : "Оформить подписку" },
+      ]);
     }
   }
 
-  private async handleSubscribeRequest(phone: string): Promise<void> {
+  private async handleSubscribeRequest(phone: string, lang: Language): Promise<void> {
     const authUser = await this.authOtp.getOrCreateSupplierAuthUser(phone);
     const { paymentUrl } = await this.billing.requestSubscription(authUser.profileId);
-    await this.whatsapp.sendText(phone, `Оплата подписки: ${paymentUrl}`);
+    await this.whatsapp.sendText(phone, `${lang === "kk" ? "Жазылымға төлем" : "Оплата подписки"}: ${paymentUrl}`);
   }
 
-  private async handleToken(chatId: string, phone: string, token: string): Promise<void> {
+  private async handleToken(chatId: string, phone: string, token: string, lang: Language): Promise<void> {
     const [kind, ...rest] = token.split("|");
 
     if (kind === "cat") {
       const orderId = await this.ensureOrder(chatId, phone);
-      await this.sendTurn(chatId, phone, await this.orders.pickCategory(orderId, rest[0]));
+      await this.sendTurn(chatId, phone, await this.orders.pickCategory(orderId, rest[0]), lang);
       return;
     }
 
     if (kind === "fld") {
       const [key, rawValue] = rest;
       const orderId = await this.ensureOrder(chatId, phone);
-      await this.sendTurn(chatId, phone, await this.orders.setField(orderId, key, coerceValue(rawValue)));
+      await this.sendTurn(chatId, phone, await this.orders.setField(orderId, key, coerceValue(rawValue)), lang);
       return;
     }
 
     if (kind === "action" && rest[0] === "publish") {
-      await this.publishCurrentOrder(chatId, phone);
+      await this.publishCurrentOrder(chatId, phone, lang);
       return;
     }
 
     if (kind === "action" && rest[0] === "edit") {
-      await this.whatsapp.sendText(phone, 'Напишите, что изменить, например: "вес 5 тонн" или "адрес Абая 10".');
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? 'Не өзгерту керектігін жазыңыз, мысалы: "салмағы 5 тонна" немесе "мекенжай Абай 10".'
+          : 'Напишите, что изменить, например: "вес 5 тонн" или "адрес Абая 10".',
+      );
     }
   }
 
-  private async handleText(chatId: string, phone: string, text: string): Promise<void> {
+  private async handleText(chatId: string, phone: string, text: string, lang: Language): Promise<void> {
     const session = await this.sessions.findOrCreate(chatId, phone);
 
     if (session.currentOrderId) {
       const order = await this.orders.getRawOrThrow(session.currentOrderId);
       if (!DRAFT_STATUSES.includes(order.status)) {
-        if (/нов(ая|ый)\s*(заявк|заказ)/i.test(text)) {
+        if (/нов(ая|ый)\s*(заявк|заказ)/i.test(text) || /жаңа\s*өтінім/i.test(text)) {
           await this.sessions.clearOrder(chatId);
-          await this.whatsapp.sendText(phone, "Хорошо, начнём новую заявку. Что вам нужно?");
+          await this.whatsapp.sendText(phone, lang === "kk" ? "Жарайды, жаңа өтінімнен бастайық. Не керек?" : "Хорошо, начнём новую заявку. Что вам нужно?");
         } else {
           const dto = await this.orders.toDto(session.currentOrderId);
           if (dto.status === "PUBLISHED") {
             // Any message on an active order is a chance to close the loop —
             // the client may just be checking in, not tapping the original
             // check-in buttons (which could be days old by now).
-            await this.whatsapp.sendButtons(phone, `Заявка №${dto.number}: ${dto.statusLabel}. Услугу уже оказали?`, [
-              { id: `complete|yes|${session.currentOrderId}`, text: "Да, всё хорошо" },
-              { id: `complete|no|${session.currentOrderId}`, text: "Нет, не получилось" },
+            const body =
+              lang === "kk"
+                ? `Өтінім №${dto.number}: ${dto.statusLabel.kk}. Қызмет көрсетілді ме?`
+                : `Заявка №${dto.number}: ${dto.statusLabel.ru}. Услугу уже оказали?`;
+            await this.whatsapp.sendButtons(phone, body, [
+              { id: `complete|yes|${session.currentOrderId}`, text: lang === "kk" ? "Иә, бәрі жақсы" : "Да, всё хорошо" },
+              { id: `complete|no|${session.currentOrderId}`, text: lang === "kk" ? "Жоқ, болмады" : "Нет, не получилось" },
             ]);
           } else {
-            await this.whatsapp.sendText(phone, `Заявка №${dto.number}: ${dto.statusLabel}.`);
+            await this.whatsapp.sendText(
+              phone,
+              lang === "kk" ? `Өтінім №${dto.number}: ${dto.statusLabel.kk}.` : `Заявка №${dto.number}: ${dto.statusLabel.ru}.`,
+            );
           }
         }
         return;
@@ -193,20 +260,20 @@ export class WhatsAppRouterService {
     }
 
     const orderId = await this.ensureOrder(chatId, phone);
-    await this.sendTurn(chatId, phone, await this.orders.chat(orderId, text));
+    await this.sendTurn(chatId, phone, await this.orders.chat(orderId, text), lang);
   }
 
-  private async handlePhoto(chatId: string, phone: string, imageUrl: string): Promise<void> {
+  private async handlePhoto(chatId: string, phone: string, imageUrl: string, lang: Language): Promise<void> {
     const orderId = await this.ensureOrder(chatId, phone);
     const buffer = await this.whatsapp.downloadMedia(imageUrl);
     await this.orders.addPhoto(orderId, buffer, `whatsapp-${Date.now()}.jpg`, "image/jpeg");
-    await this.whatsapp.sendText(phone, "Фото добавлено к заявке.");
+    await this.whatsapp.sendText(phone, lang === "kk" ? "Фото өтінімге қосылды." : "Фото добавлено к заявке.");
   }
 
-  private async publishCurrentOrder(chatId: string, phone: string): Promise<void> {
+  private async publishCurrentOrder(chatId: string, phone: string, lang: Language): Promise<void> {
     const session = await this.sessions.findOrCreate(chatId, phone);
     if (!session.currentOrderId) {
-      await this.whatsapp.sendText(phone, "Сначала опишите, что вам нужно.");
+      await this.whatsapp.sendText(phone, lang === "kk" ? "Алдымен не керектігін жазыңыз." : "Сначала опишите, что вам нужно.");
       return;
     }
     const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
@@ -218,7 +285,10 @@ export class WhatsAppRouterService {
       await this.orders.publish(session.currentOrderId, authUser);
       await this.sessions.setPendingOptions(chatId, undefined);
     } catch (err) {
-      await this.whatsapp.sendText(phone, `Не получилось опубликовать заявку: ${(err as Error).message}`);
+      await this.whatsapp.sendText(
+        phone,
+        `${lang === "kk" ? "Өтінімді жариялау мүмкін болмады" : "Не получилось опубликовать заявку"}: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -230,14 +300,14 @@ export class WhatsAppRouterService {
     return draft.id;
   }
 
-  private async sendTurn(chatId: string, phone: string, turn: ChatTurnResponse): Promise<void> {
+  private async sendTurn(chatId: string, phone: string, turn: ChatTurnResponse, lang: Language): Promise<void> {
     let rendered: OutgoingWhatsAppMessage;
     if (turn.needsCategoryPick) {
-      rendered = renderCategoryPick(turn.categories ?? []);
+      rendered = renderCategoryPick(turn.categories ?? [], lang);
     } else if (turn.isReadyForReview) {
-      rendered = renderReviewCard(turn.order);
+      rendered = renderReviewCard(turn.order, lang);
     } else if (turn.nextFields.length > 0) {
-      rendered = renderFieldQuestion(turn.nextFields, turn.assistantMessage);
+      rendered = renderFieldQuestion(turn.nextFields, turn.assistantMessage, lang);
     } else {
       rendered = { body: turn.assistantMessage };
     }

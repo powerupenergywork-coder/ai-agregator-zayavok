@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { OrderDto, ordersApi } from "@/lib/api";
+import { useLocale } from "@/lib/i18n/context";
 import { Button, Card, Spinner } from "@/components/ui";
 
 export default function ConfirmPublishPage() {
   const params = useParams<{ token: string }>();
   const token = params.token;
+  const { locale, t } = useLocale();
 
   const [order, setOrder] = useState<OrderDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,7 +30,7 @@ export default function ConfirmPublishPage() {
       const updated = await ordersApi.confirmPublishByToken(token);
       setOrder(updated);
     } catch (e: any) {
-      setError(e.message || "Не получилось подтвердить заявку");
+      setError(e.message || t.confirmPage.error);
     } finally {
       setBusy(false);
     }
@@ -42,19 +44,23 @@ export default function ConfirmPublishPage() {
     );
   }
   if (!order) {
-    return <main className="flex min-h-screen items-center justify-center text-slate-500">Заявка не найдена</main>;
+    return <main className="flex min-h-screen items-center justify-center text-slate-500">{t.common.orderNotFound}</main>;
   }
 
   return (
     <main className="mx-auto min-h-screen max-w-2xl px-4 py-8">
-      <h1 className="mb-4 text-lg font-semibold">Заявка №{order.number}</h1>
+      <h1 className="mb-4 text-lg font-semibold">{t.order.title(order.number)}</h1>
       <Card className="p-4">
-        <p className="font-medium">{order.category?.name}</p>
+        <p className="font-medium">{order.category?.name[locale]}</p>
         <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600">
-          {order.city && <p>Город: {order.city}</p>}
+          {order.city && (
+            <p>
+              {t.order.city}: {order.city}
+            </p>
+          )}
           {order.dateNeeded && (
             <p>
-              Дата: {new Date(order.dateNeeded).toLocaleDateString("ru-RU")} {order.timeWindow ?? ""}
+              {t.order.date}: {new Date(order.dateNeeded).toLocaleDateString(locale === "kk" ? "kk-KZ" : "ru-RU")} {order.timeWindow ?? ""}
             </p>
           )}
           {order.category?.fields.map((f) => {
@@ -62,7 +68,7 @@ export default function ConfirmPublishPage() {
             if (v === undefined) return null;
             return (
               <p key={f.key}>
-                {f.label}: {String(v)}
+                {f.label[locale]}: {String(v)}
               </p>
             );
           })}
@@ -70,25 +76,21 @@ export default function ConfirmPublishPage() {
 
         {order.status === "AWAITING_PHONE_CONFIRMATION" && (
           <div className="mt-4 border-t border-slate-100 pt-3">
-            <p className="mb-3 text-sm text-slate-600">
-              Проверьте данные заявки выше и нажмите «Подтвердить», чтобы опубликовать её и начать поиск исполнителей.
-            </p>
+            <p className="mb-3 text-sm text-slate-600">{t.confirmPage.reviewHint}</p>
             {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
             <Button onClick={confirm} disabled={busy} className="w-full">
-              Подтвердить
+              {t.confirmPage.confirm}
             </Button>
           </div>
         )}
 
         {order.status === "PUBLISHED" && (
-          <p className="mt-4 border-t border-slate-100 pt-3 text-sm text-green-700">
-            Заявка опубликована, мы начали поиск исполнителей.
-          </p>
+          <p className="mt-4 border-t border-slate-100 pt-3 text-sm text-green-700">{t.confirmPage.published}</p>
         )}
 
         {!["AWAITING_PHONE_CONFIRMATION", "PUBLISHED"].includes(order.status) && (
           <p className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-500">
-            Заявка уже в статусе «{order.statusLabel}» — подтверждение здесь больше не требуется.
+            {t.confirmPage.alreadyInStatus(order.statusLabel[locale])}
           </p>
         )}
       </Card>

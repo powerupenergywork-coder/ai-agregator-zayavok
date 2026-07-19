@@ -1,13 +1,13 @@
-import { CategoryField } from "@ai-zayavki/shared";
+import { CategoryField, LocalizedText } from "@ai-zayavki/shared";
 
 export interface OrderDto {
   id: string;
   number: number;
   publicToken: string;
   status: string;
-  statusLabel: string;
+  statusLabel: LocalizedText;
   urgent: boolean;
-  category: { slug: string; name: string; icon: string | null; fields: CategoryField[] } | null;
+  category: { slug: string; name: LocalizedText; icon: string | null; fields: CategoryField[] } | null;
   fieldsData: Record<string, unknown>;
   progressPercent: number;
   addressFrom: string | null;

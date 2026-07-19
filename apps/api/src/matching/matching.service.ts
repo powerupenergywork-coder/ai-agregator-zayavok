@@ -11,7 +11,8 @@ import { BillingService } from "../billing/billing.service";
 import { env } from "../config/env";
 import { formatWhen, fullDescription } from "./matching-message.util";
 import { isSupplierReachableNow } from "./quiet-hours.util";
-import { CategoryField } from "@ai-zayavki/shared";
+import { toLang } from "../common/language.util";
+import { CategoryField, LocalizedText } from "@ai-zayavki/shared";
 
 @Injectable()
 export class MatchingService {
@@ -89,15 +90,16 @@ export class MatchingService {
         continue;
       }
 
+      const lang = toLang(supplier.user.preferredLanguage);
       await this.notifications.send({
         event: "order_broadcast_full",
         payload: {
           orderNumber: order.number,
-          categoryName: order.category?.name ?? "",
+          categoryName: order.category ? (order.category.name as unknown as LocalizedText)[lang] : "",
           city: order.city ?? "",
-          whenText: formatWhen(order),
-          fullDescription: fullDescription(order.fieldsData, (order.category?.fields as unknown as CategoryField[]) ?? []),
-          clientPhone: order.client?.user.phone ?? "не указан",
+          whenText: formatWhen(order, lang),
+          fullDescription: fullDescription(order.fieldsData, (order.category?.fields as unknown as CategoryField[]) ?? [], lang),
+          clientPhone: order.client?.user.phone ?? (lang === "kk" ? "көрсетілмеген" : "не указан"),
           orderUrl,
         },
         recipientPhone: supplier.user.phone,
@@ -148,19 +150,21 @@ export class MatchingService {
       }
       if (included.length === 0) continue;
 
+      const lang = toLang(supplier.user.preferredLanguage);
       await this.notifications.send({
         event: "order_digest",
         payload: {
           orders: included.map((row) => ({
             orderNumber: row.order.number,
-            categoryName: row.order.category?.name ?? "",
+            categoryName: row.order.category ? (row.order.category.name as unknown as LocalizedText)[lang] : "",
             city: row.order.city ?? "",
-            whenText: formatWhen(row.order),
+            whenText: formatWhen(row.order, lang),
             fullDescription: fullDescription(
               row.order.fieldsData,
               (row.order.category?.fields as unknown as CategoryField[]) ?? [],
+              lang,
             ),
-            clientPhone: row.order.client?.user.phone ?? "не указан",
+            clientPhone: row.order.client?.user.phone ?? (lang === "kk" ? "көрсетілмеген" : "не указан"),
             orderUrl: `${env.webUrl}/s/${row.orderId}`,
           })),
         },

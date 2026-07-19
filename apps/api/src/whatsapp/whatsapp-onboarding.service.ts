@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Language } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CategoriesService } from "../categories/categories.service";
 import { AuditLogService } from "../common/audit-log.service";
@@ -50,7 +51,7 @@ export class WhatsAppOnboardingService {
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
-  async start(chatId: string, phone: string): Promise<void> {
+  async start(chatId: string, phone: string, lang: Language = "ru"): Promise<void> {
     const normalized = normalizePhone(phone);
     const existing = await this.prisma.supplierProfile.findFirst({
       where: { user: { phone: normalized } },
@@ -72,15 +73,19 @@ export class WhatsAppOnboardingService {
     await this.whatsapp.sendText(
       phone,
       existing
-        ? `Обновим ваш профиль поставщика. Как называется компания? (сейчас: ${existing.companyName ?? "не указано"})`
-        : "Регистрация поставщика. Как называется ваша компания или как к вам обращаться?",
+        ? lang === "kk"
+          ? `Поставщик профиліңізді жаңартамыз. Компанияңыздың атауы қандай? (қазір: ${existing.companyName ?? "көрсетілмеген"})`
+          : `Обновим ваш профиль поставщика. Как называется компания? (сейчас: ${existing.companyName ?? "не указано"})`
+        : lang === "kk"
+          ? "Поставщикті тіркеу. Компанияңыздың атауы немесе сізге қалай хабарласу керектігін жазыңыз."
+          : "Регистрация поставщика. Как называется ваша компания или как к вам обращаться?",
     );
   }
 
-  async handleIncoming(chatId: string, phone: string, msg: IncomingWhatsAppMessage): Promise<void> {
+  async handleIncoming(chatId: string, phone: string, msg: IncomingWhatsAppMessage, lang: Language = "ru"): Promise<void> {
     const state = await this.loadState(chatId);
     if (!state) {
-      await this.start(chatId, phone);
+      await this.start(chatId, phone, lang);
       return;
     }
 
@@ -91,17 +96,20 @@ export class WhatsAppOnboardingService {
 
     if (state.step === "company_name") {
       if (!msg.text?.trim()) {
-        await this.whatsapp.sendText(phone, "Напишите название компании текстом.");
+        await this.whatsapp.sendText(phone, lang === "kk" ? "Компания атауын мәтінмен жазыңыз." : "Напишите название компании текстом.");
         return;
       }
       state.collected.companyName = msg.text.trim();
-      await this.goToCategories(chatId, phone, state);
+      await this.goToCategories(chatId, phone, state, lang);
       return;
     }
 
     if (state.step === "categories") {
       if (!token) {
-        await this.whatsapp.sendText(phone, "Выберите вариант из списка выше, отправив номер.");
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk" ? "Жоғарыдағы тізімнен нұсқаны нөмірмен таңдаңыз." : "Выберите вариант из списка выше, отправив номер.",
+        );
         return;
       }
       const [kind, ...rest] = token.split("|");
@@ -110,24 +118,30 @@ export class WhatsAppOnboardingService {
         const idx = state.collected.categorySlugs.indexOf(slug);
         if (idx >= 0) state.collected.categorySlugs.splice(idx, 1);
         else state.collected.categorySlugs.push(slug);
-        await this.goToCategories(chatId, phone, state);
+        await this.goToCategories(chatId, phone, state, lang);
         return;
       }
       if (kind === "sup" && rest[0] === "done") {
         if (state.collected.categorySlugs.length === 0) {
-          await this.whatsapp.sendText(phone, "Выберите хотя бы одну категорию перед тем, как продолжить.");
+          await this.whatsapp.sendText(
+            phone,
+            lang === "kk" ? "Жалғастыру алдында кемінде бір санатты таңдаңыз." : "Выберите хотя бы одну категорию перед тем, как продолжить.",
+          );
           return;
         }
         state.step = "cities";
         await this.saveState(chatId, state);
-        await this.whatsapp.sendText(phone, "В каких городах вы работаете? Перечислите через запятую.");
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk" ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз." : "В каких городах вы работаете? Перечислите через запятую.",
+        );
         return;
       }
     }
 
     if (state.step === "cities") {
       if (!msg.text?.trim()) {
-        await this.whatsapp.sendText(phone, "Напишите города текстом, через запятую.");
+        await this.whatsapp.sendText(phone, lang === "kk" ? "Қалаларды мәтінмен, үтір арқылы жазыңыз." : "Напишите города текстом, через запятую.");
         return;
       }
       state.collected.cities = msg.text
@@ -136,69 +150,84 @@ export class WhatsAppOnboardingService {
         .filter(Boolean);
       state.step = "urgent";
       await this.saveState(chatId, state);
-      const rendered = renderYesNo("Принимаете срочные заказы?", "sup|urgent");
+      const rendered = renderYesNo(
+        lang === "kk" ? "Жедел тапсырыстарды қабылдайсыз ба?" : "Принимаете срочные заказы?",
+        "sup|urgent",
+        lang,
+      );
       await this.whatsapp.sendButtons(phone, rendered.body, rendered.buttons!);
       return;
     }
 
     if (state.step === "urgent") {
       if (!token || !token.startsWith("sup|urgent|")) {
-        await this.whatsapp.sendText(phone, "Ответьте Да или Нет кнопкой выше.");
+        await this.whatsapp.sendText(phone, lang === "kk" ? "Жоғарыдағы батырмамен Иә немесе Жоқ деп жауап беріңіз." : "Ответьте Да или Нет кнопкой выше.");
         return;
       }
       state.collected.acceptsUrgent = token.endsWith("true");
       state.step = "hours";
       await this.saveState(chatId, state);
-      await this.whatsapp.sendButtons(phone, "Получать заявки в любое время суток или только в рабочие часы (08:00–21:00)?", [
-        { id: "sup|hours|true", text: "Круглосуточно" },
-        { id: "sup|hours|false", text: "Только 08:00–21:00" },
-      ]);
+      await this.whatsapp.sendButtons(
+        phone,
+        lang === "kk"
+          ? "Өтінімдерді тәулік бойы алғыңыз келе ме, әлде тек жұмыс сағаттарында ма (08:00–21:00)?"
+          : "Получать заявки в любое время суток или только в рабочие часы (08:00–21:00)?",
+        [
+          { id: "sup|hours|true", text: lang === "kk" ? "Тәулік бойы" : "Круглосуточно" },
+          { id: "sup|hours|false", text: lang === "kk" ? "Тек 08:00–21:00" : "Только 08:00–21:00" },
+        ],
+      );
       return;
     }
 
     if (state.step === "hours") {
       if (!token || !token.startsWith("sup|hours|")) {
-        await this.whatsapp.sendText(phone, "Выберите один из вариантов кнопкой выше.");
+        await this.whatsapp.sendText(phone, lang === "kk" ? "Жоғарыдағы батырмалардың бірін таңдаңыз." : "Выберите один из вариантов кнопкой выше.");
         return;
       }
       state.collected.roundTheClock = token.endsWith("true");
       state.step = "confirm";
       await this.saveState(chatId, state);
-      await this.sendConfirm(phone, state);
+      await this.sendConfirm(phone, state, lang);
       return;
     }
 
     if (state.step === "confirm") {
       if (token === "sup|confirm") {
-        await this.persist(phone, state);
+        await this.persist(phone, state, lang);
         return;
       }
       if (token === "sup|restart") {
         state.step = "company_name";
         await this.saveState(chatId, state);
-        await this.whatsapp.sendText(phone, `Хорошо, начнём заново. Название компании? (сейчас: ${state.collected.companyName ?? "—"})`);
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? `Жарайды, қайтадан бастайық. Компания атауы? (қазір: ${state.collected.companyName ?? "—"})`
+            : `Хорошо, начнём заново. Название компании? (сейчас: ${state.collected.companyName ?? "—"})`,
+        );
         return;
       }
-      await this.whatsapp.sendText(phone, "Нажмите «Подтвердить» или «Изменить» выше.");
+      await this.whatsapp.sendText(phone, lang === "kk" ? "Жоғарыда «Растау» немесе «Өзгерту» батырмасын басыңыз." : "Нажмите «Подтвердить» или «Изменить» выше.");
     }
   }
 
-  private async goToCategories(chatId: string, phone: string, state: OnboardingState): Promise<void> {
+  private async goToCategories(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
     state.step = "categories";
     const allCategories = await this.categories.findAllActive();
-    const rendered = renderCategoryMultiSelect(allCategories, state.collected.categorySlugs);
+    const rendered = renderCategoryMultiSelect(allCategories, state.collected.categorySlugs, lang);
     state.pendingOptions = rendered.pendingOptions;
     await this.saveState(chatId, state);
     await this.whatsapp.sendText(phone, rendered.body);
   }
 
-  private async sendConfirm(phone: string, state: OnboardingState): Promise<void> {
+  private async sendConfirm(phone: string, state: OnboardingState, lang: Language): Promise<void> {
     const allCategories = await this.categories.findAllActive();
-    const rendered = renderOnboardingConfirm(state.collected, allCategories);
+    const rendered = renderOnboardingConfirm(state.collected, allCategories, lang);
     await this.whatsapp.sendButtons(phone, rendered.body, rendered.buttons!);
   }
 
-  private async persist(phone: string, state: OnboardingState): Promise<void> {
+  private async persist(phone: string, state: OnboardingState, lang: Language): Promise<void> {
     const normalized = normalizePhone(phone);
     const user = await this.prisma.user.upsert({
       where: { phone: normalized },
@@ -256,8 +285,12 @@ export class WhatsAppOnboardingService {
     await this.whatsapp.sendText(
       phone,
       state.isNewSupplier
-        ? "Готово! Ваш профиль поставщика создан и будет проверен модератором. Как только заявки в ваших категориях появятся — пришлём уведомление."
-        : "Профиль поставщика обновлён.",
+        ? lang === "kk"
+          ? "Дайын! Поставщик профиліңіз құрылды және модератор тексереді. Санаттарыңызда өтінімдер пайда болысымен хабарлаймыз."
+          : "Готово! Ваш профиль поставщика создан и будет проверен модератором. Как только заявки в ваших категориях появятся — пришлём уведомление."
+        : lang === "kk"
+          ? "Поставщик профилі жаңартылды."
+          : "Профиль поставщика обновлён.",
     );
   }
 

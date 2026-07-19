@@ -21,6 +21,9 @@ model User {
   // time someone reaches us through the WhatsApp bot, defaults to SMS for
   // web-only users.
   preferredChannel NotificationChannel @default(SMS)
+  // Auto-detected from the language they actually write in (WhatsApp bot) or
+  // set explicitly (web toggle) — see packages/shared/src/language.ts.
+  preferredLanguage Language           @default(RU)
   createdAt        DateTime            @default(now())
   clientProfile    ClientProfile?
   supplierProfile  SupplierProfile?
@@ -171,7 +174,8 @@ model ServiceArea {
 model Category {
   id                 String             @id @default(uuid())
   slug               String             @unique
-  name               String
+  // Bilingual { ru, kk } — see packages/shared/src/language.ts.
+  name               Json
   icon               String?
   examples           Json
   fields             Json
@@ -304,6 +308,11 @@ model NotificationLog {
   createdAt      DateTime            @default(now())
 
   @@index([orderId])
+}
+
+enum Language {
+  RU
+  KK
 }
 
 enum NotificationChannel {

@@ -50,7 +50,7 @@ export class AdminController {
   @Post("categories")
   createCategory(@Body() dto: UpsertCategoryDto) {
     return this.categories.create({
-      slug: dto.slug ?? slugify(dto.name),
+      slug: dto.slug ?? slugify(dto.name.ru),
       name: dto.name,
       icon: dto.icon,
       examples: dto.examples,

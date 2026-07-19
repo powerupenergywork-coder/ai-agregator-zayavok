@@ -1,4 +1,4 @@
-import type { CategoryField } from "@ai-zayavki/shared";
+import type { CategoryField, Language, LocalizedText } from "@ai-zayavki/shared";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -34,9 +34,9 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
 
 export interface CategorySummary {
   slug: string;
-  name: string;
+  name: LocalizedText;
   icon?: string;
-  examples: string[];
+  examples: LocalizedText[];
 }
 
 export interface CategoryTemplateDto extends CategorySummary {
@@ -48,9 +48,9 @@ export interface OrderDto {
   number: number;
   publicToken: string;
   status: string;
-  statusLabel: string;
+  statusLabel: LocalizedText;
   urgent: boolean;
-  category: { slug: string; name: string; icon: string | null; fields: CategoryField[] } | null;
+  category: { slug: string; name: LocalizedText; icon: string | null; fields: CategoryField[] } | null;
   fieldsData: Record<string, unknown>;
   progressPercent: number;
   addressFrom: string | null;
@@ -92,15 +92,15 @@ export interface AuthResult {
 // ---------- auth ----------
 
 export const authApi = {
-  requestCode: (phone: string, purpose: "CLIENT_LOGIN" | "SUPPLIER_LOGIN", deviceId: string) =>
+  requestCode: (phone: string, purpose: "CLIENT_LOGIN" | "SUPPLIER_LOGIN", deviceId: string, lang?: Language) =>
     request<{ expiresInSeconds: number; resendCooldownSeconds: number; channel: "whatsapp" | "sms" }>(
       "/auth/request-code",
-      { method: "POST", body: JSON.stringify({ phone, purpose, deviceId }) },
+      { method: "POST", body: JSON.stringify({ phone, purpose, deviceId, lang }) },
     ),
-  verifyCode: (phone: string, code: string, purpose: "CLIENT_LOGIN" | "SUPPLIER_LOGIN", deviceId: string) =>
+  verifyCode: (phone: string, code: string, purpose: "CLIENT_LOGIN" | "SUPPLIER_LOGIN", deviceId: string, lang?: Language) =>
     request<AuthResult>("/auth/verify-code", {
       method: "POST",
-      body: JSON.stringify({ phone, code, purpose, deviceId }),
+      body: JSON.stringify({ phone, code, purpose, deviceId, lang }),
     }),
   checkDevice: (phone: string, purpose: "CLIENT_LOGIN" | "SUPPLIER_LOGIN", deviceId: string) =>
     request<{ trusted: boolean } & Partial<AuthResult>>("/auth/check-device", {
@@ -115,12 +115,12 @@ export const ordersApi = {
   createDraft: (categorySlug?: string, urgent?: boolean) =>
     request<OrderDto>("/orders", { method: "POST", body: JSON.stringify({ categorySlug, urgent }) }),
   get: (id: string) => request<OrderDto>(`/orders/${id}`),
-  chat: (id: string, message: string) =>
-    request<ChatTurnResponse>(`/orders/${id}/chat`, { method: "POST", body: JSON.stringify({ message }) }),
-  pickCategory: (id: string, categorySlug: string) =>
-    request<ChatTurnResponse>(`/orders/${id}/category`, { method: "POST", body: JSON.stringify({ categorySlug }) }),
-  setField: (id: string, key: string, value: unknown) =>
-    request<ChatTurnResponse>(`/orders/${id}/fields`, { method: "POST", body: JSON.stringify({ key, value }) }),
+  chat: (id: string, message: string, lang?: Language) =>
+    request<ChatTurnResponse>(`/orders/${id}/chat`, { method: "POST", body: JSON.stringify({ message, lang }) }),
+  pickCategory: (id: string, categorySlug: string, lang?: Language) =>
+    request<ChatTurnResponse>(`/orders/${id}/category`, { method: "POST", body: JSON.stringify({ categorySlug, lang }) }),
+  setField: (id: string, key: string, value: unknown, lang?: Language) =>
+    request<ChatTurnResponse>(`/orders/${id}/fields`, { method: "POST", body: JSON.stringify({ key, value, lang }) }),
   uploadPhoto: (id: string, file: File) => {
     const form = new FormData();
     form.append("photo", file);
@@ -136,11 +136,9 @@ export const ordersApi = {
     request<OrderDto>(`/orders/${id}/complete`, { method: "POST", body: JSON.stringify({ positive, comment }) }, token),
   repeat: (id: string, token: string) => request<OrderDto>(`/orders/${id}/repeat`, { method: "POST" }, token),
   listMine: (token: string) =>
-    request<{ id: string; number: number; status: string; statusLabel: string; categoryName: string | null; createdAt: string }[]>(
-      "/orders/mine",
-      {},
-      token,
-    ),
+    request<
+      { id: string; number: number; status: string; statusLabel: LocalizedText; categoryName: LocalizedText | null; createdAt: string }[]
+    >("/orders/mine", {}, token),
 };
 
 // ---------- categories ----------

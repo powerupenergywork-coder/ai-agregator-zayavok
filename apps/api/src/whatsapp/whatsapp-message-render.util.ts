@@ -1,4 +1,4 @@
-import { CategoryField } from "@ai-zayavki/shared";
+import { CategoryField, Language } from "@ai-zayavki/shared";
 import { WhatsAppButton } from "./whatsapp-provider.interface";
 import { OrderDto } from "../orders/order.dto";
 import { formatFieldValue } from "../common/field-format.util";
@@ -30,23 +30,28 @@ function fmtDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function buildOptionItems(fields: CategoryField[]): OptionItem[] {
+function buildOptionItems(fields: CategoryField[], lang: Language): OptionItem[] {
   const items: OptionItem[] = [];
+  const yes = lang === "kk" ? "Иә" : "Да";
+  const no = lang === "kk" ? "Жоқ" : "Нет";
+  const today = lang === "kk" ? "Бүгін" : "Сегодня";
+  const tomorrowLabel = lang === "kk" ? "Ертең" : "Завтра";
+  const dayAfterLabel = lang === "kk" ? "Арғы күні" : "Послезавтра";
   for (const f of fields) {
     if (f.type === "enum" && f.options) {
-      for (const opt of f.options) items.push({ token: `fld|${f.key}|${opt.value}`, label: opt.label });
+      for (const opt of f.options) items.push({ token: `fld|${f.key}|${opt.value}`, label: opt.label[lang] });
     } else if (f.type === "boolean") {
-      items.push({ token: `fld|${f.key}|true`, label: "Да" });
-      items.push({ token: `fld|${f.key}|false`, label: "Нет" });
+      items.push({ token: `fld|${f.key}|true`, label: yes });
+      items.push({ token: `fld|${f.key}|false`, label: no });
     } else if (f.type === "date") {
-      const today = new Date();
-      const tomorrow = new Date(today);
+      const now = new Date();
+      const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      const dayAfter = new Date(today);
+      const dayAfter = new Date(now);
       dayAfter.setDate(dayAfter.getDate() + 2);
-      items.push({ token: `fld|${f.key}|${fmtDate(today)}`, label: "Сегодня" });
-      items.push({ token: `fld|${f.key}|${fmtDate(tomorrow)}`, label: "Завтра" });
-      items.push({ token: `fld|${f.key}|${fmtDate(dayAfter)}`, label: "Послезавтра" });
+      items.push({ token: `fld|${f.key}|${fmtDate(now)}`, label: today });
+      items.push({ token: `fld|${f.key}|${fmtDate(tomorrow)}`, label: tomorrowLabel });
+      items.push({ token: `fld|${f.key}|${fmtDate(dayAfter)}`, label: dayAfterLabel });
     } else if (f.type === "time") {
       for (const t of ["09:00", "12:00", "15:00", "18:00"]) {
         items.push({ token: `fld|${f.key}|${t}`, label: t });
@@ -57,7 +62,7 @@ function buildOptionItems(fields: CategoryField[]): OptionItem[] {
   return items;
 }
 
-function asButtonsOrList(body: string, items: OptionItem[]): OutgoingWhatsAppMessage {
+function asButtonsOrList(body: string, items: OptionItem[], lang: Language): OutgoingWhatsAppMessage {
   if (items.length === 0) return { body };
   if (items.length <= 3) {
     return { body, buttons: items.map((i) => ({ id: i.token, text: i.label })) };
@@ -65,32 +70,42 @@ function asButtonsOrList(body: string, items: OptionItem[]): OutgoingWhatsAppMes
   const listText = items.map((it, idx) => `${idx + 1}. ${it.label}`).join("\n");
   const pendingOptions: Record<string, string> = {};
   items.forEach((it, idx) => (pendingOptions[String(idx + 1)] = it.token));
-  return { body: `${body}\n\n${listText}\n\nОтветьте номером или напишите свой вариант.`, pendingOptions };
+  const hint = lang === "kk" ? "Нөмірмен жауап беріңіз немесе өз нұсқаңызды жазыңыз." : "Ответьте номером или напишите свой вариант.";
+  return { body: `${body}\n\n${listText}\n\n${hint}`, pendingOptions };
 }
 
-export function renderFieldQuestion(fields: CategoryField[], assistantMessage: string): OutgoingWhatsAppMessage {
+export function renderFieldQuestion(fields: CategoryField[], assistantMessage: string, lang: Language): OutgoingWhatsAppMessage {
   const hasAllowUnknown = fields.some((f) => f.allowUnknown);
   const hint = hasAllowUnknown
-    ? "\n\nЕсли не знаете точно — напишите «не знаю», «примерно» или «нужна консультация»."
+    ? lang === "kk"
+      ? "\n\nНақты білмесеңіз — «білмеймін», «шамамен» немесе «орындаушының кеңесі керек» деп жазыңыз."
+      : "\n\nЕсли не знаете точно — напишите «не знаю», «примерно» или «нужна консультация»."
     : "";
-  return asButtonsOrList(assistantMessage + hint, buildOptionItems(fields));
+  return asButtonsOrList(assistantMessage + hint, buildOptionItems(fields, lang), lang);
 }
 
-export function renderCategoryPick(categories: { slug: string; name: string }[]): OutgoingWhatsAppMessage {
+export function renderCategoryPick(categories: { slug: string; name: string }[], lang: Language): OutgoingWhatsAppMessage {
   const items = categories.map((c) => ({ token: `cat|${c.slug}`, label: c.name }));
-  return asButtonsOrList("Не получилось точно определить категорию. Выберите подходящий вариант:", items);
+  const body =
+    lang === "kk"
+      ? "Санатты дәл анықтай алмадық. Сәйкес нұсқаны таңдаңыз:"
+      : "Не получилось точно определить категорию. Выберите подходящий вариант:";
+  return asButtonsOrList(body, items, lang);
 }
 
-export function renderReviewCard(order: OrderDto): OutgoingWhatsAppMessage {
+export function renderReviewCard(order: OrderDto, lang: Language): OutgoingWhatsAppMessage {
   const lines = (order.category?.fields ?? [])
     .filter((f) => order.fieldsData[f.key] !== undefined)
-    .map((f) => `${f.label}: ${formatFieldValue(order.fieldsData[f.key], f)}`);
+    .map((f) => `${f.label[lang]}: ${formatFieldValue(order.fieldsData[f.key], f, lang)}`);
+  const body =
+    lang === "kk"
+      ? `Өтінімді тексеріңіз:\n\n${lines.join("\n")}\n\nБәрі дұрыс па?`
+      : `Проверьте заявку:\n\n${lines.join("\n")}\n\nВсё верно?`;
   return {
-    body: `Проверьте заявку:\n\n${lines.join("\n")}\n\nВсё верно?`,
+    body,
     buttons: [
-      { id: "action|publish", text: "Отправить заявку" },
-      { id: "action|edit", text: "Изменить" },
+      { id: "action|publish", text: lang === "kk" ? "Өтінімді жіберу" : "Отправить заявку" },
+      { id: "action|edit", text: lang === "kk" ? "Өзгерту" : "Изменить" },
     ],
   };
 }
-

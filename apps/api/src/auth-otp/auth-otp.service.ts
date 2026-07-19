@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { createHash, randomInt } from "crypto";
 import { JwtService } from "@nestjs/jwt";
+import { Language } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { env } from "../config/env";
 import { normalizePhone, isValidPhone } from "../common/phone.util";
@@ -39,7 +40,7 @@ export class AuthOtpService {
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
-  async requestCode(rawPhone: string, purpose: Purpose, deviceId: string, ip?: string) {
+  async requestCode(rawPhone: string, purpose: Purpose, deviceId: string, ip?: string, lang: Language = "ru") {
     const phone = normalizePhone(rawPhone);
     if (!isValidPhone(phone)) {
       throw new BadRequestException("Некорректный номер телефона");
@@ -103,9 +104,10 @@ export class AuthOtpService {
       this.logger.warn(`WhatsApp checkExists failed for ${phone}, assuming it has WhatsApp: ${(err as Error).message}`);
     }
 
+    const codeText = lang === "kk" ? `Растау коды: ${code}` : `Ваш код подтверждения: ${code}`;
     if (hasWhatsapp) {
       try {
-        await this.whatsapp.sendText(phone, `Ваш код подтверждения: ${code}`);
+        await this.whatsapp.sendText(phone, codeText);
       } catch (err) {
         this.logger.warn(`WhatsApp OTP delivery failed for ${phone}, falling back to SMS: ${(err as Error).message}`);
         hasWhatsapp = false;
@@ -114,7 +116,7 @@ export class AuthOtpService {
 
     if (!hasWhatsapp) {
       channel = "sms";
-      await this.sms.send(phone, `Ваш код подтверждения: ${code}`);
+      await this.sms.send(phone, codeText);
     }
 
     return {
@@ -129,6 +131,7 @@ export class AuthOtpService {
     code: string,
     purpose: Purpose,
     deviceId: string,
+    lang?: Language,
   ): Promise<AuthResult> {
     const phone = normalizePhone(rawPhone);
 
@@ -155,7 +158,7 @@ export class AuthOtpService {
       data: { consumedAt: new Date() },
     });
 
-    return this.issueSessionForPhone(phone, purpose, deviceId);
+    return this.issueSessionForPhone(phone, purpose, deviceId, true, lang);
   }
 
   /**
@@ -219,11 +222,12 @@ export class AuthOtpService {
     purpose: Purpose,
     deviceId: string,
     refreshTrustedDevice = true,
+    lang?: Language,
   ): Promise<AuthResult> {
     const user = await this.prisma.user.upsert({
       where: { phone },
-      create: { phone },
-      update: {},
+      create: { phone, ...(lang ? { preferredLanguage: lang === "kk" ? "KK" : "RU" } : {}) },
+      update: lang ? { preferredLanguage: lang === "kk" ? "KK" : "RU" } : {},
     });
 
     let role: "client" | "supplier";

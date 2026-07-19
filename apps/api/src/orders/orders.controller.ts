@@ -47,17 +47,21 @@ export class OrdersController {
 
   @Post(":id/chat")
   chat(@Param("id") id: string, @Body() dto: ChatMessageDto) {
-    return this.orders.chat(id, dto.message);
+    return this.orders.chat(id, dto.message, dto.lang);
   }
 
   @Post(":id/category")
-  pickCategory(@Param("id") id: string, @Body("categorySlug") categorySlug: string) {
-    return this.orders.pickCategory(id, categorySlug);
+  pickCategory(
+    @Param("id") id: string,
+    @Body("categorySlug") categorySlug: string,
+    @Body("lang") lang?: "ru" | "kk",
+  ) {
+    return this.orders.pickCategory(id, categorySlug, lang);
   }
 
   @Post(":id/fields")
   setField(@Param("id") id: string, @Body() dto: SetFieldDto) {
-    return this.orders.setField(id, dto.key, dto.value);
+    return this.orders.setField(id, dto.key, dto.value, dto.lang);
   }
 
   @Post(":id/photos")

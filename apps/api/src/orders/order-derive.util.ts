@@ -1,4 +1,4 @@
-import { CategoryField } from "@ai-zayavki/shared";
+import { CategoryField, Language } from "@ai-zayavki/shared";
 
 /**
  * Category templates store everything in one flexible fieldsData JSON blob,
@@ -52,10 +52,13 @@ export function deriveDenormalizedColumns(
 }
 
 /** Joins the question text of the field(s) picked by nextQuestionFields into one assistant message. */
-export function buildQuestionText(fields: CategoryField[]): string {
-  const unique = Array.from(new Set(fields.map((f) => f.question)));
+export function buildQuestionText(fields: CategoryField[], lang: Language): string {
+  const unique = Array.from(new Set(fields.map((f) => f.question[lang])));
   return unique.join(" ");
 }
 
-export const READY_FOR_REVIEW_MESSAGE =
-  "Отлично! Все данные собраны. Проверьте карточку заявки ниже и отправьте её.";
+export function readyForReviewMessage(lang: Language): string {
+  return lang === "kk"
+    ? "Керемет! Барлық деректер жиналды. Төмендегі өтінім карточкасын тексеріп, жіберіңіз."
+    : "Отлично! Все данные собраны. Проверьте карточку заявки ниже и отправьте её.";
+}

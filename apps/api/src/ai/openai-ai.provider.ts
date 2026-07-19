@@ -59,9 +59,9 @@ export class OpenAiProvider implements AiProvider {
     const fieldsDoc = fields
       .filter((f) => knownFields[f.key] === undefined)
       .map((f) => {
-        const opts = f.options ? ` варианты: ${f.options.map((o) => `${o.value}=${o.label}`).join(", ")}` : "";
+        const opts = f.options ? ` варианты: ${f.options.map((o) => `${o.value}=${o.label.ru}`).join(", ")}` : "";
         const unit = f.unit ? ` единица: ${f.unit}` : "";
-        return `- ${f.key} (${f.type}${unit}): ${f.label}.${opts}`;
+        return `- ${f.key} (${f.type}${unit}): ${f.label.ru}.${opts}`;
       })
       .join("\n");
 

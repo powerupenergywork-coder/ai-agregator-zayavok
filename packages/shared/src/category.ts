@@ -1,6 +1,8 @@
 // Category template schema — drives both the AI extraction prompt and the
 // dynamic quick-reply UI. Admins edit these without a deploy (see admin module).
 
+import { Language } from "./language";
+
 export type CategoryFieldType =
   | "text"
   | "number"
@@ -11,14 +13,17 @@ export type CategoryFieldType =
   | "photo"
   | "boolean";
 
+/** All user-facing category text is bilingual — see packages/shared/src/language.ts. */
+export type LocalizedText = Record<Language, string>;
+
 export interface CategoryFieldOption {
   value: string;
-  label: string;
+  label: LocalizedText;
 }
 
 export interface CategoryField {
   key: string;
-  label: string;
+  label: LocalizedText;
   type: CategoryFieldType;
   required: boolean;
   /** Shown as tap-able chips instead of free text when present. */
@@ -32,7 +37,7 @@ export interface CategoryField {
    */
   allowUnknown?: boolean;
   /** The clarifying question the AI asks when this field is missing. */
-  question: string;
+  question: LocalizedText;
   /**
    * Fields sharing the same combineGroup are asked together in a single
    * message when both are missing (e.g. "адрес загрузки и адрес выгрузки"),
@@ -43,15 +48,15 @@ export interface CategoryField {
 
 export interface CategoryTemplate {
   slug: string;
-  name: string;
+  name: LocalizedText;
   icon?: string;
   /** Example phrases shown as chips on the landing page. */
-  examples: string[];
+  examples: LocalizedText[];
   fields: CategoryField[];
 }
 
 export const UNKNOWN_VALUE_OPTIONS: CategoryFieldOption[] = [
-  { value: "unknown", label: "Не знаю" },
-  { value: "approximate", label: "Примерно" },
-  { value: "needs_consultation", label: "Нужна консультация исполнителя" },
+  { value: "unknown", label: { ru: "Не знаю", kk: "Білмеймін" } },
+  { value: "approximate", label: { ru: "Примерно", kk: "Шамамен" } },
+  { value: "needs_consultation", label: { ru: "Нужна консультация исполнителя", kk: "Орындаушының кеңесі керек" } },
 ];

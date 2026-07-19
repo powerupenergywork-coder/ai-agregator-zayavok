@@ -3,12 +3,14 @@
 import { useState } from "react";
 import type { CategoryField } from "@ai-zayavki/shared";
 import { UNKNOWN_VALUE_OPTIONS } from "@ai-zayavki/shared";
+import { useLocale } from "@/lib/i18n/context";
 import { Button, Chip } from "./ui";
 
 /** Renders the right control for one category field — chips wherever the
  * answer is enumerable, free text only when it genuinely has to be (matches
  * the "chips over typing" UX call from the design discussion). */
 export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit: (value: unknown) => void }) {
+  const { locale, t } = useLocale();
   const [text, setText] = useState("");
 
   if (field.type === "enum" && field.options) {
@@ -16,7 +18,7 @@ export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit
       <div className="flex flex-wrap gap-2">
         {field.options.map((opt) => (
           <Chip key={opt.value} onClick={() => onSubmit(opt.value)}>
-            {opt.label}
+            {opt.label[locale]}
           </Chip>
         ))}
       </div>
@@ -26,8 +28,8 @@ export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit
   if (field.type === "boolean") {
     return (
       <div className="flex flex-wrap gap-2">
-        <Chip onClick={() => onSubmit(true)}>Да</Chip>
-        <Chip onClick={() => onSubmit(false)}>Нет</Chip>
+        <Chip onClick={() => onSubmit(true)}>{t.common.yes}</Chip>
+        <Chip onClick={() => onSubmit(false)}>{t.common.no}</Chip>
       </div>
     );
   }
@@ -41,9 +43,9 @@ export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
     return (
       <div className="flex flex-wrap items-center gap-2">
-        <Chip onClick={() => onSubmit(fmt(today))}>Сегодня</Chip>
-        <Chip onClick={() => onSubmit(fmt(tomorrow))}>Завтра</Chip>
-        <Chip onClick={() => onSubmit(fmt(dayAfter))}>Послезавтра</Chip>
+        <Chip onClick={() => onSubmit(fmt(today))}>{t.common.today}</Chip>
+        <Chip onClick={() => onSubmit(fmt(tomorrow))}>{t.common.tomorrow}</Chip>
+        <Chip onClick={() => onSubmit(fmt(dayAfter))}>{t.common.dayAfterTomorrow}</Chip>
         <input
           type="date"
           className="rounded-full border border-slate-300 px-3 py-2 text-sm"
@@ -56,9 +58,9 @@ export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit
   if (field.type === "time") {
     return (
       <div className="flex flex-wrap items-center gap-2">
-        {["09:00", "12:00", "15:00", "18:00"].map((t) => (
-          <Chip key={t} onClick={() => onSubmit(t)}>
-            {t}
+        {["09:00", "12:00", "15:00", "18:00"].map((tm) => (
+          <Chip key={tm} onClick={() => onSubmit(tm)}>
+            {tm}
           </Chip>
         ))}
         <input
@@ -86,18 +88,18 @@ export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit
           value={text}
           onChange={(e) => setText(e.target.value)}
           type={field.type === "number" ? "number" : "text"}
-          placeholder={field.unit ? `Значение (${field.unit})` : "Ваш ответ"}
+          placeholder={field.unit ? t.common.valueWithUnit(field.unit) : t.common.yourAnswer}
           className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-brand-500"
         />
         <Button type="submit" disabled={!text.trim()}>
-          Ок
+          {t.common.ok}
         </Button>
       </form>
       {field.allowUnknown && (
         <div className="flex flex-wrap gap-2">
           {UNKNOWN_VALUE_OPTIONS.map((opt) => (
             <Chip key={opt.value} onClick={() => onSubmit(opt.value)} className="text-slate-500">
-              {opt.label}
+              {opt.label[locale]}
             </Chip>
           ))}
         </div>

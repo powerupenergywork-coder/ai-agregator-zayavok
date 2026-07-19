@@ -1,5 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Language } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { toLang } from "../common/language.util";
 import { SMS_PROVIDER, SmsProvider } from "../sms/sms-provider.interface";
 import { WHATSAPP_PROVIDER, WhatsAppButton, WhatsAppProvider } from "../whatsapp/whatsapp-provider.interface";
 import { NotificationEvent, renderTemplate } from "./notification-templates";
@@ -29,8 +31,9 @@ export class NotificationsService {
   ) {}
 
   async send(opts: SendOptions): Promise<void> {
-    const text = renderTemplate(opts.event, opts.payload);
-    const channel = opts.channel ?? (await this.resolveChannel(opts.recipientPhone));
+    const { channel: resolvedChannel, lang } = await this.resolveRecipient(opts.recipientPhone);
+    const channel = opts.channel ?? resolvedChannel;
+    const text = renderTemplate(opts.event, opts.payload, lang);
 
     let status: "SENT" | "FAILED" = "SENT";
     let errorMessage: string | undefined;
@@ -66,9 +69,12 @@ export class NotificationsService {
     });
   }
 
-  private async resolveChannel(phone?: string): Promise<Channel> {
-    if (!phone) return "CONSOLE";
+  private async resolveRecipient(phone?: string): Promise<{ channel: Channel; lang: Language }> {
+    if (!phone) return { channel: "CONSOLE", lang: "ru" };
     const user = await this.prisma.user.findUnique({ where: { phone } });
-    return (user?.preferredChannel as Channel) ?? "SMS";
+    return {
+      channel: (user?.preferredChannel as Channel) ?? "SMS",
+      lang: user ? toLang(user.preferredLanguage) : "ru",
+    };
   }
 }

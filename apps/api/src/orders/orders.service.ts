@@ -9,7 +9,9 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import {
   CategoryField,
-  ORDER_STATUS_LABELS_RU,
+  Language,
+  LocalizedText,
+  ORDER_STATUS_LABELS,
   ORDER_STATUS_TRANSITIONS,
   OrderStatus,
 } from "@ai-zayavki/shared";
@@ -29,8 +31,9 @@ import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { assertTransition } from "../common/state-machine/state-machine.util";
 import { env } from "../config/env";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
-import { buildQuestionText, deriveDenormalizedColumns, READY_FOR_REVIEW_MESSAGE } from "./order-derive.util";
+import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } from "./order-derive.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
+import { toLang } from "../common/language.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderDto } from "./order.dto";
 
@@ -70,7 +73,7 @@ export class OrdersService {
     return this.toDto(order.id);
   }
 
-  async chat(orderId: string, message: string): Promise<ChatTurnResponse> {
+  async chat(orderId: string, message: string, lang: Language = "ru"): Promise<ChatTurnResponse> {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
     await this.prisma.chatMessage.create({ data: { orderId, role: "USER", content: message } });
@@ -85,12 +88,12 @@ export class OrdersService {
         classification = await this.ai.classify(message, allCategories);
       } catch (err) {
         if (err instanceof AiUnavailableError) {
-          return this.respondNeedsCategoryPick(orderId, allCategories);
+          return this.respondNeedsCategoryPick(orderId, allCategories, lang);
         }
         throw err;
       }
       if (!classification || classification.confidence < CLASSIFY_CONFIDENCE_THRESHOLD) {
-        return this.respondNeedsCategoryPick(orderId, allCategories);
+        return this.respondNeedsCategoryPick(orderId, allCategories, lang);
       }
       categoryRow = await this.prisma.category.findUniqueOrThrow({ where: { slug: classification.slug } });
       if (order.status === "DRAFT") {
@@ -130,10 +133,10 @@ export class OrdersService {
       }
     }
 
-    return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted });
+    return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted }, lang);
   }
 
-  async pickCategory(orderId: string, categorySlug: string): Promise<ChatTurnResponse> {
+  async pickCategory(orderId: string, categorySlug: string, lang: Language = "ru"): Promise<ChatTurnResponse> {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
     const category = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
@@ -144,10 +147,10 @@ export class OrdersService {
     }
     await this.prisma.order.update({ where: { id: orderId }, data: { categoryId: category.id } });
 
-    return this.applyFieldUpdate(orderId, category, (order.fieldsData ?? {}) as Record<string, unknown>);
+    return this.applyFieldUpdate(orderId, category, (order.fieldsData ?? {}) as Record<string, unknown>, lang);
   }
 
-  async setField(orderId: string, key: string, value: unknown): Promise<ChatTurnResponse> {
+  async setField(orderId: string, key: string, value: unknown, lang: Language = "ru"): Promise<ChatTurnResponse> {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
     if (!order.categoryId) throw new BadRequestException("Сначала определите категорию заявки");
@@ -158,10 +161,10 @@ export class OrdersService {
       throw new BadRequestException(`Неизвестное поле: ${key}`);
     }
     if (!isValidFieldValue(field, value)) {
-      throw new BadRequestException(`Некорректное значение для поля «${field.label}»`);
+      throw new BadRequestException(`Некорректное значение для поля «${field.label.ru}»`);
     }
     const knownFields = { ...((order.fieldsData ?? {}) as Record<string, unknown>), [key]: value };
-    return this.applyFieldUpdate(orderId, category, knownFields);
+    return this.applyFieldUpdate(orderId, category, knownFields, lang);
   }
 
   async addPhoto(orderId: string, buffer: Buffer, filename: string, mimeType: string) {
@@ -175,9 +178,16 @@ export class OrdersService {
   private async respondNeedsCategoryPick(
     orderId: string,
     categories: { slug: string; name: string; examples: string[] }[],
+    lang: Language,
   ): Promise<ChatTurnResponse> {
+    // Category names/examples here stay Russian regardless of lang — this is
+    // the rare "AI couldn't confidently classify" fallback, sourced from
+    // listForClassification() (which feeds the AI prompt and is deliberately
+    // kept Russian-only, see categories.service.ts).
     const assistantMessage =
-      "Не получилось точно определить категорию. Выберите подходящий вариант, и я продолжу оформление:";
+      lang === "kk"
+        ? "Санатты дәл анықтай алмадық. Сәйкес нұсқаны таңдаңыз, мен рәсімдеуді жалғастырамын:"
+        : "Не получилось точно определить категорию. Выберите подходящий вариант, и я продолжу оформление:";
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
     return {
       order: await this.toDto(orderId),
@@ -193,6 +203,7 @@ export class OrdersService {
     orderId: string,
     category: { id: string; fields: unknown },
     mergedFields: Record<string, unknown>,
+    lang: Language = "ru",
   ): Promise<ChatTurnResponse> {
     const fields = category.fields as unknown as CategoryField[];
     // Defense in depth against AI extraction (chat/pickCategory path): an
@@ -222,7 +233,7 @@ export class OrdersService {
       },
     });
 
-    const assistantMessage = missing.length === 0 ? READY_FOR_REVIEW_MESSAGE : buildQuestionText(missing);
+    const assistantMessage = missing.length === 0 ? readyForReviewMessage(lang) : buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {
@@ -256,19 +267,20 @@ export class OrdersService {
   async requestPublishConfirmation(orderId: string, user: AuthUser) {
     const { category, fields, order } = await this.prepareForPublish(orderId, user);
     const dto = await this.toDto(orderId);
+    const lang = await this.getLangForPhone(user.phone);
     await this.notifications.send({
       event: "order_confirm_request",
       payload: {
         orderNumber: dto.number,
-        categoryName: category.name,
+        categoryName: (category.name as unknown as LocalizedText)[lang],
         city: order.city ?? "",
-        whenText: formatWhen(order),
-        fullDescription: fullDescription(order.fieldsData, fields),
+        whenText: formatWhen(order, lang),
+        fullDescription: fullDescription(order.fieldsData, fields, lang),
         confirmUrl: `${env.webUrl}/confirm/${order.publicToken}`,
       },
       recipientPhone: user.phone,
       orderId,
-      buttons: [{ id: `confirm_publish|${orderId}`, text: "Подтвердить" }],
+      buttons: [{ id: `confirm_publish|${orderId}`, text: lang === "kk" ? "Растау" : "Подтвердить" }],
     });
     return dto;
   }
@@ -339,14 +351,15 @@ export class OrdersService {
     await this.transitionStatus(orderId, "PUBLISHED", "client");
 
     const dto = await this.toDto(orderId);
+    const lang = await this.getLangForPhone(dto.clientPhone ?? undefined);
     await this.notifications.send({
       event: "order_published",
       payload: {
         orderNumber: dto.number,
-        categoryName: category.name,
+        categoryName: (category.name as unknown as LocalizedText)[lang],
         city: order.city ?? "",
-        whenText: formatWhen(order),
-        fullDescription: fullDescription(order.fieldsData, fields),
+        whenText: formatWhen(order, lang),
+        fullDescription: fullDescription(order.fieldsData, fields, lang),
         statusUrl: `${env.webUrl}/orders/${dto.id}`,
       },
       recipientPhone: dto.clientPhone ?? undefined,
@@ -441,19 +454,21 @@ export class OrdersService {
     });
     if (!client) return;
     const category = order.categoryId ? await this.categories.findByIdOrThrow(order.categoryId) : null;
+    const lang = toLang(client.user.preferredLanguage);
+    const categoryName = category ? (category.name as unknown as LocalizedText)[lang] : lang === "kk" ? "қызмет" : "услуга";
 
     await this.notifications.send({
       event: "completion_checkin",
       payload: {
         orderNumber: order.number,
-        categoryName: category?.name ?? "услуга",
+        categoryName,
         orderUrl: `${env.webUrl}/orders/${orderId}`,
       },
       recipientPhone: client.user.phone,
       orderId,
       buttons: [
-        { id: `complete|yes|${orderId}`, text: "Да, всё хорошо" },
-        { id: `complete|no|${orderId}`, text: "Нет, не получилось" },
+        { id: `complete|yes|${orderId}`, text: lang === "kk" ? "Иә, бәрі жақсы" : "Да, всё хорошо" },
+        { id: `complete|no|${orderId}`, text: lang === "kk" ? "Жоқ, болмады" : "Нет, не получилось" },
       ],
     });
   }
@@ -509,7 +524,7 @@ export class OrdersService {
       id: o.id,
       number: o.number,
       status: o.status,
-      statusLabel: ORDER_STATUS_LABELS_RU[o.status as OrderStatus],
+      statusLabel: ORDER_STATUS_LABELS[o.status as OrderStatus],
       categoryName: o.category?.name ?? null,
       createdAt: o.createdAt,
     }));
@@ -560,6 +575,12 @@ export class OrdersService {
     return order;
   }
 
+  private async getLangForPhone(phone?: string): Promise<Language> {
+    if (!phone) return "ru";
+    const user = await this.prisma.user.findUnique({ where: { phone }, select: { preferredLanguage: true } });
+    return user ? toLang(user.preferredLanguage) : "ru";
+  }
+
   async getByPublicToken(token: string) {
     const order = await this.prisma.order.findUnique({ where: { publicToken: token } });
     if (!order) throw new NotFoundException("Заявка не найдена");
@@ -598,12 +619,12 @@ export class OrdersService {
       number: order.number,
       publicToken: order.publicToken,
       status: order.status,
-      statusLabel: ORDER_STATUS_LABELS_RU[order.status as OrderStatus],
+      statusLabel: ORDER_STATUS_LABELS[order.status as OrderStatus],
       urgent: order.urgent,
       category: order.category
         ? {
             slug: order.category.slug,
-            name: order.category.name,
+            name: order.category.name as unknown as LocalizedText,
             icon: order.category.icon,
             fields: order.category.fields as unknown as CategoryField[],
           }

@@ -1,4 +1,5 @@
-import { IsIn, IsString, MinLength } from "class-validator";
+import { IsIn, IsOptional, IsString, MinLength } from "class-validator";
+import { Language } from "@ai-zayavki/shared";
 
 export class RequestCodeDto {
   @IsString()
@@ -10,4 +11,8 @@ export class RequestCodeDto {
 
   @IsString()
   deviceId!: string;
+
+  @IsOptional()
+  @IsIn(["ru", "kk"])
+  lang?: Language;
 }

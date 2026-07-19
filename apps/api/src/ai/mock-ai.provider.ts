@@ -71,7 +71,7 @@ export class MockAiProvider implements AiProvider {
           break;
         }
         case "enum": {
-          const match = field.options?.find((opt) => text.includes(opt.label.toLowerCase()));
+          const match = field.options?.find((opt) => text.includes(opt.label.ru.toLowerCase()));
           if (match) out[field.key] = match.value;
           break;
         }

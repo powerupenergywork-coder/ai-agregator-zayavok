@@ -5,6 +5,8 @@
 // Keeping this in @ai-zayavki/shared so the API's state machine and the
 // web UI's status labels can never drift apart.
 
+import { LocalizedText } from "./category";
+
 export const ORDER_STATUSES = [
   "DRAFT",
   "CLARIFYING",
@@ -18,6 +20,8 @@ export const ORDER_STATUSES = [
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+// Admin-only (Russian, internal staff) — client/supplier-facing code should
+// use the bilingual ORDER_STATUS_LABELS below instead.
 export const ORDER_STATUS_LABELS_RU: Record<OrderStatus, string> = {
   DRAFT: "Черновик",
   CLARIFYING: "Уточнение данных",
@@ -27,6 +31,17 @@ export const ORDER_STATUS_LABELS_RU: Record<OrderStatus, string> = {
   COMPLETED: "Завершена",
   CANCELLED_BY_CLIENT: "Отменена клиентом",
   CANCELLED_BY_ADMIN: "Отменена администратором",
+};
+
+export const ORDER_STATUS_LABELS: Record<OrderStatus, LocalizedText> = {
+  DRAFT: { ru: "Черновик", kk: "Жоба" },
+  CLARIFYING: { ru: "Уточнение данных", kk: "Деректерді нақтылау" },
+  AWAITING_PHONE_CONFIRMATION: { ru: "Ожидает подтверждения телефона", kk: "Телефонды растауды күтуде" },
+  PUBLISHED: { ru: "Разослана поставщикам", kk: "Жеткізушілерге жіберілді" },
+  NEEDS_OPERATOR: { ru: "Требуется вмешательство оператора", kk: "Оператордың араласуы қажет" },
+  COMPLETED: { ru: "Завершена", kk: "Аяқталды" },
+  CANCELLED_BY_CLIENT: { ru: "Отменена клиентом", kk: "Клиент бас тартты" },
+  CANCELLED_BY_ADMIN: { ru: "Отменена администратором", kk: "Әкімші бас тартты" },
 };
 
 // Allowed transitions — the API rejects any transition not listed here.

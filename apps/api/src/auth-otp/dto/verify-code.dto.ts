@@ -1,4 +1,5 @@
-import { IsIn, IsString, Length, MinLength } from "class-validator";
+import { IsIn, IsOptional, IsString, Length, MinLength } from "class-validator";
+import { Language } from "@ai-zayavki/shared";
 
 export class VerifyCodeDto {
   @IsString()
@@ -14,4 +15,8 @@ export class VerifyCodeDto {
 
   @IsString()
   deviceId!: string;
+
+  @IsOptional()
+  @IsIn(["ru", "kk"])
+  lang?: Language;
 }

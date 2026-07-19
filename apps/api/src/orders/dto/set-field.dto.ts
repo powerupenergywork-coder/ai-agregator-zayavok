@@ -1,4 +1,5 @@
-import { IsDefined, IsNotEmpty, IsString } from "class-validator";
+import { IsDefined, IsIn, IsNotEmpty, IsOptional, IsString } from "class-validator";
+import { Language } from "@ai-zayavki/shared";
 
 export class SetFieldDto {
   @IsString()
@@ -12,4 +13,8 @@ export class SetFieldDto {
   // with zero validation decorators before the handler ever sees it.
   @IsDefined()
   value: unknown;
+
+  @IsOptional()
+  @IsIn(["ru", "kk"])
+  lang?: Language;
 }

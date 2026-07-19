@@ -10,12 +10,12 @@ export class AuthOtpController {
 
   @Post("request-code")
   requestCode(@Body() dto: RequestCodeDto, @Ip() ip: string) {
-    return this.authOtp.requestCode(dto.phone, dto.purpose, dto.deviceId, ip);
+    return this.authOtp.requestCode(dto.phone, dto.purpose, dto.deviceId, ip, dto.lang);
   }
 
   @Post("verify-code")
   verifyCode(@Body() dto: VerifyCodeDto) {
-    return this.authOtp.verifyCode(dto.phone, dto.code, dto.purpose, dto.deviceId);
+    return this.authOtp.verifyCode(dto.phone, dto.code, dto.purpose, dto.deviceId, dto.lang);
   }
 
   /** Lets the client skip the SMS round-trip entirely on a device verified recently. */

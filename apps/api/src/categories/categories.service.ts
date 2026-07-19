@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { CategoryField, CategoryTemplate } from "@ai-zayavki/shared";
+import { CategoryField, CategoryTemplate, LocalizedText } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
@@ -31,14 +31,15 @@ export class CategoriesService {
     return row;
   }
 
-  /** Used by the AI module to build the classification prompt (name + examples per category). */
+  /** Used by the AI module to build the classification prompt (name + examples per category) —
+   * prompts stay Russian-only regardless of the client's language, see ai/*-ai.provider.ts. */
   async listForClassification() {
     const rows = await this.prisma.category.findMany({ where: { isActive: true } });
     return rows.map((r) => ({
       id: r.id,
       slug: r.slug,
-      name: r.name,
-      examples: r.examples as string[],
+      name: (r.name as unknown as LocalizedText).ru,
+      examples: (r.examples as unknown as LocalizedText[]).map((e) => e.ru),
     }));
   }
 
@@ -46,9 +47,9 @@ export class CategoriesService {
     const row = await this.prisma.category.create({
       data: {
         slug: template.slug,
-        name: template.name,
+        name: template.name as any,
         icon: template.icon,
-        examples: template.examples,
+        examples: template.examples as any,
         fields: template.fields as any,
       },
     });
@@ -65,9 +66,9 @@ export class CategoriesService {
     const row = await this.prisma.category.update({
       where: { id },
       data: {
-        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.name !== undefined ? { name: patch.name as any } : {}),
         ...(patch.icon !== undefined ? { icon: patch.icon } : {}),
-        ...(patch.examples !== undefined ? { examples: patch.examples } : {}),
+        ...(patch.examples !== undefined ? { examples: patch.examples as any } : {}),
         ...(patch.fields !== undefined ? { fields: patch.fields as any } : {}),
         ...(patch.isActive !== undefined ? { isActive: patch.isActive } : {}),
       },
@@ -78,16 +79,16 @@ export class CategoriesService {
 
 function toTemplate(row: {
   slug: string;
-  name: string;
+  name: unknown;
   icon: string | null;
   examples: unknown;
   fields: unknown;
 }): CategoryTemplate {
   return {
     slug: row.slug,
-    name: row.name,
+    name: row.name as LocalizedText,
     icon: row.icon ?? undefined,
-    examples: row.examples as string[],
+    examples: row.examples as LocalizedText[],
     fields: row.fields as CategoryField[],
   };
 }

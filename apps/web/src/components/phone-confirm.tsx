@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { authApi, AuthResult } from "@/lib/api";
 import { getDeviceId } from "@/lib/device";
 import { setToken } from "@/lib/auth";
+import { useLocale } from "@/lib/i18n/context";
 import { Button } from "./ui";
 
 type Purpose = "CLIENT_LOGIN" | "SUPPLIER_LOGIN";
@@ -17,6 +18,7 @@ export function PhoneConfirm({
   onAuthenticated: (result: AuthResult) => void;
   onCancel?: () => void;
 }) {
+  const { locale, t } = useLocale();
   const [phase, setPhase] = useState<"checking" | "phone" | "code">("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -61,12 +63,12 @@ export function PhoneConfirm({
         onAuthenticated(trusted as AuthResult);
         return;
       }
-      const res = await authApi.requestCode(phone, purpose, deviceId);
+      const res = await authApi.requestCode(phone, purpose, deviceId, locale);
       setCooldown(res.resendCooldownSeconds);
       setChannel(res.channel);
       setPhase("code");
     } catch (e: any) {
-      setError(e.message || "Не получилось отправить код");
+      setError(e.message || t.phoneConfirm.requestError);
     } finally {
       setBusy(false);
     }
@@ -76,11 +78,11 @@ export function PhoneConfirm({
     setError(null);
     setBusy(true);
     try {
-      const result = await authApi.verifyCode(phone, value, purpose, getDeviceId());
+      const result = await authApi.verifyCode(phone, value, purpose, getDeviceId(), locale);
       setToken(purpose === "CLIENT_LOGIN" ? "client" : "supplier", result.token);
       onAuthenticated(result);
     } catch (e: any) {
-      setError(e.message || "Неверный код");
+      setError(e.message || t.phoneConfirm.codeError);
     } finally {
       setBusy(false);
     }
@@ -89,13 +91,11 @@ export function PhoneConfirm({
   if (phase === "phone") {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-slate-600">
-          Нужен, чтобы отправить вам ссылку на заявку и связать с исполнителем — не для рекламы.
-        </p>
+        <p className="text-sm text-slate-600">{t.phoneConfirm.hint}</p>
         <input
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          placeholder="+7 700 000 00 00"
+          placeholder={t.phoneConfirm.phonePlaceholder}
           type="tel"
           autoComplete="tel"
           className="rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-brand-500"
@@ -104,11 +104,11 @@ export function PhoneConfirm({
         <div className="flex gap-2">
           {onCancel && (
             <Button variant="ghost" onClick={onCancel}>
-              Отмена
+              {t.common.cancel}
             </Button>
           )}
           <Button onClick={requestCode} disabled={busy || phone.trim().length < 5} className="flex-1">
-            Подтвердить номер
+            {t.phoneConfirm.confirmNumber}
           </Button>
         </div>
       </div>
@@ -118,14 +118,12 @@ export function PhoneConfirm({
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-slate-600">
-        {channel === "whatsapp"
-          ? `Мы отправили код подтверждения в WhatsApp на ${phone}`
-          : `Мы отправили код подтверждения по SMS на ${phone}`}
+        {channel === "whatsapp" ? t.phoneConfirm.codeSentWhatsapp(phone) : t.phoneConfirm.codeSentSms(phone)}
       </p>
       <input
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        placeholder={channel === "whatsapp" ? "Код из WhatsApp" : "Код из SMS"}
+        placeholder={channel === "whatsapp" ? t.phoneConfirm.codeFromWhatsapp : t.phoneConfirm.codeFromSms}
         inputMode="numeric"
         autoComplete="one-time-code"
         className="rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-brand-500"
@@ -133,10 +131,10 @@ export function PhoneConfirm({
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex gap-2">
         <Button variant="ghost" onClick={() => setPhase("phone")}>
-          Назад
+          {t.common.back}
         </Button>
         <Button onClick={() => submitCode(code)} disabled={busy || code.length < 4} className="flex-1">
-          Подтвердить
+          {t.phoneConfirm.confirm}
         </Button>
       </div>
       <button
@@ -145,7 +143,7 @@ export function PhoneConfirm({
         onClick={requestCode}
         className="text-sm text-brand-600 disabled:text-slate-400"
       >
-        {cooldown > 0 ? `Повторить через ${cooldown} сек.` : "Отправить код ещё раз"}
+        {cooldown > 0 ? t.phoneConfirm.resendCooldown(cooldown) : t.phoneConfirm.resend}
       </button>
     </div>
   );
