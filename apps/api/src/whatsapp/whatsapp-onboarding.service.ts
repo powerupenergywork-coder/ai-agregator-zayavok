@@ -33,7 +33,21 @@ interface OnboardingState {
 // order such as "Ищу поставщика песка" would otherwise misfire into
 // onboarding. Production would use a dedicated wa.me link with pre-filled
 // text instead of guessing intent from freeform chat.
-const TRIGGER_PHRASES = new Set(["поставщик", "регистрация", "стать исполнителем", "мои услуги", "я поставщик"]);
+// Kazakh equivalents included so a brand-new supplier can start registration
+// in Kazakh from their very first message — the Russian-only phrases have no
+// Kazakh-unique letters, so detectLanguage() alone can't catch that intent.
+const TRIGGER_PHRASES = new Set([
+  "поставщик",
+  "регистрация",
+  "стать исполнителем",
+  "мои услуги",
+  "я поставщик",
+  "жеткізуші",
+  "тіркелу",
+  "орындаушы болу",
+  "менің қызметтерім",
+  "мен жеткізушімін",
+]);
 
 export function isOnboardingTrigger(text: string): boolean {
   return TRIGGER_PHRASES.has(text.trim().toLowerCase());
