@@ -109,7 +109,10 @@ export class MatchingService {
         activityStatus: "ACTIVE",
         id: { notIn: excludeIds },
         categories: { some: { categoryId: order.categoryId } },
-        ...(order.city ? { serviceAreas: { some: { city: order.city } } } : {}),
+        // Case-insensitive: the city comes from free-text answers on both
+        // sides (client's order field, supplier's onboarding list) — no
+        // reason to let a stray capital letter split otherwise-identical names.
+        ...(order.city ? { serviceAreas: { some: { city: { equals: order.city, mode: "insensitive" } } } } : {}),
         // acceptsUrgent is collected at onboarding specifically so suppliers
         // can opt out of rush jobs — only worth enforcing for urgent orders;
         // non-urgent dispatch shouldn't care either way.

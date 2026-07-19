@@ -4,13 +4,18 @@ import { CategoryField } from "@ai-zayavki/shared";
  * Category templates store everything in one flexible fieldsData JSON blob,
  * but matching (task 7) needs plain city/address columns to query suppliers
  * by service area. This pulls the first one or two "address" fields into
- * Order.addressFrom/addressTo/city, and the first date/time fields into
- * Order.dateNeeded/timeWindow, purely so those queries stay simple SQL.
+ * Order.addressFrom/addressTo, the dedicated "city" field into Order.city,
+ * and the first date/time fields into Order.dateNeeded/timeWindow, purely so
+ * those queries stay simple SQL.
  *
- * MAPS_PROVIDER=none by default (see .env.example) — there's no real
- * geocoding, so "city" here is just whatever text the client/AI put in the
- * first address field. Good enough for MVP string matching, not for
- * anything requiring an actual place lookup.
+ * Every category template now asks for city as its own field (key: "city"),
+ * separate from the free-text address — matching against a supplier's
+ * ServiceArea.city needs an exact city name, not a full street address, and
+ * MAPS_PROVIDER=none (see .env.example) means there's no real geocoding to
+ * pull one out of address text reliably. Falls back to the first address
+ * field for any category that predates this (shouldn't normally happen,
+ * every seeded category has "city" now, but better than silently matching
+ * nothing).
  */
 export function deriveDenormalizedColumns(
   fields: CategoryField[],
@@ -23,6 +28,7 @@ export function deriveDenormalizedColumns(
   timeWindow?: string;
 } {
   const addressFields = fields.filter((f) => f.type === "address");
+  const cityField = fields.find((f) => f.key === "city");
   const dateField = fields.find((f) => f.type === "date");
   const timeField = fields.find((f) => f.type === "time");
 
@@ -30,6 +36,8 @@ export function deriveDenormalizedColumns(
   const second = addressFields[1];
   const firstVal = first && typeof data[first.key] === "string" ? (data[first.key] as string) : undefined;
   const secondVal = second && typeof data[second.key] === "string" ? (data[second.key] as string) : undefined;
+  const cityVal =
+    cityField && typeof data[cityField.key] === "string" ? (data[cityField.key] as string).trim() : undefined;
 
   const dateVal = dateField && typeof data[dateField.key] === "string" ? (data[dateField.key] as string) : undefined;
   const timeVal = timeField && typeof data[timeField.key] === "string" ? (data[timeField.key] as string) : undefined;
@@ -37,7 +45,7 @@ export function deriveDenormalizedColumns(
   return {
     addressFrom: firstVal,
     addressTo: secondVal,
-    city: firstVal,
+    city: cityVal ?? firstVal,
     dateNeeded: dateVal ? new Date(dateVal) : undefined,
     timeWindow: timeVal,
   };

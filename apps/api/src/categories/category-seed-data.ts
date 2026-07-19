@@ -27,6 +27,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         combineGroup: "addresses",
       },
       {
+        key: "city",
+        label: "Город",
+        type: "text",
+        required: true,
+        question: "В каком городе нужна услуга?",
+      },
+      {
         key: "date",
         label: "Дата",
         type: "date",
@@ -86,6 +93,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         type: "address",
         required: true,
         question: "Укажите адрес, куда подать самосвал.",
+      },
+      {
+        key: "city",
+        label: "Город",
+        type: "text",
+        required: true,
+        question: "В каком городе нужна услуга?",
       },
       {
         key: "cargoType",
@@ -161,6 +175,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         combineGroup: "addresses",
       },
       {
+        key: "city",
+        label: "Город",
+        type: "text",
+        required: true,
+        question: "В каком городе нужна услуга?",
+      },
+      {
         key: "weightTons",
         label: "Вес груза",
         type: "number",
@@ -214,6 +235,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         type: "address",
         required: true,
         question: "Укажите адрес объекта, куда подать кран.",
+      },
+      {
+        key: "city",
+        label: "Город",
+        type: "text",
+        required: true,
+        question: "В каком городе нужна услуга?",
       },
       {
         key: "taskType",
@@ -285,6 +313,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         question: "Укажите адрес, откуда вывозить мусор.",
       },
       {
+        key: "city",
+        label: "Город",
+        type: "text",
+        required: true,
+        question: "В каком городе нужна услуга?",
+      },
+      {
         key: "wasteType",
         label: "Тип мусора",
         type: "enum",
@@ -350,6 +385,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         type: "address",
         required: true,
         question: "Укажите адрес.",
+      },
+      {
+        key: "city",
+        label: "Город",
+        type: "text",
+        required: true,
+        question: "В каком городе нужна услуга?",
       },
       {
         key: "workType",
