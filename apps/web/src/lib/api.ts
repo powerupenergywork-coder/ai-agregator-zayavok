@@ -127,6 +127,9 @@ export const ordersApi = {
     return request<OrderDto>(`/orders/${id}/photos`, { method: "POST", body: form });
   },
   publish: (id: string, token: string) => request<OrderDto>(`/orders/${id}/publish`, { method: "POST" }, token),
+  getByToken: (token: string) => request<OrderDto>(`/orders/by-token/${token}`),
+  confirmPublishByToken: (token: string) =>
+    request<OrderDto>(`/orders/confirm-publish-by-token/${token}`, { method: "POST" }),
   cancel: (id: string, token: string, reason: string, comment?: string) =>
     request<OrderDto>(`/orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason, comment }) }, token),
   complete: (id: string, token: string, positive: boolean, comment?: string) =>

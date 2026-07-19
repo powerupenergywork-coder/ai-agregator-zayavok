@@ -305,6 +305,16 @@ export default function OrderPage() {
             </Card>
           )}
 
+          {order.status === "AWAITING_PHONE_CONFIRMATION" && (
+            <Card className="p-4 text-sm text-slate-600">
+              <p>
+                Мы отправили описание заявки в WhatsApp{order.clientPhone ? ` на ${order.clientPhone}` : ""} —
+                нажмите там кнопку «Подтвердить», чтобы опубликовать заявку и начать поиск исполнителей.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">Эта страница обновится сама, перезагружать не нужно.</p>
+            </Card>
+          )}
+
           {order.status === "NEEDS_OPERATOR" && (
             <Card className="p-4 text-sm text-slate-600">
               Заявка передана оператору — мы разбираемся и скоро свяжемся с вами.

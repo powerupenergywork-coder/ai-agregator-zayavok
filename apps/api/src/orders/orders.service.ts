@@ -236,7 +236,78 @@ export class OrdersService {
 
   // ---------- publish / status ----------
 
+  /** One-step publish — used only by the WhatsApp-native flow
+   * (whatsapp-router.service.ts), where the phone is already proven by the
+   * message having come from that WhatsApp number, so there's no separate
+   * confirmation step to wait for. The web flow uses
+   * requestPublishConfirmation()/confirmPublish() instead — see there for why. */
   async publish(orderId: string, user: AuthUser) {
+    await this.prepareForPublish(orderId, user);
+    return this.finalizePublish(orderId);
+  }
+
+  /** Web flow: a trusted-device session can silently mint a JWT with no
+   * fresh touch of the client's phone at all, so publishing straight from
+   * that alone would let a script spam real supplier notifications with
+   * zero friction. This leaves the order in AWAITING_PHONE_CONFIRMATION and
+   * requires an explicit tap on the "Подтвердить" button sent to the
+   * client's WhatsApp (or, with no WhatsApp, a fallback SMS) before
+   * finalizePublish() actually runs — see confirmPublish(). */
+  async requestPublishConfirmation(orderId: string, user: AuthUser) {
+    const { category, fields, order } = await this.prepareForPublish(orderId, user);
+    const dto = await this.toDto(orderId);
+    await this.notifications.send({
+      event: "order_confirm_request",
+      payload: {
+        orderNumber: dto.number,
+        categoryName: category.name,
+        city: order.city ?? "",
+        whenText: formatWhen(order),
+        fullDescription: fullDescription(order.fieldsData, fields),
+        confirmUrl: `${env.webUrl}/confirm/${order.publicToken}`,
+      },
+      recipientPhone: user.phone,
+      orderId,
+      buttons: [{ id: `confirm_publish|${orderId}`, text: "Подтвердить" }],
+    });
+    return dto;
+  }
+
+  /** Completes what requestPublishConfirmation() started — called from the
+   * "Подтвердить" WhatsApp button tap (whatsapp-router.service.ts). Keyed on
+   * phone rather than a JWT: the tap arrives as a bare webhook payload with
+   * no session of its own, and matching against the order's own client
+   * phone is what actually proves it's the same person who requested it. */
+  async confirmPublish(orderId: string, phone: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { client: { include: { user: true } } },
+    });
+    if (!order) throw new NotFoundException("Заявка не найдена");
+    if (order.status !== "AWAITING_PHONE_CONFIRMATION") {
+      throw new BadRequestException("Заявка уже подтверждена или недоступна для подтверждения");
+    }
+    if (order.client?.user.phone !== phone) {
+      throw new ForbiddenException("Заявка принадлежит другому номеру");
+    }
+    return this.finalizePublish(orderId);
+  }
+
+  /** SMS-fallback path: no WhatsApp buttons on that channel, so
+   * order_confirm_request's text carries a link built from the order's own
+   * publicToken instead — unguessable and order-specific, so possessing it
+   * (only ever delivered to the client's phone) is the confirmation proof,
+   * same security model as getByPublicToken()'s supplier-facing read link. */
+  async confirmPublishByToken(token: string) {
+    const order = await this.prisma.order.findUnique({ where: { publicToken: token } });
+    if (!order) throw new NotFoundException("Заявка не найдена");
+    if (order.status !== "AWAITING_PHONE_CONFIRMATION") {
+      throw new BadRequestException("Заявка уже подтверждена или недоступна для подтверждения");
+    }
+    return this.finalizePublish(order.id);
+  }
+
+  private async prepareForPublish(orderId: string, user: AuthUser) {
     if (user.role !== "client") throw new ForbiddenException("Доступно только клиенту");
     const order = await this.getRawOrThrow(orderId);
     if (order.clientId && order.clientId !== user.profileId) {
@@ -256,6 +327,14 @@ export class OrdersService {
 
     await this.prisma.order.update({ where: { id: orderId }, data: { clientId: user.profileId } });
     await this.transitionStatus(orderId, "AWAITING_PHONE_CONFIRMATION", "client");
+    return { order, category, fields };
+  }
+
+  private async finalizePublish(orderId: string) {
+    const order = await this.getRawOrThrow(orderId);
+    const category = await this.categories.findByIdOrThrow(order.categoryId!);
+    const fields = category.fields as unknown as CategoryField[];
+
     await this.prisma.order.update({ where: { id: orderId }, data: { publishedAt: new Date() } });
     await this.transitionStatus(orderId, "PUBLISHED", "client");
 
@@ -270,10 +349,10 @@ export class OrdersService {
         fullDescription: fullDescription(order.fieldsData, fields),
         statusUrl: `${env.webUrl}/orders/${dto.id}`,
       },
-      recipientPhone: user.phone,
+      recipientPhone: dto.clientPhone ?? undefined,
       orderId,
     });
-    await this.analytics.track("order_published", { orderId, userId: user.sub });
+    await this.analytics.track("order_published", { orderId });
     await this.matchingQueue.add("start", { orderId });
     await this.scheduleCompletionCheckins(orderId);
     this.realtime.emitOrderUpdated(orderId, dto);

@@ -69,7 +69,14 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/publish")
   publish(@Param("id") id: string, @CurrentUser() user: AuthUser) {
-    return this.orders.publish(id, user);
+    return this.orders.requestPublishConfirmation(id, user);
+  }
+
+  /** Public: reached from the confirmUrl link in the order_confirm_request
+   * SMS/WhatsApp text — see OrdersService.confirmPublishByToken(). */
+  @Post("confirm-publish-by-token/:token")
+  confirmPublishByToken(@Param("token") token: string) {
+    return this.orders.confirmPublishByToken(token);
   }
 
   @UseGuards(JwtAuthGuard)

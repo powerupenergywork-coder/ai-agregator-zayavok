@@ -45,6 +45,14 @@ export class WhatsAppRouterService {
         return;
       }
 
+      // Reply to the web flow's publish-confirmation request — same
+      // standalone handling as complete| above, since it can arrive with no
+      // active session (the order was drafted entirely on the web).
+      if (msg.buttonReplyId?.startsWith("confirm_publish|")) {
+        await this.handleConfirmPublish(msg.phone, msg.buttonReplyId);
+        return;
+      }
+
       if (msg.text && BALANCE_TRIGGER_PHRASES.has(msg.text.trim().toLowerCase())) {
         await this.handleBalanceCommand(msg.phone);
         return;
@@ -93,6 +101,16 @@ export class WhatsAppRouterService {
         phone,
         result === "yes" ? "Отлично, спасибо! Заявка закрыта." : "Понял, передаю оператору — скоро свяжемся.",
       );
+    } catch (err) {
+      await this.whatsapp.sendText(phone, (err as Error).message);
+    }
+  }
+
+  private async handleConfirmPublish(phone: string, token: string): Promise<void> {
+    const [, orderId] = token.split("|");
+    try {
+      await this.orders.confirmPublish(orderId, phone);
+      await this.whatsapp.sendText(phone, "Заявка опубликована, начали искать исполнителей.");
     } catch (err) {
       await this.whatsapp.sendText(phone, (err as Error).message);
     }

@@ -5,6 +5,7 @@
 // (see order_broadcast_full below).
 
 export type NotificationEvent =
+  | "order_confirm_request"
   | "order_published"
   | "order_broadcast_full"
   | "order_cancelled"
@@ -15,6 +16,12 @@ export type NotificationEvent =
   | "subscription_activated";
 
 const templates: Record<NotificationEvent, (p: any) => string> = {
+  // Sent from the web flow before publishing actually happens — requires an
+  // explicit tap on the attached button (or, with no WhatsApp, a fallback
+  // SMS code) so a trusted-device session alone can't silently spam real
+  // supplier notifications. See OrdersService.requestPublishConfirmation().
+  order_confirm_request: (p) =>
+    `Проверьте заявку №${p.orderNumber}\n${p.categoryName}, ${p.city}\n${p.whenText}\n\n${p.fullDescription}\n\nНажмите «Подтвердить», чтобы опубликовать и начать поиск исполнителей: ${p.confirmUrl}`,
   order_published: (p) =>
     `Заявка №${p.orderNumber} опубликована\n${p.categoryName}, ${p.city}\n${p.whenText}\n\n${p.fullDescription}\n\nМы начали поиск исполнителей. Статус: ${p.statusUrl}`,
   // Lead-broadcast model — no offer collection, so the message carries
