@@ -110,6 +110,10 @@ export class MatchingService {
         id: { notIn: excludeIds },
         categories: { some: { categoryId: order.categoryId } },
         ...(order.city ? { serviceAreas: { some: { city: order.city } } } : {}),
+        // acceptsUrgent is collected at onboarding specifically so suppliers
+        // can opt out of rush jobs — only worth enforcing for urgent orders;
+        // non-urgent dispatch shouldn't care either way.
+        ...(order.urgent ? { acceptsUrgent: true } : {}),
       },
       include: { user: true },
       orderBy: [{ rating: "desc" }],
