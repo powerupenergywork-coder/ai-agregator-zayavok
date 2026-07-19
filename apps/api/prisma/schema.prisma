@@ -105,6 +105,10 @@ model SupplierProfile {
   // in the admin panel as a moderation queue (ТЗ п.25's manual-blocking spirit
   // applied to onboarding, not just after-the-fact abuse).
   needsReview                Boolean                @default(false)
+  // Quiet-hours window for non-urgent order notifications (see
+  // matching/quiet-hours.util.ts). Both null = not configured, falls back to
+  // DispatchSettings'/env's global default. Both "00:00"/"23:59" = supplier
+  // explicitly opted into round-the-clock. Urgent orders always bypass this.
   workingHoursStart          String?
   workingHoursEnd            String?
   acceptsUrgent              Boolean                @default(true)
@@ -119,6 +123,7 @@ model SupplierProfile {
   serviceAreas               ServiceArea[]
   notifications              NotificationLog[]
   subscription               SupplierSubscription?
+  pendingNotifications       PendingSupplierNotification[]
 }
 
 model SupplierSubscription {
@@ -216,6 +221,7 @@ model Order {
   chatMessages                ChatMessage[]
   statusHistory               OrderStatusEvent[]
   dispatchWaves               DispatchWave[]
+  pendingNotifications        PendingSupplierNotification[]
 
   @@index([status])
   @@index([categoryId, city, district])
@@ -263,6 +269,22 @@ model DispatchWave {
   waveNumber  Int
   supplierIds Json
   sentAt      DateTime @default(now())
+}
+
+// A supplier who matched an order but was outside their quiet-hours window
+// at dispatch time — held here instead of sending immediately, then batched
+// into one order_digest message per supplier when their window next opens
+// (see MatchingService's @Cron flush). Urgent orders never create these rows.
+model PendingSupplierNotification {
+  id         String          @id @default(uuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id])
+  orderId    String
+  order      Order           @relation(fields: [orderId], references: [id])
+  createdAt  DateTime        @default(now())
+
+  @@unique([supplierId, orderId])
+  @@index([supplierId])
 }
 
 // ---------- Notifications / analytics / audit ----------
@@ -339,8 +361,13 @@ enum AdminRole {
 }
 
 model DispatchSettings {
-  id        String   @id @default(uuid())
+  id               String   @id @default(uuid())
   // Max suppliers notified per broadcast (per publish or manual redispatch).
-  waveSize  Int      @default(15)
-  updatedAt DateTime @updatedAt
+  waveSize         Int      @default(15)
+  // Global default quiet-hours window for suppliers who haven't set their own
+  // (see SupplierProfile.workingHoursStart/End) — null here falls back to
+  // env.dispatchQuietHoursStart/End instead. Admin-tunable without a redeploy.
+  quietHoursStart  String?
+  quietHoursEnd    String?
+  updatedAt        DateTime @updatedAt
 }

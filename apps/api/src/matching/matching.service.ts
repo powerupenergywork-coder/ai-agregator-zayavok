@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { OrdersService } from "../orders/orders.service";
@@ -9,6 +10,7 @@ import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { BillingService } from "../billing/billing.service";
 import { env } from "../config/env";
 import { formatWhen, fullDescription } from "./matching-message.util";
+import { isSupplierReachableNow } from "./quiet-hours.util";
 import { CategoryField } from "@ai-zayavki/shared";
 
 @Injectable()
@@ -62,6 +64,21 @@ export class MatchingService {
 
     const orderUrl = `${env.webUrl}/s/${orderId}`;
     for (const supplier of candidates) {
+      // Non-urgent orders respect the supplier's quiet hours — held here
+      // instead of sent immediately, then batched into one digest message
+      // per supplier by flushPendingDigests() once their window opens.
+      // Urgent orders always go through immediately: acceptsUrgent (already
+      // enforced in findCandidates) is the supplier's own agreement to be
+      // reachable any time for those.
+      if (!order.urgent && !isSupplierReachableNow(supplier, settings)) {
+        await this.prisma.pendingSupplierNotification.upsert({
+          where: { supplierId_orderId: { supplierId: supplier.id, orderId } },
+          create: { supplierId: supplier.id, orderId },
+          update: {},
+        });
+        continue;
+      }
+
       // Quota-blocked suppliers still count as "notified" for this order —
       // they were already written into DispatchWave.supplierIds above and
       // won't be reconsidered by a later wave; they just don't get the job
@@ -94,6 +111,67 @@ export class MatchingService {
       metadata: { waveNumber, count: candidates.length },
     });
     this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
+  }
+
+  /** Counterpart to the quiet-hours deferral in sendWave(): for every
+   * supplier whose window has now opened, collect everything held for them
+   * and send it as one order_digest message instead of one ping per order. */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async flushPendingDigests() {
+    const pending = await this.prisma.pendingSupplierNotification.findMany({
+      include: {
+        supplier: { include: { user: true } },
+        order: { include: { category: true, client: { include: { user: true } } } },
+      },
+    });
+    if (pending.length === 0) return;
+
+    const settings = await this.getSettings();
+    const bySupplier = new Map<string, typeof pending>();
+    for (const row of pending) {
+      if (!isSupplierReachableNow(row.supplier, settings)) continue;
+      const list = bySupplier.get(row.supplierId) ?? [];
+      list.push(row);
+      bySupplier.set(row.supplierId, list);
+    }
+
+    for (const [supplierId, rows] of bySupplier) {
+      const supplier = rows[0].supplier;
+      const included: typeof rows = [];
+      for (const row of rows) {
+        const canNotify = await this.billing.checkAndConsumeQuota(supplierId);
+        if (!canNotify) {
+          await this.billing.maybeSendQuotaReminder(supplierId, supplier.user.phone);
+          continue; // stays pending for the next flush (or next month's quota reset)
+        }
+        included.push(row);
+      }
+      if (included.length === 0) continue;
+
+      await this.notifications.send({
+        event: "order_digest",
+        payload: {
+          orders: included.map((row) => ({
+            orderNumber: row.order.number,
+            categoryName: row.order.category?.name ?? "",
+            city: row.order.city ?? "",
+            whenText: formatWhen(row.order),
+            fullDescription: fullDescription(
+              row.order.fieldsData,
+              (row.order.category?.fields as unknown as CategoryField[]) ?? [],
+            ),
+            clientPhone: row.order.client?.user.phone ?? "не указан",
+            orderUrl: `${env.webUrl}/s/${row.orderId}`,
+          })),
+        },
+        recipientPhone: supplier.user.phone,
+        supplierId,
+      });
+
+      await this.prisma.pendingSupplierNotification.deleteMany({
+        where: { id: { in: included.map((row) => row.id) } },
+      });
+    }
   }
 
   private async findCandidates(

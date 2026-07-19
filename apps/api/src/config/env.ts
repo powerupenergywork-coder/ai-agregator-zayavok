@@ -53,6 +53,12 @@ export const env = {
   twoGisApiKey: str("TWOGIS_API_KEY", ""),
 
   dispatchWaveSize: num("DISPATCH_WAVE_SIZE", 15),
+  // Global default quiet-hours window for suppliers who haven't set their own
+  // (DispatchSettings.quietHoursStart/End takes priority when set — this is
+  // just the fallback). See matching/quiet-hours.util.ts.
+  dispatchQuietHoursStart: str("DISPATCH_QUIET_HOURS_START", "08:00"),
+  dispatchQuietHoursEnd: str("DISPATCH_QUIET_HOURS_END", "21:00"),
+  dispatchTimezone: str("DISPATCH_TIMEZONE", "Asia/Almaty"),
 
   // Since suppliers now contact the client directly (no in-system offer
   // selection), the system has to proactively ask whether the order got

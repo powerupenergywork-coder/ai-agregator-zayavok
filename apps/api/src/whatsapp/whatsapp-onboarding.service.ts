@@ -9,13 +9,16 @@ import { phoneToChatId } from "./whatsapp.util";
 import { renderCategoryMultiSelect, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 
-type Step = "company_name" | "categories" | "cities" | "urgent" | "confirm";
+type Step = "company_name" | "categories" | "cities" | "urgent" | "hours" | "confirm";
 
 interface Collected {
   companyName?: string;
   categorySlugs: string[];
   cities: string[];
   acceptsUrgent?: boolean;
+  /** undefined = not answered (use the global default window); true = explicit
+   * round-the-clock opt-out; false = explicit default-hours confirmation. */
+  roundTheClock?: boolean;
 }
 
 interface OnboardingState {
@@ -60,6 +63,8 @@ export class WhatsAppOnboardingService {
           categorySlugs: existing.categories.map((c) => c.category.slug),
           cities: existing.serviceAreas.map((a) => a.city),
           acceptsUrgent: existing.acceptsUrgent,
+          roundTheClock:
+            existing.workingHoursStart === "00:00" && existing.workingHoursEnd === "23:59" ? true : undefined,
         }
       : { categorySlugs: [], cities: [] };
 
@@ -142,6 +147,21 @@ export class WhatsAppOnboardingService {
         return;
       }
       state.collected.acceptsUrgent = token.endsWith("true");
+      state.step = "hours";
+      await this.saveState(chatId, state);
+      await this.whatsapp.sendButtons(phone, "Получать заявки в любое время суток или только в рабочие часы (08:00–21:00)?", [
+        { id: "sup|hours|true", text: "Круглосуточно" },
+        { id: "sup|hours|false", text: "Только 08:00–21:00" },
+      ]);
+      return;
+    }
+
+    if (state.step === "hours") {
+      if (!token || !token.startsWith("sup|hours|")) {
+        await this.whatsapp.sendText(phone, "Выберите один из вариантов кнопкой выше.");
+        return;
+      }
+      state.collected.roundTheClock = token.endsWith("true");
       state.step = "confirm";
       await this.saveState(chatId, state);
       await this.sendConfirm(phone, state);
@@ -200,7 +220,16 @@ export class WhatsAppOnboardingService {
 
     await this.prisma.supplierProfile.update({
       where: { id: supplier.id },
-      data: { acceptsUrgent: state.collected.acceptsUrgent ?? true },
+      data: {
+        acceptsUrgent: state.collected.acceptsUrgent ?? true,
+        // true = explicit round-the-clock opt-out; false = explicit
+        // confirmation of the default window (clears any previous
+        // round-the-clock choice); undefined (step somehow skipped) leaves
+        // whatever was there, which for a brand-new profile is null — i.e.
+        // "use the global default" per quiet-hours.util.ts.
+        workingHoursStart: state.collected.roundTheClock === true ? "00:00" : state.collected.roundTheClock === false ? null : undefined,
+        workingHoursEnd: state.collected.roundTheClock === true ? "23:59" : state.collected.roundTheClock === false ? null : undefined,
+      },
     });
 
     const categoryRows = await this.prisma.category.findMany({ where: { slug: { in: state.collected.categorySlugs } } });

@@ -38,7 +38,13 @@ export function renderYesNo(body: string, tokenPrefix: string): OutgoingWhatsApp
 }
 
 export function renderOnboardingConfirm(
-  collected: { companyName?: string; categorySlugs: string[]; cities: string[]; acceptsUrgent?: boolean },
+  collected: {
+    companyName?: string;
+    categorySlugs: string[];
+    cities: string[];
+    acceptsUrgent?: boolean;
+    roundTheClock?: boolean;
+  },
   categories: { slug: string; name: string }[],
 ): OutgoingWhatsAppMessage {
   const categoryNames = collected.categorySlugs
@@ -49,7 +55,8 @@ export function renderOnboardingConfirm(
     `Компания: ${collected.companyName ?? "—"}\n` +
     `Категории: ${categoryNames || "—"}\n` +
     `Города: ${collected.cities.join(", ") || "—"}\n` +
-    `Срочные заказы: ${collected.acceptsUrgent ? "да" : "нет"}\n\n` +
+    `Срочные заказы: ${collected.acceptsUrgent ? "да" : "нет"}\n` +
+    `Заявки: ${collected.roundTheClock ? "круглосуточно" : "только в рабочие часы (08:00–21:00)"}\n\n` +
     `Всё верно?`;
   return {
     body,

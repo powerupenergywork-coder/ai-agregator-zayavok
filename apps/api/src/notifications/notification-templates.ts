@@ -8,6 +8,7 @@ export type NotificationEvent =
   | "order_confirm_request"
   | "order_published"
   | "order_broadcast_full"
+  | "order_digest"
   | "order_cancelled"
   | "completion_checkin"
   | "complaint_received"
@@ -29,6 +30,27 @@ const templates: Record<NotificationEvent, (p: any) => string> = {
   // contact right away. WhatsApp auto-links the phone number for tap-to-call.
   order_broadcast_full: (p) =>
     `Новая заявка №${p.orderNumber}\n${p.categoryName}, ${p.city}\n${p.whenText}\n\n${p.fullDescription}\n\nТелефон клиента: ${p.clientPhone}\nПозвоните и договоритесь напрямую. Подробнее: ${p.orderUrl}`,
+  // Batched replacement for order_broadcast_full when orders arrived during
+  // the supplier's quiet hours — one message instead of one ping per order.
+  // See MatchingService.flushPendingDigests(). Same self-contained content
+  // per order (client phone included) as the real-time broadcast.
+  order_digest: (p) => {
+    const orders = p.orders as Array<{
+      orderNumber: number;
+      categoryName: string;
+      city: string;
+      whenText: string;
+      fullDescription: string;
+      clientPhone: string;
+      orderUrl: string;
+    }>;
+    const blocks = orders.map(
+      (o) =>
+        `Заявка №${o.orderNumber}\n${o.categoryName}, ${o.city}\n${o.whenText}\n\n${o.fullDescription}\n\nТелефон клиента: ${o.clientPhone}\nПодробнее: ${o.orderUrl}`,
+    );
+    const header = orders.length === 1 ? "Пока вы отдыхали, пришла новая заявка:" : `Пока вы отдыхали, пришло новых заявок: ${orders.length}`;
+    return `${header}\n\n${blocks.join("\n\n---\n\n")}`;
+  },
   order_cancelled: (p) => `Заявка №${p.orderNumber} отменена клиентом.`,
   // Proactive check-in — nobody in the system tracks which supplier the
   // client ended up going with, so we have to ask instead of waiting for
