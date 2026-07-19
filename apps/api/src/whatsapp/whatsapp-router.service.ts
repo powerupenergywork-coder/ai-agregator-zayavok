@@ -199,14 +199,14 @@ export class WhatsAppRouterService {
 
     if (kind === "cat") {
       const orderId = await this.ensureOrder(chatId, phone);
-      await this.sendTurn(chatId, phone, await this.orders.pickCategory(orderId, rest[0]), lang);
+      await this.sendTurn(chatId, phone, await this.orders.pickCategory(orderId, rest[0], lang), lang);
       return;
     }
 
     if (kind === "fld") {
       const [key, rawValue] = rest;
       const orderId = await this.ensureOrder(chatId, phone);
-      await this.sendTurn(chatId, phone, await this.orders.setField(orderId, key, coerceValue(rawValue)), lang);
+      await this.sendTurn(chatId, phone, await this.orders.setField(orderId, key, coerceValue(rawValue), lang), lang);
       return;
     }
 
@@ -260,7 +260,7 @@ export class WhatsAppRouterService {
     }
 
     const orderId = await this.ensureOrder(chatId, phone);
-    await this.sendTurn(chatId, phone, await this.orders.chat(orderId, text), lang);
+    await this.sendTurn(chatId, phone, await this.orders.chat(orderId, text, lang), lang);
   }
 
   private async handlePhoto(chatId: string, phone: string, imageUrl: string, lang: Language): Promise<void> {
