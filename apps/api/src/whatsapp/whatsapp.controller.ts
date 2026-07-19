@@ -1,4 +1,5 @@
-import { Body, Controller, HttpCode, Logger, Post, UnauthorizedException, Headers } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Logger, Post, Query, Res, UnauthorizedException, Headers } from "@nestjs/common";
+import type { Response } from "express";
 import { env } from "../config/env";
 import { WhatsAppRouterService } from "./whatsapp-router.service";
 import { chatIdToPhone } from "./whatsapp.util";
@@ -60,5 +61,59 @@ export class WhatsAppController {
     if (!expected || token !== expected) {
       throw new UnauthorizedException("Invalid webhook token");
     }
+  }
+
+  /**
+   * Meta's one-time webhook verification handshake, done when you save the
+   * callback URL in the app dashboard: echo back hub.challenge iff
+   * hub.verify_token matches what we configured there.
+   */
+  @Get("cloud-webhook")
+  verifyCloudWebhook(
+    @Query("hub.mode") mode: string | undefined,
+    @Query("hub.verify_token") token: string | undefined,
+    @Query("hub.challenge") challenge: string | undefined,
+    @Res() res: Response,
+  ) {
+    if (mode === "subscribe" && token === env.whatsappCloudWebhookVerifyToken && challenge) {
+      res.status(200).send(challenge);
+      return;
+    }
+    res.status(403).send("Forbidden");
+  }
+
+  /**
+   * Meta Cloud API delivers messages and status callbacks (sent/delivered/
+   * read/failed) to this one URL — we only act on inbound messages and 200
+   * everything else so Meta stops retrying.
+   */
+  @Post("cloud-webhook")
+  @HttpCode(200)
+  async cloudWebhook(@Body() body: any): Promise<{ ok: true }> {
+    const value = body?.entry?.[0]?.changes?.[0]?.value;
+    const message = value?.messages?.[0];
+    if (!message) {
+      // No inbound message (e.g. a status callback) — nothing to route.
+      return { ok: true };
+    }
+
+    const phone = chatIdToPhone(message.from);
+    const chatId = `${message.from}@c.us`;
+
+    try {
+      if (message.type === "text") {
+        await this.router.handleIncoming({ chatId, phone, text: message.text?.body });
+      } else if (message.type === "interactive" && message.interactive?.type === "button_reply") {
+        await this.router.handleIncoming({ chatId, phone, buttonReplyId: message.interactive.button_reply?.id });
+      } else if (message.type === "image") {
+        // Cloud API gives an opaque media id, not a URL — CloudApiProvider's
+        // downloadMedia() knows to resolve this id via the Graph API instead.
+        await this.router.handleIncoming({ chatId, phone, imageUrl: message.image?.id });
+      }
+    } catch (err) {
+      this.logger.error(`cloud webhook handling failed: ${(err as Error).message}`);
+    }
+
+    return { ok: true };
   }
 }

@@ -66,6 +66,14 @@ export const env = {
   greenApiTokenInstance: str("GREEN_API_TOKEN_INSTANCE", ""),
   whatsappWebhookToken: str("WHATSAPP_WEBHOOK_TOKEN", "dev-webhook-token-change-me"),
 
+  // Meta WhatsApp Cloud API (WABA) — separate from GREEN-API above; selected
+  // via WHATSAPP_PROVIDER=cloud-api. Webhook verification uses its own query-param
+  // handshake (hub.verify_token), distinct from WHATSAPP_WEBHOOK_TOKEN's Authorization header.
+  whatsappCloudApiVersion: str("WHATSAPP_CLOUD_API_VERSION", "v21.0"),
+  whatsappCloudPhoneNumberId: str("WHATSAPP_CLOUD_PHONE_NUMBER_ID", ""),
+  whatsappCloudAccessToken: str("WHATSAPP_CLOUD_ACCESS_TOKEN", ""),
+  whatsappCloudWebhookVerifyToken: str("WHATSAPP_CLOUD_WEBHOOK_VERIFY_TOKEN", "dev-verify-token-change-me"),
+
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   kaspiMerchantId: str("KASPI_MERCHANT_ID", ""),
   kaspiApiKey: str("KASPI_API_KEY", ""),
