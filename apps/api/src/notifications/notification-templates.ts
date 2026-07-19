@@ -16,7 +16,7 @@ export type NotificationEvent =
 
 const templates: Record<NotificationEvent, (p: any) => string> = {
   order_published: (p) =>
-    `Заявка №${p.orderNumber} опубликована. Мы начали поиск исполнителей. Статус: ${p.statusUrl}`,
+    `Заявка №${p.orderNumber} опубликована\n${p.categoryName}, ${p.city}\n${p.whenText}\n\n${p.fullDescription}\n\nМы начали поиск исполнителей. Статус: ${p.statusUrl}`,
   // Lead-broadcast model — no offer collection, so the message carries
   // everything a supplier needs to decide and call, including the client's
   // contact right away. WhatsApp auto-links the phone number for tap-to-call.

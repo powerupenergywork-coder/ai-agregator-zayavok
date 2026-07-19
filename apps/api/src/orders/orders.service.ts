@@ -30,6 +30,7 @@ import { assertTransition } from "../common/state-machine/state-machine.util";
 import { env } from "../config/env";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
 import { buildQuestionText, deriveDenormalizedColumns, READY_FOR_REVIEW_MESSAGE } from "./order-derive.util";
+import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderDto } from "./order.dto";
 
@@ -255,7 +256,14 @@ export class OrdersService {
     const dto = await this.toDto(orderId);
     await this.notifications.send({
       event: "order_published",
-      payload: { orderNumber: dto.number, statusUrl: `${env.webUrl}/orders/${dto.id}` },
+      payload: {
+        orderNumber: dto.number,
+        categoryName: category.name,
+        city: order.city ?? "",
+        whenText: formatWhen(order),
+        fullDescription: fullDescription(order.fieldsData, fields),
+        statusUrl: `${env.webUrl}/orders/${dto.id}`,
+      },
       recipientPhone: user.phone,
       orderId,
     });
