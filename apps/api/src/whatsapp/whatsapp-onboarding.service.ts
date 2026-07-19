@@ -7,7 +7,7 @@ import { normalizePhone } from "../common/phone.util";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { phoneToChatId } from "./whatsapp.util";
-import { renderCategoryMultiSelect, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
+import { renderCategoryQuestion, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 
 type Step = "company_name" | "categories" | "cities" | "urgent" | "hours" | "confirm";
@@ -25,6 +25,10 @@ interface Collected {
 interface OnboardingState {
   step: Step;
   collected: Collected;
+  /** Position in the active-category list while step === "categories" — one
+   * Yes/No button question per category instead of a numbered multi-select
+   * list, see renderCategoryQuestion(). */
+  categoryIndex?: number;
   pendingOptions?: Record<string, string>;
   isNewSupplier: boolean;
 }
@@ -119,38 +123,20 @@ export class WhatsAppOnboardingService {
     }
 
     if (state.step === "categories") {
-      if (!token) {
-        await this.whatsapp.sendText(
-          phone,
-          lang === "kk" ? "Жоғарыдағы тізімнен нұсқаны нөмірмен таңдаңыз." : "Выберите вариант из списка выше, отправив номер.",
-        );
+      if (!token || !token.startsWith("sup|cat|")) {
+        await this.whatsapp.sendText(phone, lang === "kk" ? "Жоғарыдағы батырмамен жауап беріңіз." : "Ответьте кнопкой выше.");
         return;
       }
-      const [kind, ...rest] = token.split("|");
-      if (kind === "sup" && rest[0] === "toggle") {
-        const slug = rest[1];
-        const idx = state.collected.categorySlugs.indexOf(slug);
-        if (idx >= 0) state.collected.categorySlugs.splice(idx, 1);
-        else state.collected.categorySlugs.push(slug);
-        await this.goToCategories(chatId, phone, state, lang);
-        return;
-      }
-      if (kind === "sup" && rest[0] === "done") {
-        if (state.collected.categorySlugs.length === 0) {
-          await this.whatsapp.sendText(
-            phone,
-            lang === "kk" ? "Жалғастыру алдында кемінде бір санатты таңдаңыз." : "Выберите хотя бы одну категорию перед тем, как продолжить.",
-          );
-          return;
-        }
-        state.step = "cities";
-        await this.saveState(chatId, state);
-        await this.whatsapp.sendText(
-          phone,
-          lang === "kk" ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз." : "В каких городах вы работаете? Перечислите через запятую.",
-        );
-        return;
-      }
+      const parts = token.split("|"); // ["sup", "cat", "<slug>", "true"|"false"]
+      const slug = parts[2];
+      const accepted = parts[3] === "true";
+      const existingIdx = state.collected.categorySlugs.indexOf(slug);
+      if (accepted && existingIdx < 0) state.collected.categorySlugs.push(slug);
+      if (!accepted && existingIdx >= 0) state.collected.categorySlugs.splice(existingIdx, 1);
+      state.categoryIndex = (state.categoryIndex ?? 0) + 1;
+      await this.saveState(chatId, state);
+      await this.askNextCategory(chatId, phone, state, lang);
+      return;
     }
 
     if (state.step === "cities") {
@@ -228,11 +214,41 @@ export class WhatsAppOnboardingService {
 
   private async goToCategories(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
     state.step = "categories";
-    const allCategories = await this.categories.findAllActive();
-    const rendered = renderCategoryMultiSelect(allCategories, state.collected.categorySlugs, lang);
-    state.pendingOptions = rendered.pendingOptions;
+    state.categoryIndex = 0;
     await this.saveState(chatId, state);
-    await this.whatsapp.sendText(phone, rendered.body);
+    await this.askNextCategory(chatId, phone, state, lang);
+  }
+
+  /** One Yes/No button question per category (see renderCategoryQuestion) —
+   * once state.categoryIndex runs past the end of the active-category list,
+   * either loop back if nothing was accepted (a supplier needs at least one
+   * service category) or move on to the cities step. */
+  private async askNextCategory(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
+    const allCategories = await this.categories.findAllActive();
+    const idx = state.categoryIndex ?? 0;
+    if (idx >= allCategories.length) {
+      if (state.collected.categorySlugs.length === 0) {
+        state.categoryIndex = 0;
+        await this.saveState(chatId, state);
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Кемінде бір қызмет түрін таңдау керек. Қайта сұраймыз:"
+            : "Нужно выбрать хотя бы одну категорию услуг. Спросим ещё раз:",
+        );
+        await this.askNextCategory(chatId, phone, state, lang);
+        return;
+      }
+      state.step = "cities";
+      await this.saveState(chatId, state);
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk" ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз." : "В каких городах вы работаете? Перечислите через запятую.",
+      );
+      return;
+    }
+    const rendered = renderCategoryQuestion(allCategories[idx], lang);
+    await this.whatsapp.sendButtons(phone, rendered.body, rendered.buttons!);
   }
 
   private async sendConfirm(phone: string, state: OnboardingState, lang: Language): Promise<void> {

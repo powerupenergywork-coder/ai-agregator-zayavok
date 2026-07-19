@@ -3,36 +3,22 @@ import { OutgoingWhatsAppMessage } from "./whatsapp-message-render.util";
 
 // Token namespace for supplier onboarding, kept separate from the order
 // flow's "cat|"/"fld|"/"action|" tokens:
-//   "sup|toggle|<slug>" — add/remove a category from the running selection
-//   "sup|done"          — finish category selection
+//   "sup|cat|<slug>|true|false" — one category asked at a time, button tap
 //   "sup|urgent|true|false"
+//   "sup|hours|true|false"
 //   "sup|confirm" | "sup|restart"
-
-export function renderCategoryMultiSelect(
-  categories: { slug: string; name: LocalizedText }[],
-  selected: string[],
-  lang: Language,
-): OutgoingWhatsAppMessage {
-  const items = categories.map((c) => ({
-    token: `sup|toggle|${c.slug}`,
-    label: `${selected.includes(c.slug) ? "✅ " : ""}${c.name[lang]}`,
-  }));
-  items.push({ token: "sup|done", label: lang === "kk" ? "Дайын" : "Готово" });
-
-  const listText = items.map((it, idx) => `${idx + 1}. ${it.label}`).join("\n");
-  const pendingOptions: Record<string, string> = {};
-  items.forEach((it, idx) => (pendingOptions[String(idx + 1)] = it.token));
-
-  const intro =
-    lang === "kk"
-      ? "Қандай қызмет санаттарында жұмыс істейсіз? Бірнешеуін таңдауға болады — бірден таңдап, содан кейін «Дайын» деп жазыңыз."
-      : "В каких категориях услуг вы работаете? Можно выбрать несколько — отмечайте по одной, потом «Готово».";
-  const hint = lang === "kk" ? "Нөмірмен жауап беріңіз." : "Ответьте номером.";
-
-  return {
-    body: `${intro}\n\n${listText}\n\n${hint}`,
-    pendingOptions,
-  };
+//
+// Categories used to be a single numbered text list the supplier had to
+// retype digits against — replaced with one Yes/No button question per
+// category (see WhatsAppOnboardingService.askNextCategory) so the whole
+// registration is tap-only, matching how urgent/hours already worked. A
+// numbered list is still unavoidable for >3 options elsewhere (e.g. the
+// order flow's field chips), but category selection never needs more than
+// two buttons per message this way.
+export function renderCategoryQuestion(category: { slug: string; name: LocalizedText }, lang: Language): OutgoingWhatsAppMessage {
+  const body =
+    lang === "kk" ? `«${category.name.kk}» қызметін ұсынасыз ба?` : `Вы предоставляете услугу «${category.name.ru}»?`;
+  return renderYesNo(body, `sup|cat|${category.slug}`, lang);
 }
 
 export function renderYesNo(body: string, tokenPrefix: string, lang: Language): OutgoingWhatsAppMessage {
