@@ -73,6 +73,10 @@ export const env = {
   whatsappCloudPhoneNumberId: str("WHATSAPP_CLOUD_PHONE_NUMBER_ID", ""),
   whatsappCloudAccessToken: str("WHATSAPP_CLOUD_ACCESS_TOKEN", ""),
   whatsappCloudWebhookVerifyToken: str("WHATSAPP_CLOUD_WEBHOOK_VERIFY_TOKEN", "dev-verify-token-change-me"),
+  // TEST-ONLY: works around one broken Meta sandbox test-recipient entry —
+  // see the comment in cloud-api.provider.ts. Leave both blank in production.
+  whatsappCloudSandboxPhone: str("WHATSAPP_CLOUD_SANDBOX_PHONE", ""),
+  whatsappCloudSandboxTo: str("WHATSAPP_CLOUD_SANDBOX_TO", ""),
 
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   kaspiMerchantId: str("KASPI_MERCHANT_ID", ""),

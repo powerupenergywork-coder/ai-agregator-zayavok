@@ -80,7 +80,18 @@ export class CloudApiProvider implements WhatsAppProvider {
   }
 
   private toDigits(phone: string): string {
-    return normalizePhone(phone).replace(/[^\d]/g, "");
+    const digits = normalizePhone(phone).replace(/[^\d]/g, "");
+    // TEST-ONLY escape hatch: Meta's test-recipient allowlist can end up
+    // storing a number with a stray digit baked in (seen with +7 numbers,
+    // where the dashboard's country widget sometimes keeps the domestic
+    // trunk "8" alongside the "+7" country code) — a Meta dashboard bug, not
+    // a real production concern, since production WABA numbers have no
+    // allowlist at all. WHATSAPP_CLOUD_SANDBOX_PHONE/_TO let us route around
+    // one specific broken sandbox entry instead of bending toDigits() itself.
+    if (env.whatsappCloudSandboxPhone && env.whatsappCloudSandboxTo && digits === env.whatsappCloudSandboxPhone) {
+      return env.whatsappCloudSandboxTo;
+    }
+    return digits;
   }
 
   private async call(path: string, body: Record<string, unknown>): Promise<any> {
