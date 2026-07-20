@@ -109,7 +109,13 @@ export class WhatsAppRouterService {
    * blocking language-picker menu — see packages/shared/src/language.ts),
    * self-correcting on every incoming message; explicit trigger phrases
    * override it either way. Persists to User.preferredLanguage so WhatsApp
-   * and web stay consistent for the same phone number. */
+   * and web stay consistent for the same phone number.
+   *
+   * Also stamps lastInboundWhatsAppAt on every call — this is the single
+   * choke point every real inbound webhook passes through (see
+   * WhatsAppController), so it doubles as "when did this phone last message
+   * us" for NotificationsService's 24h-window check before deciding
+   * free text vs. a pre-approved template message. */
   private async resolveLanguage(phone: string, text: string | undefined): Promise<Language> {
     const normalized = normalizePhone(phone);
     const trimmed = text?.trim().toLowerCase();
@@ -119,11 +125,12 @@ export class WhatsAppRouterService {
         ? "kk"
         : null;
     const resolved = override ?? (text ? detectLanguage(text) : null);
+    const now = new Date();
 
     const user = await this.prisma.user.upsert({
       where: { phone: normalized },
-      create: { phone: normalized, preferredLanguage: resolved === "kk" ? "KK" : "RU" },
-      update: resolved ? { preferredLanguage: resolved === "kk" ? "KK" : "RU" } : {},
+      create: { phone: normalized, preferredLanguage: resolved === "kk" ? "KK" : "RU", lastInboundWhatsAppAt: now },
+      update: { lastInboundWhatsAppAt: now, ...(resolved ? { preferredLanguage: resolved === "kk" ? "KK" : "RU" } : {}) },
     });
     return toLang(user.preferredLanguage);
   }

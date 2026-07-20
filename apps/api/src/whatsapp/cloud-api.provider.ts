@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { Language } from "@ai-zayavki/shared";
 import { env } from "../config/env";
 import { normalizePhone } from "../common/phone.util";
 import { WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface";
@@ -51,6 +52,38 @@ export class CloudApiProvider implements WhatsAppProvider {
             reply: { id: b.id, title: b.text.slice(0, 20) },
           })),
         },
+      },
+    });
+  }
+
+  /** `templateName` must exactly match an approved template in Meta Business
+   * Manager (see apps/api/src/notifications/whatsapp-templates.ts for the
+   * required names) — an unrecognized or unapproved name fails the same way
+   * a free-form send outside the 24h window does (this.call() throws,
+   * caller logs it as a failed NotificationLog). */
+  async sendTemplate(phone: string, templateName: string, lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void> {
+    const components: Record<string, unknown>[] = [];
+    if (bodyParams.length > 0) {
+      components.push({ type: "body", parameters: bodyParams.map((text) => ({ type: "text", text })) });
+    }
+    (buttonPayloads ?? []).forEach((payload, index) => {
+      components.push({
+        type: "button",
+        sub_type: "quick_reply",
+        index: String(index),
+        parameters: [{ type: "payload", payload }],
+      });
+    });
+
+    await this.call("messages", {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: this.toDigits(phone),
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: lang },
+        ...(components.length > 0 ? { components } : {}),
       },
     });
   }

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { Language } from "@ai-zayavki/shared";
 import { env } from "../config/env";
 import { WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface";
 import { phoneToChatId } from "./whatsapp.util";
@@ -37,6 +38,21 @@ export class GreenApiProvider implements WhatsAppProvider {
         buttonText: b.text.slice(0, 25),
       })),
     });
+  }
+
+  /** GREEN-API bridges a real personal/business WhatsApp app session, not
+   * the official Cloud API — no 24h-window/template restriction to work
+   * around, so just render the params as plain free text. */
+  async sendTemplate(phone: string, _templateName: string, _lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void> {
+    if (buttonPayloads?.length) {
+      await this.sendButtons(
+        phone,
+        bodyParams.join("\n"),
+        buttonPayloads.map((id) => ({ id, text: id })),
+      );
+      return;
+    }
+    await this.sendText(phone, bodyParams.join("\n"));
   }
 
   async downloadMedia(url: string): Promise<Buffer> {
