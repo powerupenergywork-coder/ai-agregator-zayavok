@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi } from "@/lib/api";
+import { adminApi, ProspectContactDto, ProspectFunnelDto } from "@/lib/api";
 import { Button, Card, Spinner, StatusBadge } from "@/components/ui";
+
+const PROSPECT_STATUS_LABEL: Record<string, string> = {
+  sent: "Отправлено",
+  responded: "Ответил",
+  converted: "Зарегистрировался",
+  ignored: "Без ответа",
+};
 
 const ADMIN_TOKEN_KEY = "az_admin_token";
 
@@ -18,7 +25,7 @@ export default function AdminPage() {
   const [email, setEmail] = useState("admin@example.com");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"orders" | "suppliers" | "categories" | "settings">("orders");
+  const [tab, setTab] = useState<"orders" | "suppliers" | "categories" | "settings" | "prospects">("orders");
 
   useEffect(() => {
     setTokenState(typeof window !== "undefined" ? window.localStorage.getItem(ADMIN_TOKEN_KEY) : null);
@@ -62,13 +69,13 @@ export default function AdminPage() {
       </div>
 
       <div className="mb-6 flex gap-2">
-        {(["orders", "suppliers", "categories", "settings"] as const).map((t) => (
+        {(["orders", "suppliers", "categories", "settings", "prospects"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-full px-4 py-2 text-sm ${tab === t ? "bg-brand-600 text-white" : "bg-white text-slate-600 border border-slate-300"}`}
           >
-            {{ orders: "Заявки", suppliers: "Поставщики", categories: "Категории", settings: "Рассылка" }[t]}
+            {{ orders: "Заявки", suppliers: "Поставщики", categories: "Категории", settings: "Рассылка", prospects: "Прогрев поставщиков" }[t]}
           </button>
         ))}
       </div>
@@ -77,6 +84,7 @@ export default function AdminPage() {
       {tab === "suppliers" && <SuppliersTab token={token} />}
       {tab === "categories" && <CategoriesTab token={token} />}
       {tab === "settings" && <SettingsTab token={token} />}
+      {tab === "prospects" && <ProspectsTab token={token} />}
     </main>
   );
 }
@@ -231,6 +239,157 @@ function CategoriesTab({ token }: { token: string }) {
       <p className="text-xs text-slate-400">
         Редактирование полей шаблона — через API (PATCH /admin/categories/:id) с полным JSON списком полей.
       </p>
+    </div>
+  );
+}
+
+function ProspectsTab({ token }: { token: string }) {
+  const [funnel, setFunnel] = useState<ProspectFunnelDto | null>(null);
+  const [prospects, setProspects] = useState<ProspectContactDto[]>([]);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [cityFilter, setCityFilter] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [phone, setPhone] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([
+      adminApi.getProspectFunnel(token),
+      adminApi.listProspects(token, { status: statusFilter, city: cityFilter }),
+    ])
+      .then(([f, list]) => {
+        setFunnel(f);
+        setProspects(list);
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [token, statusFilter, cityFilter]);
+  useEffect(() => {
+    adminApi.listOrders(token, { queue: "active" }).then(setActiveOrders);
+  }, [token]);
+
+  const send = async () => {
+    setError(null);
+    setSending(true);
+    try {
+      await adminApi.initiateProspect(token, phone, selectedOrderId);
+      setPhone("");
+      setSelectedOrderId("");
+      load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div>
+      {funnel && (
+        <div className="mb-4 grid grid-cols-4 gap-2">
+          {(
+            [
+              ["Отправлено", funnel.sent],
+              ["Ответили", funnel.responded],
+              ["Зарегистрировались", funnel.registered],
+              ["Активны", funnel.active],
+            ] as const
+          ).map(([label, value]) => (
+            <Card key={label} className="p-3 text-center">
+              <p className="text-2xl font-semibold">{value}</p>
+              <p className="text-xs text-slate-500">{label}</p>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Card className="mb-4 flex flex-wrap items-end gap-2 p-4">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-slate-500">Заявка (из очереди PUBLISHED)</label>
+          <select
+            value={selectedOrderId}
+            onChange={(e) => setSelectedOrderId(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">Выберите заявку</option>
+            {activeOrders.map((o) => (
+              <option key={o.id} value={o.id}>
+                №{o.number} · {o.categoryName ?? "—"} · {o.city ?? "—"} · уведомлено: {o.notifiedSuppliersCount}
+              </option>
+            ))}
+          </select>
+        </div>
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="Телефон поставщика"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <Button onClick={send} disabled={sending || !phone || !selectedOrderId}>
+          Отправить холодное сообщение
+        </Button>
+        {error && <p className="w-full text-sm text-red-600">{error}</p>}
+      </Card>
+
+      <div className="mb-4 flex gap-2">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+        >
+          <option value="">Все статусы</option>
+          {Object.entries(PROSPECT_STATUS_LABEL).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <input
+          value={cityFilter}
+          onChange={(e) => setCityFilter(e.target.value)}
+          placeholder="Город"
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+        />
+      </div>
+
+      {loading ? (
+        <Spinner />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {prospects.map((p) => (
+            <Card key={p.id} className="flex items-center justify-between p-3 text-sm">
+              <div>
+                <p className="font-medium">
+                  {p.phone} · №{p.orderNumber} · {p.categoryName ?? "—"} · {p.city ?? "—"}
+                </p>
+                <p className="text-slate-500">
+                  Первый контакт: {new Date(p.firstContactedAt).toLocaleString("ru-RU")}
+                  {p.respondedAt && ` · ответил: ${new Date(p.respondedAt).toLocaleString("ru-RU")}`}
+                  {p.convertedAt && ` · зарегистрировался: ${new Date(p.convertedAt).toLocaleString("ru-RU")}`}
+                </p>
+              </div>
+              <span
+                className={`rounded-full px-2 py-1 text-xs ${
+                  p.status === "converted"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : p.status === "ignored"
+                      ? "bg-slate-100 text-slate-500"
+                      : "bg-amber-100 text-amber-700"
+                }`}
+              >
+                {PROSPECT_STATUS_LABEL[p.status] ?? p.status}
+              </span>
+            </Card>
+          ))}
+          {prospects.length === 0 && <p className="text-sm text-slate-400">Пусто</p>}
+        </div>
+      )}
     </div>
   );
 }

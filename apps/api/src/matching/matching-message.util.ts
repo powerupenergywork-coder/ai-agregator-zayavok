@@ -28,3 +28,20 @@ export function fullDescription(fieldsData: unknown, categoryFields: CategoryFie
     .map((f) => `${f.label[lang]}: ${formatFieldValue(data[f.key], f, lang)}`)
     .join("\n");
 }
+
+// Prospect cold-outreach shows a client's order before any registration —
+// ТЗ_прогрев_поставщиков п.4.4 explicitly forbids leaking the exact address
+// or client phone in that message, and requires the restriction enforced
+// here (service level), not just trusted to the Meta template text. Unlike
+// fullDescription() above (which intentionally includes everything, since
+// the supplier broadcast happens only after real registration), this drops
+// "address" fields and the "city" field (shown separately, already just a
+// city name) and joins the rest as a short comma-separated line rather than
+// fullDescription's one-label-per-line dump.
+export function safeSummary(fieldsData: unknown, categoryFields: CategoryField[], lang: Language): string {
+  const data = (fieldsData ?? {}) as Record<string, unknown>;
+  return categoryFields
+    .filter((f) => f.type !== "photo" && f.type !== "address" && f.key !== "city" && data[f.key] !== undefined)
+    .map((f) => formatFieldValue(data[f.key], f, lang))
+    .join(", ");
+}

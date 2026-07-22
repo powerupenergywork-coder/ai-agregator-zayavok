@@ -10,6 +10,7 @@ import { UpsertCategoryDto } from "./dto/upsert-category.dto";
 import { UpsertSupplierDto } from "./dto/upsert-supplier.dto";
 import { UpdateDispatchSettingsDto } from "./dto/update-dispatch-settings.dto";
 import { AdminEditOrderDto } from "./dto/admin-edit-order.dto";
+import { InitiateProspectDto } from "./dto/initiate-prospect.dto";
 
 class SetBlockedDto {
   @IsBoolean()
@@ -144,6 +145,28 @@ export class AdminController {
   @Patch("dispatch-settings")
   updateDispatchSettings(@CurrentAdmin() admin: AdminAuthUser, @Body() dto: UpdateDispatchSettingsDto) {
     return this.admin.updateDispatchSettings(dto, admin);
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Get("prospects")
+  listProspects(
+    @Query("status") status?: string,
+    @Query("city") city?: string,
+    @Query("categorySlug") categorySlug?: string,
+  ) {
+    return this.admin.listProspects({ status, city, categorySlug });
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Get("prospects/funnel")
+  getProspectFunnel() {
+    return this.admin.getProspectFunnel();
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Post("prospects")
+  initiateProspect(@CurrentAdmin() admin: AdminAuthUser, @Body() dto: InitiateProspectDto) {
+    return this.admin.initiateProspect(dto, admin);
   }
 }
 

@@ -20,7 +20,8 @@ export type NotificationEvent =
   | "complaint_received"
   | "needs_operator"
   | "quota_exceeded"
-  | "subscription_activated";
+  | "subscription_activated"
+  | "prospect_outreach";
 
 const templates: Record<NotificationEvent, (p: any, lang: Language) => string> = {
   // Sent from the web flow before publishing actually happens — requires an
@@ -94,6 +95,16 @@ const templates: Record<NotificationEvent, (p: any, lang: Language) => string> =
       : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан. Оформите подписку, чтобы продолжать получать заявки: ${p.paymentUrl}`,
   subscription_activated: (p, lang) =>
     lang === "kk" ? `Жазылым ${p.periodDays} күнге белсендірілді. Рахмет!` : `Подписка активирована на ${p.periodDays} дней. Спасибо!`,
+  // Cold outreach to a phone that has never messaged the bot — we don't yet
+  // know their language, so unlike every other template this one ignores
+  // `lang` and always renders both blocks. See whatsapp-templates.ts for the
+  // matching Meta template registration (one combined template, two
+  // quick-reply buttons — the tapped button is what actually picks the
+  // language going forward). This plain-text version is only used for the
+  // NotificationLog entry; the real send always goes through sendTemplate()
+  // since a brand-new phone's 24h window is never open.
+  prospect_outreach: (p) =>
+    `Здравствуйте! \u{1F44B}\nЭто AI-агрегатор заявок на услуги в Казахстане.\nПрямо сейчас в вашем городе ищут исполнителя:\n\u{1F4E6} ${p.categoryRu}   \u{1F4CD} ${p.city}   \u{1F4DD} ${p.summaryRu}\n\n—\n\nСәлеметсіз бе! \u{1F44B}\nБұл — Қазақстандағы қызмет көрсету өтінімдерінің AI-агрегаторы.\nДәл қазір сіздің қалаңызда орындаушы іздеп жатыр:\n\u{1F4E6} ${p.categoryKk}   \u{1F4CD} ${p.city}   \u{1F4DD} ${p.summaryKk}`,
 };
 
 export function renderTemplate(event: NotificationEvent, payload: Record<string, unknown>, lang: Language): string {

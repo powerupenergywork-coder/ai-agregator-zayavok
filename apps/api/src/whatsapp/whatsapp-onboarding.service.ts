@@ -8,6 +8,7 @@ import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interfa
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { phoneToChatId } from "./whatsapp.util";
 import { renderCategoryQuestion, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
+import { ProspectService } from "../prospect/prospect.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 
 type Step = "company_name" | "categories" | "cities" | "urgent" | "hours" | "confirm";
@@ -67,6 +68,7 @@ export class WhatsAppOnboardingService {
     private readonly audit: AuditLogService,
     private readonly sessions: WhatsAppSessionService,
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
+    private readonly prospect: ProspectService,
   ) {}
 
   async start(chatId: string, phone: string, lang: Language = "ru"): Promise<void> {
@@ -322,6 +324,12 @@ export class WhatsAppOnboardingService {
           ? "Поставщик профилі жаңартылды."
           : "Профиль поставщика обновлён.",
     );
+
+    // No-op unless this phone actually came from a PROSPECT cold-outreach
+    // (see ProspectService.markConverted) — safe to call on every
+    // registration/edit, not just brand-new ones, since a re-run through
+    // this same trigger-phrase flow is how editing works too.
+    await this.prospect.markConverted(phone, supplier.id);
   }
 
   private async saveState(chatId: string, state: OnboardingState): Promise<void> {

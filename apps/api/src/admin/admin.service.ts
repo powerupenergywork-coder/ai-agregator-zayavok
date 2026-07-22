@@ -9,10 +9,12 @@ import { AuditLogService } from "../common/audit-log.service";
 import { normalizePhone } from "../common/phone.util";
 import { env } from "../config/env";
 import { BillingService } from "../billing/billing.service";
+import { ProspectService } from "../prospect/prospect.service";
 import { AdminAuthUser } from "./admin-auth.guard";
 import { UpsertSupplierDto } from "./dto/upsert-supplier.dto";
 import { UpdateDispatchSettingsDto } from "./dto/update-dispatch-settings.dto";
 import { AdminEditOrderDto } from "./dto/admin-edit-order.dto";
+import { InitiateProspectDto } from "./dto/initiate-prospect.dto";
 
 const QUEUE_STATUS_MAP: Record<string, OrderStatus[]> = {
   needs_review: ["NEEDS_OPERATOR"],
@@ -27,6 +29,7 @@ export class AdminService {
     private readonly orders: OrdersService,
     private readonly audit: AuditLogService,
     private readonly billing: BillingService,
+    private readonly prospect: ProspectService,
     @InjectQueue("matching") private readonly matchingQueue: Queue,
   ) {}
 
@@ -278,5 +281,22 @@ export class AdminService {
       metadata: { ...dto },
     });
     return updated;
+  }
+
+  // ---------- prospects (прогрев поставщиков) ----------
+
+  async listProspects(filters: { status?: string; city?: string; categorySlug?: string }) {
+    return this.prospect.listProspects(filters);
+  }
+
+  async getProspectFunnel() {
+    return this.prospect.getFunnel();
+  }
+
+  async initiateProspect(dto: InitiateProspectDto, admin: AdminAuthUser) {
+    return this.prospect.initiateColdOutreach(dto.phone, dto.orderId, {
+      type: admin.role === "ADMIN" ? "admin" : "operator",
+      id: admin.sub,
+    });
   }
 }

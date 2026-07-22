@@ -180,7 +180,34 @@ export const adminApi = {
   getDispatchSettings: (token: string) => request<any>("/admin/dispatch-settings", {}, token),
   updateDispatchSettings: (token: string, body: unknown) =>
     request("/admin/dispatch-settings", { method: "PATCH", body: JSON.stringify(body) }, token),
+  listProspects: (token: string, params: { status?: string; city?: string; categorySlug?: string } = {}) => {
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v))).toString();
+    return request<ProspectContactDto[]>(`/admin/prospects${qs ? `?${qs}` : ""}`, {}, token);
+  },
+  getProspectFunnel: (token: string) => request<ProspectFunnelDto>("/admin/prospects/funnel", {}, token),
+  initiateProspect: (token: string, phone: string, orderId: string) =>
+    request<ProspectContactDto>("/admin/prospects", { method: "POST", body: JSON.stringify({ phone, orderId }) }, token),
 };
+
+export interface ProspectContactDto {
+  id: string;
+  phone: string;
+  status: "sent" | "responded" | "converted" | "ignored";
+  leadSource: string;
+  firstContactedAt: string;
+  respondedAt: string | null;
+  convertedAt: string | null;
+  orderNumber: number;
+  categoryName: string | null;
+  city: string | null;
+}
+
+export interface ProspectFunnelDto {
+  sent: number;
+  responded: number;
+  registered: number;
+  active: number;
+}
 
 export const analyticsApi = {
   track: (eventType: string, opts: { orderId?: string; metadata?: Record<string, unknown> } = {}) =>

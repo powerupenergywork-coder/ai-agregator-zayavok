@@ -9,6 +9,7 @@ import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { WhatsAppOnboardingService, isOnboardingTrigger } from "./whatsapp-onboarding.service";
+import { ProspectService } from "../prospect/prospect.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 import {
   OutgoingWhatsAppMessage,
@@ -37,6 +38,7 @@ export class WhatsAppRouterService {
     private readonly sessions: WhatsAppSessionService,
     private readonly onboarding: WhatsAppOnboardingService,
     private readonly billing: BillingService,
+    private readonly prospect: ProspectService,
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
@@ -203,6 +205,23 @@ export class WhatsAppRouterService {
 
   private async handleToken(chatId: string, phone: string, token: string, lang: Language): Promise<void> {
     const [kind, ...rest] = token.split("|");
+
+    // PROSPECT-онбординг (прогрев поставщиков, см. ТЗ_прогрев_поставщиков_v2):
+    // the only two buttons under the cold-outreach template. Free text never
+    // reaches here — see ТЗ п.4.2, "ответ принимается только через нажатие
+    // кнопки". The tapped button is the definitive language choice, since a
+    // brand-new phone has no prior signal to go on — overrides whatever
+    // resolveLanguage() defaulted `lang` to above.
+    if (kind === "prospect" && rest[0] === "interested") {
+      const chosenLang = (rest[1] === "kk" ? "kk" : "ru") as Language;
+      await this.prisma.user.update({
+        where: { phone: normalizePhone(phone) },
+        data: { preferredLanguage: chosenLang === "kk" ? "KK" : "RU" },
+      });
+      await this.prospect.markResponded(phone);
+      await this.onboarding.start(chatId, phone, chosenLang);
+      return;
+    }
 
     if (kind === "cat") {
       const orderId = await this.ensureOrder(chatId, phone);

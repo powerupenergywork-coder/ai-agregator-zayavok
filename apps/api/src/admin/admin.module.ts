@@ -8,6 +8,7 @@ import { CategoriesModule } from "../categories/categories.module";
 import { OrdersModule } from "../orders/orders.module";
 import { AuthOtpModule } from "../auth-otp/auth-otp.module";
 import { BillingModule } from "../billing/billing.module";
+import { ProspectModule } from "../prospect/prospect.module";
 import { AuditLogService } from "../common/audit-log.service";
 
 @Module({
@@ -17,6 +18,7 @@ import { AuditLogService } from "../common/audit-log.service";
     OrdersModule,
     AuthOtpModule,
     BillingModule,
+    ProspectModule,
   ],
   controllers: [AdminController],
   providers: [AdminService, AdminAuthService, AdminAuthGuard, AuditLogService],

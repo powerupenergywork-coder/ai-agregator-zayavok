@@ -8,10 +8,11 @@ import { OrdersModule } from "../orders/orders.module";
 import { AuthOtpModule } from "../auth-otp/auth-otp.module";
 import { CategoriesModule } from "../categories/categories.module";
 import { BillingModule } from "../billing/billing.module";
+import { ProspectModule } from "../prospect/prospect.module";
 import { AuditLogService } from "../common/audit-log.service";
 
 @Module({
-  imports: [WhatsAppProviderModule, OrdersModule, AuthOtpModule, CategoriesModule, BillingModule],
+  imports: [WhatsAppProviderModule, OrdersModule, AuthOtpModule, CategoriesModule, BillingModule, ProspectModule],
   controllers: [WhatsAppController],
   providers: [WhatsAppRouterService, WhatsAppSessionService, WhatsAppOnboardingService, AuditLogService],
 })

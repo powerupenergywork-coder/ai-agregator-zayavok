@@ -63,49 +63,8 @@ export class MatchingService {
       data: { orderId, waveNumber, supplierIds: candidates.map((c) => c.id) },
     });
 
-    const orderUrl = `${env.webUrl}/s/${orderId}`;
     for (const supplier of candidates) {
-      // Non-urgent orders respect the supplier's quiet hours — held here
-      // instead of sent immediately, then batched into one digest message
-      // per supplier by flushPendingDigests() once their window opens.
-      // Urgent orders always go through immediately: acceptsUrgent (already
-      // enforced in findCandidates) is the supplier's own agreement to be
-      // reachable any time for those.
-      if (!order.urgent && !isSupplierReachableNow(supplier, settings)) {
-        await this.prisma.pendingSupplierNotification.upsert({
-          where: { supplierId_orderId: { supplierId: supplier.id, orderId } },
-          create: { supplierId: supplier.id, orderId },
-          update: {},
-        });
-        continue;
-      }
-
-      // Quota-blocked suppliers still count as "notified" for this order —
-      // they were already written into DispatchWave.supplierIds above and
-      // won't be reconsidered by a later wave; they just don't get the job
-      // notification itself, only (at most once/day) a subscribe reminder.
-      const canNotify = await this.billing.checkAndConsumeQuota(supplier.id);
-      if (!canNotify) {
-        await this.billing.maybeSendQuotaReminder(supplier.id, supplier.user.phone);
-        continue;
-      }
-
-      const lang = toLang(supplier.user.preferredLanguage);
-      await this.notifications.send({
-        event: "order_broadcast_full",
-        payload: {
-          orderNumber: order.number,
-          categoryName: order.category ? (order.category.name as unknown as LocalizedText)[lang] : "",
-          city: order.city ?? "",
-          whenText: formatWhen(order, lang),
-          fullDescription: fullDescription(order.fieldsData, (order.category?.fields as unknown as CategoryField[]) ?? [], lang),
-          clientPhone: order.client?.user.phone ?? (lang === "kk" ? "көрсетілмеген" : "не указан"),
-          orderUrl,
-        },
-        recipientPhone: supplier.user.phone,
-        supplierId: supplier.id,
-        orderId,
-      });
+      await this.dispatchToSupplier(order, supplier, settings);
     }
 
     await this.analytics.track("order_sent_to_suppliers", {
@@ -113,6 +72,125 @@ export class MatchingService {
       metadata: { waveNumber, count: candidates.length },
     });
     this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
+  }
+
+  /** One supplier, one order — quiet-hours deferral, quota gate, then the
+   * full order_broadcast_full send. Shared by sendWave()'s loop above and
+   * notifyConvertedProspect() below, so a freshly-registered PROSPECT gets
+   * exactly the same treatment (quota consumed, quiet hours respected) as
+   * anyone reached through the normal wave. */
+  private async dispatchToSupplier(
+    order: Awaited<ReturnType<MatchingService["loadOrderForDispatch"]>>,
+    supplier: { id: string; user: { phone: string; preferredLanguage: string }; workingHoursStart: string | null; workingHoursEnd: string | null },
+    settings: { quietHoursStart: string | null; quietHoursEnd: string | null },
+  ): Promise<void> {
+    // Non-urgent orders respect the supplier's quiet hours — held here
+    // instead of sent immediately, then batched into one digest message
+    // per supplier by flushPendingDigests() once their window opens.
+    // Urgent orders always go through immediately: acceptsUrgent (already
+    // enforced by the caller) is the supplier's own agreement to be
+    // reachable any time for those.
+    if (!order.urgent && !isSupplierReachableNow(supplier, settings)) {
+      await this.prisma.pendingSupplierNotification.upsert({
+        where: { supplierId_orderId: { supplierId: supplier.id, orderId: order.id } },
+        create: { supplierId: supplier.id, orderId: order.id },
+        update: {},
+      });
+      return;
+    }
+
+    // Quota-blocked suppliers still count as "notified" for this order —
+    // the caller already recorded them in DispatchWave.supplierIds and
+    // won't reconsider them on a later wave; they just don't get the job
+    // notification itself, only (at most once/day) a subscribe reminder.
+    const canNotify = await this.billing.checkAndConsumeQuota(supplier.id);
+    if (!canNotify) {
+      await this.billing.maybeSendQuotaReminder(supplier.id, supplier.user.phone);
+      return;
+    }
+
+    const lang = toLang(supplier.user.preferredLanguage);
+    await this.notifications.send({
+      event: "order_broadcast_full",
+      payload: {
+        orderNumber: order.number,
+        categoryName: order.category ? (order.category.name as unknown as LocalizedText)[lang] : "",
+        city: order.city ?? "",
+        whenText: formatWhen(order, lang),
+        fullDescription: fullDescription(order.fieldsData, (order.category?.fields as unknown as CategoryField[]) ?? [], lang),
+        clientPhone: order.client?.user.phone ?? (lang === "kk" ? "көрсетілмеген" : "не указан"),
+        orderUrl: `${env.webUrl}/s/${order.id}`,
+      },
+      recipientPhone: supplier.user.phone,
+      supplierId: supplier.id,
+      orderId: order.id,
+    });
+  }
+
+  private async loadOrderForDispatch(orderId: string) {
+    return this.prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: { category: true, client: { include: { user: true } } },
+    });
+  }
+
+  /** Called once a PROSPECT-onboarded supplier clears needsReview (see
+   * ProspectService.markConverted) — ТЗ_прогрев_поставщиков_v2 п.3.6: "по
+   * возможности" notify them about the anchor order that hooked them in the
+   * first place. DispatchWave.supplierIds for that order predates this
+   * supplier's profile, so sendWave()'s normal excludeIds logic would never
+   * pick them up on its own — this is the dedicated, one-off path instead.
+   * Falls back to the next matching PUBLISHED order (same category/city) if
+   * the anchor order is no longer PUBLISHED. No-ops if nothing matches. */
+  async notifyConvertedProspect(supplierId: string, anchorOrderId: string): Promise<void> {
+    const supplier = await this.prisma.supplierProfile.findUnique({
+      where: { id: supplierId },
+      include: { user: true },
+    });
+    if (!supplier) return;
+
+    const anchor = await this.prisma.order.findUnique({ where: { id: anchorOrderId } });
+    const targetOrderId = anchor?.status === "PUBLISHED" ? anchorOrderId : await this.findNextMatchingOrderId(supplierId);
+    if (!targetOrderId) return;
+
+    const order = await this.loadOrderForDispatch(targetOrderId);
+    const settings = await this.getSettings();
+    await this.prisma.dispatchWave.create({
+      data: {
+        orderId: targetOrderId,
+        waveNumber: (await this.prisma.dispatchWave.count({ where: { orderId: targetOrderId } })) + 1,
+        supplierIds: [supplier.id],
+      },
+    });
+    await this.dispatchToSupplier(order, supplier, settings);
+    this.realtime.emitOrderUpdated(targetOrderId, await this.orders.toDto(targetOrderId));
+  }
+
+  private async findNextMatchingOrderId(supplierId: string): Promise<string | null> {
+    const supplier = await this.prisma.supplierProfile.findUniqueOrThrow({
+      where: { id: supplierId },
+      include: { categories: true, serviceAreas: true },
+    });
+    const categoryIds = supplier.categories.map((c) => c.categoryId);
+    const cities = supplier.serviceAreas.map((a) => a.city);
+    if (categoryIds.length === 0) return null;
+
+    // DispatchWave.supplierIds is a JSON array — filtering it from SQL isn't
+    // a pattern used elsewhere in this codebase (see
+    // getAlreadyNotifiedSupplierIds below), so stay consistent: fetch
+    // candidates, exclude already-notified in JS. Order volume is low
+    // enough that this isn't a real cost.
+    const candidates = await this.prisma.order.findMany({
+      where: {
+        status: "PUBLISHED",
+        categoryId: { in: categoryIds },
+        ...(cities.length > 0 ? { city: { in: cities, mode: "insensitive" } } : {}),
+      },
+      include: { dispatchWaves: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const match = candidates.find((o) => !o.dispatchWaves.some((w) => (w.supplierIds as string[]).includes(supplierId)));
+    return match?.id ?? null;
   }
 
   /** Counterpart to the quiet-hours deferral in sendWave(): for every

@@ -15,7 +15,7 @@
 import { Language } from "@ai-zayavki/shared";
 import { NotificationEvent } from "./notification-templates";
 
-export const WHATSAPP_TEMPLATE_EVENTS = ["order_broadcast_full", "order_digest", "completion_checkin"] as const;
+export const WHATSAPP_TEMPLATE_EVENTS = ["order_broadcast_full", "order_digest", "completion_checkin", "prospect_outreach"] as const;
 export type WhatsAppTemplateEvent = (typeof WHATSAPP_TEMPLATE_EVENTS)[number];
 
 export function isWhatsAppTemplateEvent(event: NotificationEvent): event is WhatsAppTemplateEvent {
@@ -26,6 +26,10 @@ const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = 
   order_broadcast_full: { ru: "order_broadcast_full_ru", kk: "order_broadcast_full_kk" },
   order_digest: { ru: "order_digest_ru", kk: "order_digest_kk" },
   completion_checkin: { ru: "completion_checkin_ru", kk: "completion_checkin_kk" },
+  // One combined bilingual template (not split ru/kk) — see ТЗ_прогрев_поставщиков_v2
+  // раздел 5: the recipient's language isn't known yet, so both language
+  // blocks ship in one message and the tapped quick-reply button picks it.
+  prospect_outreach: { ru: "prospect_outreach", kk: "prospect_outreach" },
 };
 
 export function whatsappTemplateName(event: WhatsAppTemplateEvent, lang: Language): string {
@@ -64,5 +68,19 @@ export function buildWhatsAppTemplateParams(event: WhatsAppTemplateEvent, payloa
       const latest = orders[orders.length - 1];
       return [String(orders.length), latest.categoryName, latest.city, latest.whenText, latest.orderUrl];
     }
+    // 6 params, not 3 — category/summary text genuinely differs between ru
+    // and kk (see ТЗ_прогрев_поставщиков_v2 5.1), city is duplicated into
+    // both slots too even though it's the same value in practice, so the
+    // template body never depends on a param happening to be
+    // language-neutral.
+    case "prospect_outreach":
+      return [
+        String(payload.categoryRu),
+        String(payload.city),
+        String(payload.summaryRu),
+        String(payload.categoryKk),
+        String(payload.city),
+        String(payload.summaryKk),
+      ];
   }
 }

@@ -13,6 +13,7 @@ import { AnalyticsModule } from "./analytics/analytics.module";
 import { AdminModule } from "./admin/admin.module";
 import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { BillingModule } from "./billing/billing.module";
+import { ProspectModule } from "./prospect/prospect.module";
 
 const redisUrl = new URL(env.redisUrl);
 
@@ -37,6 +38,7 @@ const redisUrl = new URL(env.redisUrl);
     AdminModule,
     WhatsAppModule,
     BillingModule,
+    ProspectModule,
   ],
 })
 export class AppModule {}

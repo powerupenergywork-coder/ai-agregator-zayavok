@@ -84,6 +84,10 @@ export const env = {
   whatsappCloudSandboxPhone: str("WHATSAPP_CLOUD_SANDBOX_PHONE", ""),
   whatsappCloudSandboxTo: str("WHATSAPP_CLOUD_SANDBOX_TO", ""),
 
+  // PROSPECT-онбординг (прогрев поставщиков) — см. ТЗ_прогрев_поставщиков_v2.
+  prospectIgnoreTimeoutDays: num("PROSPECT_IGNORE_TIMEOUT_DAYS", 14),
+  prospectResendCooldownDays: num("PROSPECT_RESEND_COOLDOWN_DAYS", 7),
+
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   kaspiMerchantId: str("KASPI_MERCHANT_ID", ""),
   kaspiApiKey: str("KASPI_API_KEY", ""),

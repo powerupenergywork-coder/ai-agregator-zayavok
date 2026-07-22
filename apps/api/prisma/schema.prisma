@@ -231,6 +231,7 @@ model Order {
   statusHistory               OrderStatusEvent[]
   dispatchWaves               DispatchWave[]
   pendingNotifications        PendingSupplierNotification[]
+  prospectContacts             ProspectContact[]
 
   @@index([status])
   @@index([categoryId, city, district])
@@ -294,6 +295,30 @@ model PendingSupplierNotification {
 
   @@unique([supplierId, orderId])
   @@index([supplierId])
+}
+
+// PROSPECT-онбординг (прогрев поставщиков) — оператор вручную отправляет
+// холодный контакт реальную опубликованную заявку ещё до какой-либо
+// регистрации; согласие (нажатие кнопки в шаблоне) переводит номер в
+// существующий FSM регистрации поставщика. Не имеет собственного FSM —
+// только фиксирует факт и статус контакта; вся логика регистрации
+// переиспользуется из WhatsAppOnboardingService как есть.
+model ProspectContact {
+  id               String    @id @default(uuid())
+  phone            String
+  orderId          String
+  order            Order     @relation(fields: [orderId], references: [id])
+  firstContactedAt DateTime  @default(now())
+  respondedAt      DateTime?
+  convertedAt      DateTime?
+  // sent -> responded (кнопка нажата) -> converted (needsReview создан) — либо
+  // sent/responded -> ignored (таймаут без ответа, см. env.prospectIgnoreTimeoutDays,
+  // или оператор вручную).
+  status           String    @default("sent")
+  leadSource       String    @default("cold_outreach")
+
+  @@index([phone])
+  @@index([status])
 }
 
 // ---------- Notifications / analytics / audit ----------
