@@ -14,9 +14,24 @@ export class CategoriesService {
     return rows.map(toTemplate);
   }
 
+  /** Admin panel is Russian-only by design — resolves the bilingual
+   * name/examples down to plain .ru strings instead of the {ru,kk} objects
+   * toTemplate() returns for the client/WhatsApp-facing endpoints, which the
+   * admin UI (a plain string-rendering table) can't handle directly. */
   async findAllForAdmin() {
     const rows = await this.prisma.category.findMany({ orderBy: { name: "asc" } });
-    return rows.map((r) => ({ ...toTemplate(r), id: r.id, isActive: r.isActive }));
+    return rows.map((r) => {
+      const template = toTemplate(r);
+      return {
+        id: r.id,
+        slug: template.slug,
+        name: template.name.ru,
+        icon: template.icon,
+        examples: template.examples.map((e) => e.ru),
+        fields: template.fields,
+        isActive: r.isActive,
+      };
+    });
   }
 
   async findBySlug(slug: string) {

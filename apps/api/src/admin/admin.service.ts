@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import { CategoryField, ORDER_STATUS_LABELS_RU, OrderStatus } from "@ai-zayavki/shared";
+import { CategoryField, LocalizedText, ORDER_STATUS_LABELS_RU, OrderStatus } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { OrdersService } from "../orders/orders.service";
 import { deriveDenormalizedColumns } from "../orders/order-derive.util";
@@ -164,7 +164,11 @@ export class AdminService {
       number: o.number,
       status: o.status,
       statusLabel: ORDER_STATUS_LABELS_RU[o.status as OrderStatus],
-      categoryName: o.category?.name ?? null,
+      // Admin panel is Russian-only by design (see project notes) — Category.name
+      // became a {ru,kk} JSON object for the bilingual client/WhatsApp UI, but
+      // this response feeds a plain-string-expecting admin table, so resolve
+      // it here rather than leaking the raw object (React can't render it).
+      categoryName: o.category ? (o.category.name as unknown as LocalizedText).ru : null,
       city: o.city,
       urgent: o.urgent,
       notifiedSuppliersCount: new Set(o.dispatchWaves.flatMap((w) => w.supplierIds as string[])).size,
