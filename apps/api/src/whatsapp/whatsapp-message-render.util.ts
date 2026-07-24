@@ -133,9 +133,14 @@ export function renderCategoryPick(categories: { slug: string; name: string }[],
 }
 
 export function renderReviewCard(order: OrderDto, lang: Language): OutgoingWhatsAppMessage {
-  const lines = (order.category?.fields ?? [])
+  // The category name itself was missing from the card — a client saw only
+  // the field values (address, waste type, volume...) with no indication of
+  // which service they were actually about to order.
+  const serviceLine = order.category ? `${lang === "kk" ? "Қызмет" : "Услуга"}: ${order.category.name[lang]}` : undefined;
+  const fieldLines = (order.category?.fields ?? [])
     .filter((f) => order.fieldsData[f.key] !== undefined)
     .map((f) => `${f.label[lang]}: ${formatFieldValue(order.fieldsData[f.key], f, lang)}`);
+  const lines = serviceLine ? [serviceLine, ...fieldLines] : fieldLines;
   const body =
     lang === "kk"
       ? `Өтінімді тексеріңіз:\n\n${lines.join("\n")}\n\nБәрі дұрыс па?`
