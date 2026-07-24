@@ -42,6 +42,61 @@ export function isValidFieldValue(field: CategoryField, value: unknown): boolean
   }
 }
 
+function startOfDay(d: Date): Date {
+  const copy = new Date(d);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+/** Drops date/time values that already point at the past — a client
+ * picking "Сегодня" from a stale button, or an AI extraction of "вчера",
+ * would otherwise silently create an order for a moment that's already
+ * gone. Date and its combineGroup-paired time are checked together: a date
+ * before today is rejected outright; a date of exactly today is fine on
+ * its own; only once we also have a same-day time value does that value
+ * get checked against the actual clock. Returns which keys got dropped so
+ * the caller can tell the client why, instead of just silently re-asking
+ * the same question. */
+export function dropPastDateTimeFields(
+  fields: CategoryField[],
+  values: Record<string, unknown>,
+): { values: Record<string, unknown>; droppedPast: string[] } {
+  const now = new Date();
+  const today = startOfDay(now);
+  const result = { ...values };
+  const droppedPast: string[] = [];
+
+  for (const field of fields) {
+    if (field.type !== "date" || result[field.key] === undefined) continue;
+    const raw = result[field.key];
+    if (typeof raw !== "string") continue;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) continue;
+    const day = startOfDay(parsed);
+
+    if (day < today) {
+      delete result[field.key];
+      droppedPast.push(field.key);
+      continue;
+    }
+    if (day.getTime() === today.getTime() && field.combineGroup) {
+      const timeField = fields.find((f) => f.type === "time" && f.combineGroup === field.combineGroup);
+      const timeValue = timeField ? result[timeField.key] : undefined;
+      if (timeField && typeof timeValue === "string") {
+        const [h, m] = timeValue.split(":").map(Number);
+        const candidate = new Date(today);
+        candidate.setHours(h, m, 0, 0);
+        if (candidate < now) {
+          delete result[timeField.key];
+          droppedPast.push(timeField.key);
+        }
+      }
+    }
+  }
+
+  return { values: result, droppedPast };
+}
+
 export function isFieldFilled(field: CategoryField, knownFields: Record<string, unknown>): boolean {
   const v = knownFields[field.key];
   if (v === undefined || v === null) return false;

@@ -20,6 +20,7 @@ import { CategoriesService } from "../categories/categories.service";
 import { AI_PROVIDER, AiProvider, AiUnavailableError, CLASSIFY_CONFIDENCE_THRESHOLD } from "../ai/ai.types";
 import {
   calculateProgressPercent,
+  dropPastDateTimeFields,
   isValidFieldValue,
   matchUnknownValueKeyword,
   missingRequiredFields,
@@ -218,12 +219,13 @@ export class OrdersService {
     // LLM isn't guaranteed to return a clean number just because the prompt
     // asked for one — drop anything that doesn't match its field's declared
     // type instead of saving garbage, so the question just gets asked again.
-    const validatedFields = Object.fromEntries(
+    const typeValidatedFields = Object.fromEntries(
       Object.entries(mergedFields).filter(([key, value]) => {
         const field = fields.find((f) => f.key === key);
         return !field || isValidFieldValue(field, value);
       }),
     );
+    const { values: validatedFields, droppedPast } = dropPastDateTimeFields(fields, typeValidatedFields);
     const progress = calculateProgressPercent(fields, validatedFields);
     const missing = nextQuestionFields(fields, validatedFields);
     const derived = deriveDenormalizedColumns(fields, validatedFields);
@@ -241,7 +243,13 @@ export class OrdersService {
       },
     });
 
-    const assistantMessage = missing.length === 0 ? readyForReviewMessage(lang) : buildQuestionText(missing, lang);
+    const pastNotice =
+      droppedPast.length === 0
+        ? ""
+        : lang === "kk"
+          ? "Өткен күн/уақыт жарамсыз — болашақ мерзімді көрсетіңіз.\n\n"
+          : "Прошедшая дата или время не подходят — укажите будущее.\n\n";
+    const assistantMessage = missing.length === 0 ? readyForReviewMessage(lang) : pastNotice + buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {
