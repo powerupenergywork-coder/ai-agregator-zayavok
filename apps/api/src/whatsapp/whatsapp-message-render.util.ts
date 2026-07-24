@@ -24,6 +24,11 @@ export interface OutgoingWhatsAppMessage {
 interface OptionItem {
   token: string;
   label: string;
+  /** Set when items come from a combineGroup batch (see nextQuestionFields) —
+   * so a combined question like "date + time" can render as two visually
+   * separated sub-lists instead of one undifferentiated 1..7 list where it's
+   * unclear which options answer which half of the question. */
+  groupLabel?: string;
 }
 
 function fmtDate(d: Date): string {
@@ -37,24 +42,30 @@ function buildOptionItems(fields: CategoryField[], lang: Language): OptionItem[]
   const today = lang === "kk" ? "Бүгін" : "Сегодня";
   const tomorrowLabel = lang === "kk" ? "Ертең" : "Завтра";
   const dayAfterLabel = lang === "kk" ? "Арғы күні" : "Послезавтра";
+  // Only tag items with which field they belong to when the question actually
+  // bundles more than one field (a combineGroup batch, e.g. date + time) —
+  // a single-field question has nothing to disambiguate, so leave it as a
+  // plain list rather than adding a redundant one-line header.
+  const groupLabel = fields.length > 1 ? (f: CategoryField) => f.label[lang] : () => undefined;
   for (const f of fields) {
+    const group = groupLabel(f);
     if (f.type === "enum" && f.options) {
-      for (const opt of f.options) items.push({ token: `fld|${f.key}|${opt.value}`, label: opt.label[lang] });
+      for (const opt of f.options) items.push({ token: `fld|${f.key}|${opt.value}`, label: opt.label[lang], groupLabel: group });
     } else if (f.type === "boolean") {
-      items.push({ token: `fld|${f.key}|true`, label: yes });
-      items.push({ token: `fld|${f.key}|false`, label: no });
+      items.push({ token: `fld|${f.key}|true`, label: yes, groupLabel: group });
+      items.push({ token: `fld|${f.key}|false`, label: no, groupLabel: group });
     } else if (f.type === "date") {
       const now = new Date();
       const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
       const dayAfter = new Date(now);
       dayAfter.setDate(dayAfter.getDate() + 2);
-      items.push({ token: `fld|${f.key}|${fmtDate(now)}`, label: today });
-      items.push({ token: `fld|${f.key}|${fmtDate(tomorrow)}`, label: tomorrowLabel });
-      items.push({ token: `fld|${f.key}|${fmtDate(dayAfter)}`, label: dayAfterLabel });
+      items.push({ token: `fld|${f.key}|${fmtDate(now)}`, label: today, groupLabel: group });
+      items.push({ token: `fld|${f.key}|${fmtDate(tomorrow)}`, label: tomorrowLabel, groupLabel: group });
+      items.push({ token: `fld|${f.key}|${fmtDate(dayAfter)}`, label: dayAfterLabel, groupLabel: group });
     } else if (f.type === "time") {
       for (const t of ["09:00", "12:00", "15:00", "18:00"]) {
-        items.push({ token: `fld|${f.key}|${t}`, label: t });
+        items.push({ token: `fld|${f.key}|${t}`, label: t, groupLabel: group });
       }
     }
     // text / number / address / photo — free text only, no chip items.
@@ -64,14 +75,34 @@ function buildOptionItems(fields: CategoryField[], lang: Language): OptionItem[]
 
 function asButtonsOrList(body: string, items: OptionItem[], lang: Language): OutgoingWhatsAppMessage {
   if (items.length === 0) return { body };
-  if (items.length <= 3) {
+  if (items.length <= 3 && !items.some((i) => i.groupLabel)) {
     return { body, buttons: items.map((i) => ({ id: i.token, text: i.label })) };
   }
-  const listText = items.map((it, idx) => `${idx + 1}. ${it.label}`).join("\n");
+  // Group consecutive items sharing a groupLabel under their own heading
+  // (e.g. "Дата:" / "Время:") so a combined-field question never reads as
+  // one undifferentiated list — numbering stays sequential across groups
+  // since pendingOptions keys off the flat position, not the group.
+  const lines: string[] = [];
+  let lastGroup: string | undefined | null = null;
+  items.forEach((it, idx) => {
+    if (it.groupLabel && it.groupLabel !== lastGroup) {
+      if (lines.length > 0) lines.push("");
+      lines.push(`${it.groupLabel}:`);
+    }
+    lastGroup = it.groupLabel ?? null;
+    lines.push(`${idx + 1}. ${it.label}`);
+  });
   const pendingOptions: Record<string, string> = {};
   items.forEach((it, idx) => (pendingOptions[String(idx + 1)] = it.token));
-  const hint = lang === "kk" ? "Нөмірмен жауап беріңіз немесе өз нұсқаңызды жазыңыз." : "Ответьте номером или напишите свой вариант.";
-  return { body: `${body}\n\n${listText}\n\n${hint}`, pendingOptions };
+  const hint =
+    items.some((i) => i.groupLabel)
+      ? lang === "kk"
+        ? "Бір нөмірмен жауап беріңіз — алдымен осы сұрақты нақтылаймыз, қалғанын жеке сұраймыз."
+        : "Ответьте одним номером — сначала уточним этот пункт, про остальное спросим отдельно."
+      : lang === "kk"
+        ? "Нөмірмен жауап беріңіз немесе өз нұсқаңызды жазыңыз."
+        : "Ответьте номером или напишите свой вариант.";
+  return { body: `${body}\n\n${lines.join("\n")}\n\n${hint}`, pendingOptions };
 }
 
 export function renderFieldQuestion(fields: CategoryField[], assistantMessage: string, lang: Language): OutgoingWhatsAppMessage {
