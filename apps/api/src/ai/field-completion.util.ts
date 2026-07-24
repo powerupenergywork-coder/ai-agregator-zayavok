@@ -2,6 +2,22 @@ import { CategoryField, UNKNOWN_VALUE_OPTIONS } from "@ai-zayavki/shared";
 
 const UNKNOWN_VALUES = new Set(UNKNOWN_VALUE_OPTIONS.map((o) => o.value));
 
+/** Cheap deterministic fallback for allowUnknown fields (see ТЗ п.4.4) when AI
+ * extraction is unavailable or doesn't map the client's phrasing to one of the
+ * three special values — keyed on the same RU/KK words the field's own hint
+ * text (whatsapp-message-render.util.ts renderFieldQuestion) tells the client
+ * to use, so an exact-phrase reply always makes progress even without a
+ * working AI provider. Order matters: "нужна консультация" contains "нужна",
+ * check the more specific consultation/approximate phrases before the bare
+ * "не знаю" catch-all. */
+export function matchUnknownValueKeyword(text: string): string | undefined {
+  const t = text.toLowerCase();
+  if (/консультац|кеңес/.test(t)) return "needs_consultation";
+  if (/примерно|шамамен/.test(t)) return "approximate";
+  if (/не знаю|білмеймін/.test(t)) return "unknown";
+  return undefined;
+}
+
 /** Guards against a value that doesn't match its field's declared type —
  * reachable both from direct API calls and from AI extraction (an LLM isn't
  * guaranteed to return a clean number for a "number" field just because the

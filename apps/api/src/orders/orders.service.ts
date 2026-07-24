@@ -21,6 +21,7 @@ import { AI_PROVIDER, AiProvider, AiUnavailableError, CLASSIFY_CONFIDENCE_THRESH
 import {
   calculateProgressPercent,
   isValidFieldValue,
+  matchUnknownValueKeyword,
   missingRequiredFields,
   nextQuestionFields,
 } from "../ai/field-completion.util";
@@ -125,11 +126,18 @@ export class OrdersService {
       // no question has been asked yet, so it must not get parroted into
       // whatever the first pending field happens to be (e.g. producing an
       // "address" equal to the category name itself).
-      const pendingTextFields = nextQuestionFields(fields, knownFields).filter(
-        (f) => f.type === "text" || f.type === "address",
-      );
+      const pending = nextQuestionFields(fields, knownFields);
+      const pendingTextFields = pending.filter((f) => f.type === "text" || f.type === "address");
       if (pendingTextFields.length === 1 && message.trim()) {
         extracted = { [pendingTextFields[0].key]: message.trim() };
+      } else if (pending.length === 1 && pending[0].allowUnknown) {
+        // Same "don't loop forever" concern as above, but for allowUnknown
+        // number/text-with-escape-hatch fields: if the client's reply
+        // matches one of the magic phrases the question's own hint text
+        // told them to use ("не знаю"/"примерно"/"нужна консультация"),
+        // accept it even if the AI provider is down or didn't recognize it.
+        const keyword = matchUnknownValueKeyword(message);
+        if (keyword) extracted = { [pending[0].key]: keyword };
       }
     }
 

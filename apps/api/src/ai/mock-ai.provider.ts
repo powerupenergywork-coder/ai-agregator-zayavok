@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { CategoryField } from "@ai-zayavki/shared";
 import { AiCategoryOption, AiProvider, ClassifyResult } from "./ai.types";
+import { matchUnknownValueKeyword } from "./field-completion.util";
 
 // Deterministic offline stand-in for the OpenAI provider — no network calls,
 // so `AI_PROVIDER=mock` (the default) lets the whole order flow be exercised
@@ -49,6 +50,14 @@ export class MockAiProvider implements AiProvider {
 
     for (const field of fields) {
       if (knownFields[field.key] !== undefined) continue;
+
+      if (field.allowUnknown) {
+        const keyword = matchUnknownValueKeyword(text);
+        if (keyword) {
+          out[field.key] = keyword;
+          continue;
+        }
+      }
 
       switch (field.type) {
         case "text": {
