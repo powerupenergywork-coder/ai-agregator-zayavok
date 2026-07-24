@@ -239,6 +239,14 @@ export default function OrderPage() {
               />
             </label>
           </div>
+          {order.photos.length > 0 && (
+            <div className="mt-3 flex gap-2 overflow-x-auto">
+              {order.photos.map((url) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={url} src={url} alt="" className="h-16 w-16 rounded-lg object-cover" />
+              ))}
+            </div>
+          )}
         </Card>
       )}
 
