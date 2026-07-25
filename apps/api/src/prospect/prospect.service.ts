@@ -120,8 +120,8 @@ export class ProspectService {
   }
 
   /** Called from WhatsAppOnboardingService.persist() right after a
-   * SupplierProfile is created/updated with needsReview: true. Marks the
-   * funnel converted and triggers the one-off targeted notify for the
+   * SupplierProfile is created/updated. Marks the funnel converted and
+   * triggers the one-off targeted notify for the
    * anchor order (or its best replacement) — see
    * MatchingService.notifyConvertedProspect(). No-ops silently if this
    * phone was never actually a PROSPECT (normal trigger-phrase
@@ -180,7 +180,6 @@ export class ProspectService {
     });
     const active = await this.prisma.supplierProfile.count({
       where: {
-        needsReview: false,
         isBlocked: false,
         user: { phone: { in: convertedContacts.map((c) => c.phone) } },
       },

@@ -96,12 +96,6 @@ export class AdminController {
   }
 
   @UseGuards(AdminAuthGuard)
-  @Patch("suppliers/:id/review")
-  markSupplierReviewed(@CurrentAdmin() admin: AdminAuthUser, @Param("id") id: string) {
-    return this.admin.markSupplierReviewed(id, admin);
-  }
-
-  @UseGuards(AdminAuthGuard)
   @Patch("suppliers/:id/subscription")
   setSupplierSubscription(
     @CurrentAdmin() admin: AdminAuthUser,

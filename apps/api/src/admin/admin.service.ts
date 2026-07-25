@@ -57,7 +57,6 @@ export class AdminService {
       declinedAfterSelected: s.declinedAfterSelected,
       activityStatus: s.activityStatus,
       isBlocked: s.isBlocked,
-      needsReview: s.needsReview,
       acceptsUrgent: s.acceptsUrgent,
       categories: s.categories.map((c) => c.category.slug),
       cities: s.serviceAreas.map((a) => a.city),
@@ -131,19 +130,6 @@ export class AdminService {
       actorType: admin.role === "ADMIN" ? "admin" : "operator",
       actorId: admin.sub,
       action: blocked ? "block_supplier" : "unblock_supplier",
-      targetType: "SupplierProfile",
-      targetId: id,
-    });
-  }
-
-  async markSupplierReviewed(id: string, admin: AdminAuthUser) {
-    const supplier = await this.prisma.supplierProfile.findUnique({ where: { id } });
-    if (!supplier) throw new NotFoundException("Поставщик не найден");
-    await this.prisma.supplierProfile.update({ where: { id }, data: { needsReview: false } });
-    await this.audit.log({
-      actorType: admin.role === "ADMIN" ? "admin" : "operator",
-      actorId: admin.sub,
-      action: "mark_supplier_reviewed",
       targetType: "SupplierProfile",
       targetId: id,
     });

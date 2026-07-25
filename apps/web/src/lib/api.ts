@@ -132,8 +132,20 @@ export const ordersApi = {
     request<OrderDto>(`/orders/confirm-publish-by-token/${token}`, { method: "POST" }),
   cancel: (id: string, token: string, reason: string, comment?: string) =>
     request<OrderDto>(`/orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason, comment }) }, token),
-  complete: (id: string, token: string, outcome: "resolved" | "redispatch" | "closed", comment?: string) =>
-    request<OrderDto>(`/orders/${id}/complete`, { method: "POST", body: JSON.stringify({ outcome, comment }) }, token),
+  complete: (
+    id: string,
+    token: string,
+    outcome: "resolved" | "redispatch" | "closed",
+    comment?: string,
+    servedBySupplierId?: string,
+  ) =>
+    request<OrderDto>(
+      `/orders/${id}/complete`,
+      { method: "POST", body: JSON.stringify({ outcome, comment, servedBySupplierId }) },
+      token,
+    ),
+  notifiedSuppliers: (id: string, token: string) =>
+    request<{ id: string; companyName: string | null; phone: string }[]>(`/orders/${id}/notified-suppliers`, {}, token),
   repeat: (id: string, token: string) => request<OrderDto>(`/orders/${id}/repeat`, { method: "POST" }, token),
   listMine: (token: string) =>
     request<
@@ -165,8 +177,6 @@ export const adminApi = {
     request("/admin/suppliers", { method: "POST", body: JSON.stringify(body) }, token),
   setSupplierBlocked: (token: string, id: string, blocked: boolean) =>
     request(`/admin/suppliers/${id}/block`, { method: "PATCH", body: JSON.stringify({ blocked }) }, token),
-  markSupplierReviewed: (token: string, id: string) =>
-    request(`/admin/suppliers/${id}/review`, { method: "PATCH" }, token),
   setSupplierSubscription: (token: string, id: string, active: boolean) =>
     request(`/admin/suppliers/${id}/subscription`, { method: "PATCH", body: JSON.stringify({ active }) }, token),
   listOrders: (token: string, params: { status?: string; queue?: string } = {}) => {

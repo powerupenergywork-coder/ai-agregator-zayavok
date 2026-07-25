@@ -39,6 +39,7 @@ import { toLang } from "../common/language.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderCompletionOutcome } from "./dto/complete-order.dto";
 import { OrderDto } from "./order.dto";
+import { AuditLogService } from "../common/audit-log.service";
 
 export interface ChatTurnResponse {
   order: OrderDto;
@@ -60,6 +61,7 @@ export class OrdersService {
     @Inject(AI_PROVIDER) private readonly ai: AiProvider,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     @InjectQueue("matching") private readonly matchingQueue: Queue,
+    private readonly audit: AuditLogService,
   ) {}
 
   // ---------- draft lifecycle ----------
@@ -436,8 +438,22 @@ export class OrdersService {
    * - "redispatch": this supplier didn't work out, order stays PUBLISHED
    *   and a fresh matching wave goes out (excludes already-notified
    *   suppliers, see MatchingService.sendWave).
-   * - "closed": client is done trying, order is CANCELLED_BY_CLIENT. */
-  async completeOrder(orderId: string, user: AuthUser, outcome: OrderCompletionOutcome, comment?: string) {
+   * - "closed": client is done trying, order is CANCELLED_BY_CLIENT.
+   *
+   * servedBySupplierId (optional): which notified supplier the client says
+   * they actually dealt with — the only way to attribute quality signal to
+   * a specific supplier in a lead-broadcast model where several suppliers
+   * get notified and the client picks one by phone, outside the system.
+   * Feeds SupplierProfile.completedOrders/cancelledOrders/rating and, on
+   * enough bad "closed" outcomes, an automatic block — see
+   * recordSupplierOutcome(). No-ops (no attribution) if omitted. */
+  async completeOrder(
+    orderId: string,
+    user: AuthUser,
+    outcome: OrderCompletionOutcome,
+    comment?: string,
+    servedBySupplierId?: string,
+  ) {
     const order = await this.getRawOrThrow(orderId);
     this.assertOwnership(order, user);
     if (order.status !== "PUBLISHED") {
@@ -445,14 +461,22 @@ export class OrdersService {
     }
 
     if (outcome === "resolved") {
-      await this.prisma.order.update({ where: { id: orderId }, data: { clientRatingPositive: true, clientRatingComment: comment } });
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: { clientRatingPositive: true, clientRatingComment: comment, servedBySupplierId },
+      });
       await this.transitionStatus(orderId, "COMPLETED", "client");
       await this.prisma.order.update({ where: { id: orderId }, data: { completedAt: new Date() } });
       await this.analytics.track("order_completed", { orderId, userId: user.sub });
+      if (servedBySupplierId) await this.recordSupplierOutcome(servedBySupplierId, true);
     } else if (outcome === "closed") {
-      await this.prisma.order.update({ where: { id: orderId }, data: { clientRatingPositive: false, clientRatingComment: comment } });
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: { clientRatingPositive: false, clientRatingComment: comment, servedBySupplierId },
+      });
       await this.closeOrderAsCancelled(orderId, order.number, "client", comment || "Клиент закрыл заявку — услугу не оказали");
       await this.analytics.track("order_cancelled", { orderId, userId: user.sub, metadata: { reason: "client_closed_after_no_service" } });
+      if (servedBySupplierId) await this.recordSupplierOutcome(servedBySupplierId, false);
     } else {
       await this.matchingQueue.add("start", { orderId });
       await this.analytics.track("order_redispatch_requested", { orderId, userId: user.sub });
@@ -461,6 +485,62 @@ export class OrdersService {
     const dto = await this.toDto(orderId);
     this.realtime.emitOrderUpdated(orderId, dto);
     return dto;
+  }
+
+  /** Every supplier ever notified about this order (across all dispatch
+   * waves), for the "who actually helped you?" picker shown alongside
+   * resolved/closed — see completeOrder(). */
+  async getNotifiedSuppliers(orderId: string): Promise<{ id: string; companyName: string | null; phone: string }[]> {
+    const waves = await this.prisma.dispatchWave.findMany({ where: { orderId } });
+    const supplierIds = new Set<string>();
+    for (const wave of waves) {
+      for (const id of wave.supplierIds as string[]) supplierIds.add(id);
+    }
+    if (supplierIds.size === 0) return [];
+    const suppliers = await this.prisma.supplierProfile.findMany({
+      where: { id: { in: Array.from(supplierIds) } },
+      include: { user: true },
+    });
+    return suppliers.map((s) => ({ id: s.id, companyName: s.companyName, phone: s.user.phone }));
+  }
+
+  /** Updates the supplier's completed/cancelled counters and recomputed
+   * rating, then auto-blocks once there's a meaningful sample
+   * (SUPPLIER_AUTO_BLOCK_MIN_SAMPLE) and the failure rate crosses
+   * SUPPLIER_AUTO_BLOCK_MAX_FAIL_RATE — replaces the old manual onboarding
+   * review with a data-driven signal instead of a human moderation queue. */
+  private async recordSupplierOutcome(supplierId: string, positive: boolean): Promise<void> {
+    const supplier = await this.prisma.supplierProfile.findUnique({ where: { id: supplierId } });
+    if (!supplier) return;
+
+    const completedOrders = supplier.completedOrders + (positive ? 1 : 0);
+    const cancelledOrders = supplier.cancelledOrders + (positive ? 0 : 1);
+    const total = completedOrders + cancelledOrders;
+    const rating = total > 0 ? completedOrders / total : 0;
+
+    await this.prisma.supplierProfile.update({
+      where: { id: supplierId },
+      data: { completedOrders, cancelledOrders, rating },
+    });
+
+    const failRate = total > 0 ? cancelledOrders / total : 0;
+    if (
+      !supplier.isBlocked &&
+      total >= env.supplierAutoBlockMinSample &&
+      failRate > env.supplierAutoBlockMaxFailRate
+    ) {
+      await this.prisma.supplierProfile.update({
+        where: { id: supplierId },
+        data: { isBlocked: true, activityStatus: "BLOCKED" },
+      });
+      await this.audit.log({
+        actorType: "system",
+        action: "auto_block_supplier",
+        targetType: "SupplierProfile",
+        targetId: supplierId,
+        metadata: { completedOrders, cancelledOrders, failRate },
+      });
+    }
   }
 
   /** Proactive nudge — fired ORDER_CHECKIN_DELAY_HOURS after publish. No-op if

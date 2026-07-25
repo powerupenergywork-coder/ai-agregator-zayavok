@@ -270,7 +270,7 @@ export class WhatsAppOnboardingService {
     let supplier = await this.prisma.supplierProfile.findUnique({ where: { userId: user.id } });
     if (!supplier) {
       supplier = await this.prisma.supplierProfile.create({
-        data: { userId: user.id, companyName: state.collected.companyName, needsReview: true },
+        data: { userId: user.id, companyName: state.collected.companyName },
       });
     } else {
       await this.prisma.supplierProfile.update({

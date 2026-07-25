@@ -41,6 +41,9 @@ export default function OrderPage() {
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState<string>(CANCEL_REASON_VALUES[0]);
   const [showComplete, setShowComplete] = useState(false);
+  const [pendingOutcome, setPendingOutcome] = useState<"resolved" | "closed" | null>(null);
+  const [notifiedSuppliers, setNotifiedSuppliers] = useState<{ id: string; companyName: string | null; phone: string }[]>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string | "none" | null>(null);
 
   const clientToken = getToken("client");
 
@@ -150,13 +153,37 @@ export default function OrderPage() {
     }
   };
 
-  const complete = async (outcome: "resolved" | "redispatch" | "closed") => {
+  const complete = async (outcome: "resolved" | "redispatch" | "closed", servedBySupplierId?: string) => {
     if (!clientToken) return;
     setBusy(true);
     try {
-      const updated = await ordersApi.complete(orderId, clientToken, outcome);
+      const updated = await ordersApi.complete(orderId, clientToken, outcome, undefined, servedBySupplierId);
       setOrder(updated);
       setShowComplete(false);
+      setPendingOutcome(null);
+      setNotifiedSuppliers([]);
+      setSelectedSupplierId(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // "Услуга оказана"/"Закрыть заявку" don't complete immediately — the
+  // system only knows which suppliers were notified, not which one the
+  // client actually dealt with (they call each other directly), so we ask
+  // before finishing. Skipped entirely when nothing was notified.
+  const startOutcome = async (outcome: "resolved" | "closed") => {
+    if (!clientToken) return;
+    setBusy(true);
+    try {
+      const suppliers = await ordersApi.notifiedSuppliers(orderId, clientToken);
+      if (suppliers.length === 0) {
+        await complete(outcome);
+        return;
+      }
+      setNotifiedSuppliers(suppliers);
+      setPendingOutcome(outcome);
+      setSelectedSupplierId(null);
     } finally {
       setBusy(false);
     }
@@ -343,14 +370,36 @@ export default function OrderPage() {
             </Button>
           )}
 
-          {showComplete && (
+          {showComplete && !pendingOutcome && (
             <Card className="p-4">
               <p className="mb-3 text-sm font-medium">{t.order.allGoodQuestion}</p>
               <div className="flex flex-col gap-2">
-                <Button onClick={() => complete("resolved")} disabled={busy}>{t.order.outcomeResolved}</Button>
+                <Button onClick={() => startOutcome("resolved")} disabled={busy}>{t.order.outcomeResolved}</Button>
                 <Button variant="ghost" onClick={() => complete("redispatch")} disabled={busy}>{t.order.outcomeRedispatch}</Button>
-                <Button variant="ghost" onClick={() => complete("closed")} disabled={busy}>{t.order.outcomeClosed}</Button>
+                <Button variant="ghost" onClick={() => startOutcome("closed")} disabled={busy}>{t.order.outcomeClosed}</Button>
               </div>
+            </Card>
+          )}
+
+          {pendingOutcome && (
+            <Card className="p-4">
+              <p className="mb-3 text-sm font-medium">{t.order.whoServed}</p>
+              <div className="mb-3 flex flex-wrap gap-2">
+                {notifiedSuppliers.map((s) => (
+                  <Chip key={s.id} selected={selectedSupplierId === s.id} onClick={() => setSelectedSupplierId(s.id)}>
+                    {s.companyName ?? s.phone}
+                  </Chip>
+                ))}
+                <Chip selected={selectedSupplierId === "none"} onClick={() => setSelectedSupplierId("none")}>
+                  {t.order.noneOfList}
+                </Chip>
+              </div>
+              <Button
+                onClick={() => complete(pendingOutcome, selectedSupplierId === "none" ? undefined : (selectedSupplierId ?? undefined))}
+                disabled={busy || !selectedSupplierId}
+              >
+                {t.common.ok}
+              </Button>
             </Card>
           )}
 

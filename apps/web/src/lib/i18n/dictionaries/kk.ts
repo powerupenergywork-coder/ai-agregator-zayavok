@@ -53,6 +53,8 @@ export const kk: Dictionary = {
     outcomeResolved: "Қызмет көрсетілді",
     outcomeRedispatch: "Басқа жеткізушілерге жіберу",
     outcomeClosed: "Өтінімді жабу",
+    whoServed: "Өтінімді кім орындады?",
+    noneOfList: "Білмеймін / тізімде жоқ",
     cancelOrder: "Өтінімнен бас тарту",
     cancelReasonPrompt: "Неге өтінімнен бас тартып жатырсыз?",
     category: "Санат",

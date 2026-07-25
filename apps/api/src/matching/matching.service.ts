@@ -134,7 +134,7 @@ export class MatchingService {
     });
   }
 
-  /** Called once a PROSPECT-onboarded supplier clears needsReview (see
+  /** Called once a PROSPECT-onboarded supplier finishes registration (see
    * ProspectService.markConverted) — ТЗ_прогрев_поставщиков_v2 п.3.6: "по
    * возможности" notify them about the anchor order that hooked them in the
    * first place. DispatchWave.supplierIds for that order predates this

@@ -212,7 +212,7 @@ export class AuthOtpService {
     });
     let profile = await this.prisma.supplierProfile.findUnique({ where: { userId: user.id } });
     if (!profile) {
-      profile = await this.prisma.supplierProfile.create({ data: { userId: user.id, needsReview: true } });
+      profile = await this.prisma.supplierProfile.create({ data: { userId: user.id } });
     }
     return { sub: user.id, phone: normalized, role: "supplier", profileId: profile.id };
   }

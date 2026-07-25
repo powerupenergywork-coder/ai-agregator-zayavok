@@ -69,6 +69,13 @@ export const env = {
   orderCheckinDelayHours: num("ORDER_CHECKIN_DELAY_HOURS", 24),
   orderCheckinAutoCloseHours: num("ORDER_CHECKIN_AUTO_CLOSE_HOURS", 1),
 
+  // Automatic supplier quality tracking — replaces manual onboarding review
+  // (which never actually gated dispatch anyway, see git history). A
+  // supplier only gets auto-blocked once there's enough of a sample to be
+  // meaningful (min) and their failure rate crosses the threshold (max).
+  supplierAutoBlockMinSample: num("SUPPLIER_AUTO_BLOCK_MIN_SAMPLE", 3),
+  supplierAutoBlockMaxFailRate: num("SUPPLIER_AUTO_BLOCK_MAX_FAIL_RATE", 0.5),
+
   whatsappProvider: str("WHATSAPP_PROVIDER", "console"),
   greenApiBaseUrl: str("GREEN_API_BASE_URL", "https://api.green-api.com"),
   greenApiIdInstance: str("GREEN_API_ID_INSTANCE", ""),

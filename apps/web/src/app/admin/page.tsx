@@ -179,14 +179,9 @@ function SuppliersTab({ token }: { token: string }) {
             <div>
               <p className="font-medium">
                 {s.companyName ?? "—"} · {s.phone}
-                {s.needsReview && (
-                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-700">
-                    новый, не проверен
-                  </span>
-                )}
               </p>
               <p className="text-slate-500">
-                {s.categories.join(", ")} · {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}
+                {s.categories.join(", ")} · {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · выполнено {s.completedOrders} · не оказал услугу {s.cancelledOrders}
               </p>
               <p className="text-slate-500">
                 Бесплатных заявок в этом месяце: {s.notificationsUsedThisMonth} ·{" "}
@@ -200,11 +195,6 @@ function SuppliersTab({ token }: { token: string }) {
               </p>
             </div>
             <div className="flex gap-2">
-              {s.needsReview && (
-                <Button variant="secondary" onClick={() => adminApi.markSupplierReviewed(token, s.id).then(load)}>
-                  Проверено
-                </Button>
-              )}
               <Button
                 variant="secondary"
                 onClick={() => adminApi.setSupplierSubscription(token, s.id, !s.subscriptionActive).then(load)}

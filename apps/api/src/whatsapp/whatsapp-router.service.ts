@@ -11,11 +11,13 @@ import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { WhatsAppOnboardingService, isOnboardingTrigger } from "./whatsapp-onboarding.service";
 import { ProspectService } from "../prospect/prospect.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
+import { phoneToChatId } from "./whatsapp.util";
 import {
   OutgoingWhatsAppMessage,
   renderCategoryPick,
   renderFieldQuestion,
   renderReviewCard,
+  renderSupplierPicker,
 } from "./whatsapp-message-render.util";
 
 export { IncomingWhatsAppMessage } from "./whatsapp.types";
@@ -49,6 +51,15 @@ export class WhatsAppRouterService {
       // conversation ended, so handle it standalone regardless of session.flow.
       if (msg.buttonReplyId?.startsWith("complete|")) {
         await this.handleCompletionReply(msg.phone, msg.buttonReplyId, lang);
+        return;
+      }
+
+      // Follow-up to handleCompletionReply's supplier picker — same
+      // standalone handling, and also reachable via a numbered-list digit
+      // reply resolved through the normal session pendingOptions below when
+      // more than 3 suppliers were notified (see renderSupplierPicker).
+      if (msg.buttonReplyId?.startsWith("completesup|")) {
+        await this.handleCompletionSupplierPick(msg.phone, msg.buttonReplyId, lang);
         return;
       }
 
@@ -139,18 +150,61 @@ export class WhatsAppRouterService {
 
   private async handleCompletionReply(phone: string, token: string, lang: Language): Promise<void> {
     const [, outcome, orderId] = token.split("|") as [string, "resolved" | "redispatch" | "closed", string];
-    const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
     try {
-      await this.orders.completeOrder(orderId, authUser, outcome);
-      const replies: Record<"resolved" | "redispatch" | "closed", { ru: string; kk: string }> = {
-        resolved: { ru: "Отлично, спасибо! Заявка закрыта.", kk: "Керемет, рахмет! Өтінім жабылды." },
-        redispatch: { ru: "Хорошо, ищем других исполнителей для вас.", kk: "Жарайды, сізге басқа орындаушыларды іздейміз." },
-        closed: { ru: "Хорошо, заявка закрыта.", kk: "Жарайды, өтінім жабылды." },
-      };
-      await this.whatsapp.sendText(phone, replies[outcome][lang]);
+      // resolved/closed both mean someone was (or should have been) dealt
+      // with — ask which notified supplier it was before actually
+      // completing, so the outcome can be attributed for quality tracking.
+      // redispatch has no "who" to ask (nobody served the client), so it
+      // completes immediately, same as before.
+      if (outcome === "resolved" || outcome === "closed") {
+        const suppliers = await this.orders.getNotifiedSuppliers(orderId);
+        if (suppliers.length > 0) {
+          const chatId = phoneToChatId(phone);
+          const rendered = renderSupplierPicker(suppliers, outcome, orderId, lang);
+          await this.sessions.setPendingOptions(chatId, rendered.pendingOptions);
+          if (rendered.buttons) {
+            await this.whatsapp.sendButtons(phone, rendered.body, rendered.buttons);
+          } else {
+            await this.whatsapp.sendText(phone, rendered.body);
+          }
+          return;
+        }
+      }
+      await this.finishCompletion(phone, orderId, outcome, lang);
     } catch (err) {
       await this.whatsapp.sendText(phone, (err as Error).message);
     }
+  }
+
+  private async handleCompletionSupplierPick(phone: string, token: string, lang: Language): Promise<void> {
+    const [, outcome, orderId, supplierId] = token.split("|") as [
+      string,
+      "resolved" | "closed",
+      string,
+      string,
+    ];
+    try {
+      await this.finishCompletion(phone, orderId, outcome, lang, supplierId === "none" ? undefined : supplierId);
+    } catch (err) {
+      await this.whatsapp.sendText(phone, (err as Error).message);
+    }
+  }
+
+  private async finishCompletion(
+    phone: string,
+    orderId: string,
+    outcome: "resolved" | "redispatch" | "closed",
+    lang: Language,
+    servedBySupplierId?: string,
+  ): Promise<void> {
+    const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
+    await this.orders.completeOrder(orderId, authUser, outcome, undefined, servedBySupplierId);
+    const replies: Record<"resolved" | "redispatch" | "closed", { ru: string; kk: string }> = {
+      resolved: { ru: "Отлично, спасибо! Заявка закрыта.", kk: "Керемет, рахмет! Өтінім жабылды." },
+      redispatch: { ru: "Хорошо, ищем других исполнителей для вас.", kk: "Жарайды, сізге басқа орындаушыларды іздейміз." },
+      closed: { ru: "Хорошо, заявка закрыта.", kk: "Жарайды, өтінім жабылды." },
+    };
+    await this.whatsapp.sendText(phone, replies[outcome][lang]);
   }
 
   private async handleConfirmPublish(phone: string, token: string, lang: Language): Promise<void> {
@@ -200,6 +254,15 @@ export class WhatsAppRouterService {
   }
 
   private async handleToken(chatId: string, phone: string, token: string, lang: Language): Promise<void> {
+    // Reachable here (rather than handleIncoming's top-level bypass) when
+    // the supplier picker fell back to a numbered list (>3 notified
+    // suppliers) and the client replied with a bare digit instead of
+    // tapping a button — see renderSupplierPicker.
+    if (token.startsWith("completesup|")) {
+      await this.handleCompletionSupplierPick(phone, token, lang);
+      return;
+    }
+
     const [kind, ...rest] = token.split("|");
 
     // PROSPECT-онбординг (прогрев поставщиков, см. ТЗ_прогрев_поставщиков_v2):
@@ -267,8 +330,9 @@ export class WhatsAppRouterService {
                 ? `Өтінім №${dto.number}: ${dto.statusLabel.kk}. Қызмет көрсетілді ме?`
                 : `Заявка №${dto.number}: ${dto.statusLabel.ru}. Услугу уже оказали?`;
             await this.whatsapp.sendButtons(phone, body, [
-              { id: `complete|yes|${session.currentOrderId}`, text: lang === "kk" ? "Иә, бәрі жақсы" : "Да, всё хорошо" },
-              { id: `complete|no|${session.currentOrderId}`, text: lang === "kk" ? "Жоқ, болмады" : "Нет, не получилось" },
+              { id: `complete|resolved|${session.currentOrderId}`, text: lang === "kk" ? "Қызмет көрсетілді" : "Услуга оказана" },
+              { id: `complete|redispatch|${session.currentOrderId}`, text: lang === "kk" ? "Басқасын ұсыну" : "Отправить повторно" },
+              { id: `complete|closed|${session.currentOrderId}`, text: lang === "kk" ? "Өтінімді жабу" : "Закрыть заявку" },
             ]);
           } else {
             await this.whatsapp.sendText(

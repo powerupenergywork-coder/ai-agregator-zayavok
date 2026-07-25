@@ -109,10 +109,6 @@ model SupplierProfile {
   responseSpeedAvgSeconds    Int?
   activityStatus             SupplierActivityStatus @default(ACTIVE)
   isBlocked                  Boolean                @default(false)
-  // Self-registered via WhatsApp without an operator setting it up — surfaced
-  // in the admin panel as a moderation queue (ТЗ п.25's manual-blocking spirit
-  // applied to onboarding, not just after-the-fact abuse).
-  needsReview                Boolean                @default(false)
   // Quiet-hours window for non-urgent order notifications (see
   // matching/quiet-hours.util.ts). Both null = not configured, falls back to
   // DispatchSettings'/env's global default. Both "00:00"/"23:59" = supplier
@@ -132,6 +128,7 @@ model SupplierProfile {
   notifications              NotificationLog[]
   subscription               SupplierSubscription?
   pendingNotifications       PendingSupplierNotification[]
+  servedOrders                Order[]                @relation("OrderServedBySupplier")
 }
 
 model SupplierSubscription {
@@ -221,6 +218,12 @@ model Order {
   cancelReason                String?
   clientRatingPositive        Boolean?
   clientRatingComment         String?
+  // Which notified supplier the client says they actually dealt with — asked
+  // when closing the order (see OrdersService.completeOrder). Null when the
+  // client skips it or nothing was notified; feeds SupplierProfile's
+  // completedOrders/cancelledOrders/rating for automatic quality tracking.
+  servedBySupplierId          String?
+  servedBySupplier            SupplierProfile?   @relation("OrderServedBySupplier", fields: [servedBySupplierId], references: [id])
   repeatOfOrderId             String?
   repeatOfOrder               Order?             @relation("RepeatOrder", fields: [repeatOfOrderId], references: [id])
   repeats                     Order[]            @relation("RepeatOrder")
