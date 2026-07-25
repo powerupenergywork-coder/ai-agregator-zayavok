@@ -63,8 +63,11 @@ export const env = {
   // Since suppliers now contact the client directly (no in-system offer
   // selection), the system has to proactively ask whether the order got
   // resolved instead of waiting for the client to come back and close it.
+  // The platform is a pure connector with no delivery guarantee — a client
+  // who never answers the check-in gets auto-closed, not escalated to a
+  // human operator (see OrdersService.autoCloseStaleOrder).
   orderCheckinDelayHours: num("ORDER_CHECKIN_DELAY_HOURS", 24),
-  orderCheckinEscalateHours: num("ORDER_CHECKIN_ESCALATE_HOURS", 48),
+  orderCheckinAutoCloseHours: num("ORDER_CHECKIN_AUTO_CLOSE_HOURS", 1),
 
   whatsappProvider: str("WHATSAPP_PROVIDER", "console"),
   greenApiBaseUrl: str("GREEN_API_BASE_URL", "https://api.green-api.com"),

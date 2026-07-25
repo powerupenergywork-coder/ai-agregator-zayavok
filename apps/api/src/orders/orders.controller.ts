@@ -92,7 +92,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/complete")
   complete(@Param("id") id: string, @CurrentUser() user: AuthUser, @Body() dto: CompleteOrderDto) {
-    return this.orders.completeOrder(id, user, dto.positive, dto.comment);
+    return this.orders.completeOrder(id, user, dto.outcome, dto.comment);
   }
 
   @UseGuards(JwtAuthGuard)

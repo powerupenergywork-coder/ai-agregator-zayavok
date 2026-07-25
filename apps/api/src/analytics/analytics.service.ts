@@ -14,6 +14,7 @@ export type AnalyticsEventType =
   | "order_sent_to_suppliers"
   | "order_cancelled"
   | "order_completed"
+  | "order_redispatch_requested"
   | "repeat_order_created";
 
 @Injectable()

@@ -37,6 +37,7 @@ import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } f
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { toLang } from "../common/language.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
+import { OrderCompletionOutcome } from "./dto/complete-order.dto";
 import { OrderDto } from "./order.dto";
 
 export interface ChatTurnResponse {
@@ -400,7 +401,7 @@ export class OrdersService {
     await this.matchingQueue.add(
       "checkin-escalate",
       { orderId },
-      { delay: env.orderCheckinEscalateHours * 3600 * 1000 },
+      { delay: (env.orderCheckinDelayHours + env.orderCheckinAutoCloseHours) * 3600 * 1000 },
     );
   }
 
@@ -428,28 +429,33 @@ export class OrdersService {
   }
 
   /** Client closes an active order — no specific supplier is tracked, so this
-   * is the one action that ends it: either done (COMPLETED) or it didn't work
-   * out (NEEDS_OPERATOR, so an operator can follow up). */
-  async completeOrder(orderId: string, user: AuthUser, positive: boolean, comment?: string) {
+   * is the one action that ends it. No operator is ever involved: the
+   * platform only connects client and supplier, it doesn't mediate whether
+   * the service actually happened.
+   * - "resolved": supplier delivered, order is COMPLETED.
+   * - "redispatch": this supplier didn't work out, order stays PUBLISHED
+   *   and a fresh matching wave goes out (excludes already-notified
+   *   suppliers, see MatchingService.sendWave).
+   * - "closed": client is done trying, order is CANCELLED_BY_CLIENT. */
+  async completeOrder(orderId: string, user: AuthUser, outcome: OrderCompletionOutcome, comment?: string) {
     const order = await this.getRawOrThrow(orderId);
     this.assertOwnership(order, user);
     if (order.status !== "PUBLISHED") {
       throw new BadRequestException("Завершить можно только активную заявку");
     }
 
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: { clientRatingPositive: positive, clientRatingComment: comment },
-    });
-
-    if (positive) {
+    if (outcome === "resolved") {
+      await this.prisma.order.update({ where: { id: orderId }, data: { clientRatingPositive: true, clientRatingComment: comment } });
       await this.transitionStatus(orderId, "COMPLETED", "client");
       await this.prisma.order.update({ where: { id: orderId }, data: { completedAt: new Date() } });
       await this.analytics.track("order_completed", { orderId, userId: user.sub });
+    } else if (outcome === "closed") {
+      await this.prisma.order.update({ where: { id: orderId }, data: { clientRatingPositive: false, clientRatingComment: comment } });
+      await this.closeOrderAsCancelled(orderId, order.number, "client", comment || "Клиент закрыл заявку — услугу не оказали");
+      await this.analytics.track("order_cancelled", { orderId, userId: user.sub, metadata: { reason: "client_closed_after_no_service" } });
     } else {
-      const reason = "Клиент отметил, что услугу не оказали";
-      await this.transitionStatus(orderId, "NEEDS_OPERATOR", "client", reason);
-      await this.notifications.send({ event: "needs_operator", payload: { orderNumber: order.number, reason }, orderId });
+      await this.matchingQueue.add("start", { orderId });
+      await this.analytics.track("order_redispatch_requested", { orderId, userId: user.sub });
     }
 
     const dto = await this.toDto(orderId);
@@ -483,23 +489,29 @@ export class OrdersService {
       recipientPhone: client.user.phone,
       orderId,
       buttons: [
-        { id: `complete|yes|${orderId}`, text: lang === "kk" ? "Иә, бәрі жақсы" : "Да, всё хорошо" },
-        { id: `complete|no|${orderId}`, text: lang === "kk" ? "Жоқ, болмады" : "Нет, не получилось" },
+        { id: `complete|resolved|${orderId}`, text: lang === "kk" ? "Қызмет көрсетілді" : "Услуга оказана" },
+        { id: `complete|redispatch|${orderId}`, text: lang === "kk" ? "Басқасын ұсыну" : "Отправить повторно" },
+        { id: `complete|closed|${orderId}`, text: lang === "kk" ? "Өтінімді жабу" : "Закрыть заявку" },
       ],
     });
   }
 
-  /** Fired ORDER_CHECKIN_ESCALATE_HOURS after publish — if the client never
-   * responded to the check-in (order is still PUBLISHED), hand it to an
-   * operator rather than leaving it to sit forever. */
-  async escalateStaleOrder(orderId: string) {
+  /** Fired ORDER_CHECKIN_AUTO_CLOSE_HOURS after the check-in message — the
+   * platform is a pure connector with no delivery guarantee, so a client who
+   * never answers isn't handed to a human operator: the order is simply
+   * closed, same as if the client had picked "Закрыть заявку" themselves. */
+  async autoCloseStaleOrder(orderId: string) {
     const order = await this.getRawOrThrow(orderId);
     if (order.status !== "PUBLISHED") return;
 
-    const reason = "Клиент не ответил на проверку статуса заявки";
-    await this.transitionStatus(orderId, "NEEDS_OPERATOR", "system", reason);
-    await this.notifications.send({ event: "needs_operator", payload: { orderNumber: order.number, reason }, orderId });
+    await this.closeOrderAsCancelled(orderId, order.number, "system", "Клиент не ответил на проверку статуса — заявка закрыта автоматически");
     this.realtime.emitOrderUpdated(orderId, await this.toDto(orderId));
+  }
+
+  private async closeOrderAsCancelled(orderId: string, orderNumber: number, actor: string, reason: string): Promise<void> {
+    await this.transitionStatus(orderId, "CANCELLED_BY_CLIENT", actor, reason);
+    await this.prisma.order.update({ where: { id: orderId }, data: { cancelledAt: new Date(), cancelReason: reason } });
+    await this.notifyDispatchedSuppliers(orderId, orderNumber, "order_cancelled");
   }
 
   async repeat(orderId: string, user: AuthUser) {

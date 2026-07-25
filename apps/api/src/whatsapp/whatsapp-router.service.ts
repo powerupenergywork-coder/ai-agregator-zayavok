@@ -138,20 +138,16 @@ export class WhatsAppRouterService {
   }
 
   private async handleCompletionReply(phone: string, token: string, lang: Language): Promise<void> {
-    const [, result, orderId] = token.split("|");
+    const [, outcome, orderId] = token.split("|") as [string, "resolved" | "redispatch" | "closed", string];
     const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
     try {
-      await this.orders.completeOrder(orderId, authUser, result === "yes");
-      await this.whatsapp.sendText(
-        phone,
-        result === "yes"
-          ? lang === "kk"
-            ? "Керемет, рахмет! Өтінім жабылды."
-            : "Отлично, спасибо! Заявка закрыта."
-          : lang === "kk"
-            ? "Түсінікті, операторға беремін — жақында хабарласамыз."
-            : "Понял, передаю оператору — скоро свяжемся.",
-      );
+      await this.orders.completeOrder(orderId, authUser, outcome);
+      const replies: Record<"resolved" | "redispatch" | "closed", { ru: string; kk: string }> = {
+        resolved: { ru: "Отлично, спасибо! Заявка закрыта.", kk: "Керемет, рахмет! Өтінім жабылды." },
+        redispatch: { ru: "Хорошо, ищем других исполнителей для вас.", kk: "Жарайды, сізге басқа орындаушыларды іздейміз." },
+        closed: { ru: "Хорошо, заявка закрыта.", kk: "Жарайды, өтінім жабылды." },
+      };
+      await this.whatsapp.sendText(phone, replies[outcome][lang]);
     } catch (err) {
       await this.whatsapp.sendText(phone, (err as Error).message);
     }

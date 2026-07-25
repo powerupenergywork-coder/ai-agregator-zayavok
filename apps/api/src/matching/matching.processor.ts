@@ -22,7 +22,7 @@ export class MatchingProcessor extends WorkerHost {
       } else if (job.name === "checkin") {
         await this.orders.sendCompletionCheckin(job.data.orderId);
       } else if (job.name === "checkin-escalate") {
-        await this.orders.escalateStaleOrder(job.data.orderId);
+        await this.orders.autoCloseStaleOrder(job.data.orderId);
       }
     } catch (err) {
       this.logger.error(`Job ${job.name} failed for order ${job.data.orderId}: ${(err as Error).message}`);

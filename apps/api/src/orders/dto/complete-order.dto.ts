@@ -1,8 +1,11 @@
-import { IsBoolean, IsOptional, IsString } from "class-validator";
+import { IsIn, IsOptional, IsString } from "class-validator";
+
+export type OrderCompletionOutcome = "resolved" | "redispatch" | "closed";
+const OUTCOMES: OrderCompletionOutcome[] = ["resolved", "redispatch", "closed"];
 
 export class CompleteOrderDto {
-  @IsBoolean()
-  positive!: boolean;
+  @IsIn(OUTCOMES)
+  outcome!: OrderCompletionOutcome;
 
   @IsOptional()
   @IsString()

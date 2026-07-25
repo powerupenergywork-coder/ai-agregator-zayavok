@@ -150,11 +150,11 @@ export default function OrderPage() {
     }
   };
 
-  const complete = async (positive: boolean) => {
+  const complete = async (outcome: "resolved" | "redispatch" | "closed") => {
     if (!clientToken) return;
     setBusy(true);
     try {
-      const updated = await ordersApi.complete(orderId, clientToken, positive);
+      const updated = await ordersApi.complete(orderId, clientToken, outcome);
       setOrder(updated);
       setShowComplete(false);
     } finally {
@@ -346,9 +346,10 @@ export default function OrderPage() {
           {showComplete && (
             <Card className="p-4">
               <p className="mb-3 text-sm font-medium">{t.order.allGoodQuestion}</p>
-              <div className="flex gap-2">
-                <Button onClick={() => complete(true)} disabled={busy}>{t.order.yesAllGood}</Button>
-                <Button variant="ghost" onClick={() => complete(false)} disabled={busy}>{t.order.noDidntWork}</Button>
+              <div className="flex flex-col gap-2">
+                <Button onClick={() => complete("resolved")} disabled={busy}>{t.order.outcomeResolved}</Button>
+                <Button variant="ghost" onClick={() => complete("redispatch")} disabled={busy}>{t.order.outcomeRedispatch}</Button>
+                <Button variant="ghost" onClick={() => complete("closed")} disabled={busy}>{t.order.outcomeClosed}</Button>
               </div>
             </Card>
           )}
