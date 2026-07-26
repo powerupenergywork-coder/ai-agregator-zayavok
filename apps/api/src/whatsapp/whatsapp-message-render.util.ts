@@ -132,28 +132,6 @@ export function renderCategoryPick(categories: { slug: string; name: string }[],
   return asButtonsOrList(body, items, lang);
 }
 
-/** Asked right after "Услуга оказана"/"Закрыть заявку" — the system only
- * knows which suppliers were notified, not which one the client actually
- * dealt with (they call each other directly), so this is the one place
- * that attribution gets captured for SupplierProfile's quality tracking.
- * Token: "completesup|<outcome>|<orderId>|<supplierId|none>". */
-export function renderSupplierPicker(
-  suppliers: { id: string; companyName: string | null; phone: string }[],
-  outcome: "resolved" | "closed",
-  orderId: string,
-  lang: Language,
-): OutgoingWhatsAppMessage {
-  const body = lang === "kk" ? "Кім орындады?" : "Кто выполнил заявку?";
-  const skipLabel = lang === "kk" ? "Білмеймін / тізімде жоқ" : "Не знаю / никто из списка";
-  const items = [
-    ...suppliers.map((s) => ({
-      token: `completesup|${outcome}|${orderId}|${s.id}`,
-      label: s.companyName ?? s.phone,
-    })),
-    { token: `completesup|${outcome}|${orderId}|none`, label: skipLabel },
-  ];
-  return asButtonsOrList(body, items, lang);
-}
 
 export function renderReviewCard(order: OrderDto, lang: Language): OutgoingWhatsAppMessage {
   // The category name itself was missing from the card — a client saw only

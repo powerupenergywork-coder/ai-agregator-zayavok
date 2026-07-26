@@ -132,20 +132,8 @@ export const ordersApi = {
     request<OrderDto>(`/orders/confirm-publish-by-token/${token}`, { method: "POST" }),
   cancel: (id: string, token: string, reason: string, comment?: string) =>
     request<OrderDto>(`/orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason, comment }) }, token),
-  complete: (
-    id: string,
-    token: string,
-    outcome: "resolved" | "redispatch" | "closed",
-    comment?: string,
-    servedBySupplierId?: string,
-  ) =>
-    request<OrderDto>(
-      `/orders/${id}/complete`,
-      { method: "POST", body: JSON.stringify({ outcome, comment, servedBySupplierId }) },
-      token,
-    ),
-  notifiedSuppliers: (id: string, token: string) =>
-    request<{ id: string; companyName: string | null; phone: string }[]>(`/orders/${id}/notified-suppliers`, {}, token),
+  complete: (id: string, token: string, outcome: "resolved" | "redispatch" | "closed", comment?: string) =>
+    request<OrderDto>(`/orders/${id}/complete`, { method: "POST", body: JSON.stringify({ outcome, comment }) }, token),
   repeat: (id: string, token: string) => request<OrderDto>(`/orders/${id}/repeat`, { method: "POST" }, token),
   listMine: (token: string) =>
     request<

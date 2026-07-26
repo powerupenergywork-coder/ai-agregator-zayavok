@@ -181,7 +181,7 @@ function SuppliersTab({ token }: { token: string }) {
                 {s.companyName ?? "—"} · {s.phone}
               </p>
               <p className="text-slate-500">
-                {s.categories.join(", ")} · {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · выполнено {s.completedOrders} · не оказал услугу {s.cancelledOrders}
+                {s.categories.join(", ")} · {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}
               </p>
               <p className="text-slate-500">
                 Бесплатных заявок в этом месяце: {s.notificationsUsedThisMonth} ·{" "}

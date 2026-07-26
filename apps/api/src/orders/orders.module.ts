@@ -8,7 +8,6 @@ import { StorageModule } from "../storage/storage.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { AnalyticsModule } from "../analytics/analytics.module";
 import { AuthOtpModule } from "../auth-otp/auth-otp.module";
-import { AuditLogService } from "../common/audit-log.service";
 
 @Module({
   imports: [
@@ -21,7 +20,7 @@ import { AuditLogService } from "../common/audit-log.service";
     AuthOtpModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, AuditLogService],
+  providers: [OrdersService],
   exports: [OrdersService],
 })
 export class OrdersModule {}

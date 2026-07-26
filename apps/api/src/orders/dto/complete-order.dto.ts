@@ -10,11 +10,4 @@ export class CompleteOrderDto {
   @IsOptional()
   @IsString()
   comment?: string;
-
-  // Which notified supplier the client says they actually dealt with —
-  // only meaningful for "resolved"/"closed" (see OrdersService.completeOrder).
-  // Undefined/omitted when the client skips it or nothing was notified.
-  @IsOptional()
-  @IsString()
-  servedBySupplierId?: string;
 }

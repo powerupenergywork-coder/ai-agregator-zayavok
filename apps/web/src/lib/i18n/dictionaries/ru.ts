@@ -51,8 +51,6 @@ export const ru = {
     outcomeResolved: "Услуга оказана",
     outcomeRedispatch: "Отправить повторно поставщикам",
     outcomeClosed: "Закрыть заявку",
-    whoServed: "Кто выполнил заявку?",
-    noneOfList: "Не знаю / никто из списка",
     cancelOrder: "Отменить заявку",
     cancelReasonPrompt: "Почему вы отменяете заявку?",
     category: "Категория",

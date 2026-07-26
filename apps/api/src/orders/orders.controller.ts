@@ -92,13 +92,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Post(":id/complete")
   complete(@Param("id") id: string, @CurrentUser() user: AuthUser, @Body() dto: CompleteOrderDto) {
-    return this.orders.completeOrder(id, user, dto.outcome, dto.comment, dto.servedBySupplierId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get(":id/notified-suppliers")
-  notifiedSuppliers(@Param("id") id: string) {
-    return this.orders.getNotifiedSuppliers(id);
+    return this.orders.completeOrder(id, user, dto.outcome, dto.comment);
   }
 
   @UseGuards(JwtAuthGuard)

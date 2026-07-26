@@ -128,7 +128,6 @@ model SupplierProfile {
   notifications              NotificationLog[]
   subscription               SupplierSubscription?
   pendingNotifications       PendingSupplierNotification[]
-  servedOrders                Order[]                @relation("OrderServedBySupplier")
 }
 
 model SupplierSubscription {
@@ -218,12 +217,6 @@ model Order {
   cancelReason                String?
   clientRatingPositive        Boolean?
   clientRatingComment         String?
-  // Which notified supplier the client says they actually dealt with — asked
-  // when closing the order (see OrdersService.completeOrder). Null when the
-  // client skips it or nothing was notified; feeds SupplierProfile's
-  // completedOrders/cancelledOrders/rating for automatic quality tracking.
-  servedBySupplierId          String?
-  servedBySupplier            SupplierProfile?   @relation("OrderServedBySupplier", fields: [servedBySupplierId], references: [id])
   repeatOfOrderId             String?
   repeatOfOrder               Order?             @relation("RepeatOrder", fields: [repeatOfOrderId], references: [id])
   repeats                     Order[]            @relation("RepeatOrder")
