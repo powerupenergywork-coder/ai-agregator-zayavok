@@ -282,6 +282,12 @@ export class WhatsAppOnboardingService {
     await this.prisma.supplierProfile.update({
       where: { id: supplier.id },
       data: {
+        // Completing this dialogue IS the opt-in — covers both a brand-new
+        // profile and an operator-preloaded "cold" one the supplier just
+        // registered on top of. Idempotent on re-runs: the trigger phrase
+        // doubles as profile editing, and we don't want a later edit to
+        // look like a fresh consent.
+        confirmedAt: supplier.confirmedAt ?? new Date(),
         acceptsUrgent: state.collected.acceptsUrgent ?? true,
         // true = explicit round-the-clock opt-out; false = explicit
         // confirmation of the default window (clears any previous

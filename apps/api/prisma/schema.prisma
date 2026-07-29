@@ -109,6 +109,14 @@ model SupplierProfile {
   responseSpeedAvgSeconds    Int?
   activityStatus             SupplierActivityStatus @default(ACTIVE)
   isBlocked                  Boolean                @default(false)
+  // Null = the supplier is in our base but has never agreed to receive
+  // anything: typically pre-loaded by an operator from a public directory.
+  // They still take part in matching, but get a cold-invite message with a
+  // privacy-safe order summary (no client phone/address) plus an opt-in
+  // button — see MatchingService.dispatchToSupplier. Set the moment they
+  // tap "Интересно", after which they're treated like any other supplier
+  // and receive full order details including the client's contact.
+  confirmedAt                DateTime?
   // Quiet-hours window for non-urgent order notifications (see
   // matching/quiet-hours.util.ts). Both null = not configured, falls back to
   // DispatchSettings'/env's global default. Both "00:00"/"23:59" = supplier

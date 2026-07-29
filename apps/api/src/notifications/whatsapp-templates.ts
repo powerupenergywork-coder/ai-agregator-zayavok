@@ -15,7 +15,13 @@
 import { Language } from "@ai-zayavki/shared";
 import { NotificationEvent } from "./notification-templates";
 
-export const WHATSAPP_TEMPLATE_EVENTS = ["order_broadcast_full", "order_digest", "completion_checkin", "prospect_outreach"] as const;
+export const WHATSAPP_TEMPLATE_EVENTS = [
+  "order_broadcast_full",
+  "order_digest",
+  "completion_checkin",
+  "prospect_outreach",
+  "supplier_cold_invite",
+] as const;
 export type WhatsAppTemplateEvent = (typeof WHATSAPP_TEMPLATE_EVENTS)[number];
 
 export function isWhatsAppTemplateEvent(event: NotificationEvent): event is WhatsAppTemplateEvent {
@@ -25,7 +31,11 @@ export function isWhatsAppTemplateEvent(event: NotificationEvent): event is What
 const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = {
   order_broadcast_full: { ru: "order_broadcast_full_ru", kk: "order_broadcast_full_kk" },
   order_digest: { ru: "order_digest_ru", kk: "order_digest_kk" },
-  completion_checkin: { ru: "completion_checkin_ru", kk: "completion_checkin_kk" },
+  // v2 — the original had two buttons (Да/Нет), left over from when closing
+  // an order was a yes/no question. It now has three outcomes, and sending
+  // three button payloads against a two-button template is rejected by Meta.
+  completion_checkin: { ru: "completion_checkin_v2_ru", kk: "completion_checkin_v2_kk" },
+  supplier_cold_invite: { ru: "supplier_cold_invite_ru", kk: "supplier_cold_invite_kk" },
   // One combined bilingual template (not split ru/kk) — see ТЗ_прогрев_поставщиков_v2
   // раздел 5: the recipient's language isn't known yet, so both language
   // blocks ship in one message and the tapped quick-reply button picks it.
@@ -82,5 +92,7 @@ export function buildWhatsAppTemplateParams(event: WhatsAppTemplateEvent, payloa
         String(payload.city),
         String(payload.summaryKk),
       ];
+    case "supplier_cold_invite":
+      return [String(payload.categoryName), String(payload.city), String(payload.safeSummary), String(payload.freeQuota)];
   }
 }

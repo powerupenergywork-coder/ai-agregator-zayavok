@@ -21,7 +21,8 @@ export type NotificationEvent =
   | "needs_operator"
   | "quota_exceeded"
   | "subscription_activated"
-  | "prospect_outreach";
+  | "prospect_outreach"
+  | "supplier_cold_invite";
 
 const templates: Record<NotificationEvent, (p: any, lang: Language) => string> = {
   // Sent from the web flow before publishing actually happens — requires an
@@ -105,6 +106,16 @@ const templates: Record<NotificationEvent, (p: any, lang: Language) => string> =
   // since a brand-new phone's 24h window is never open.
   prospect_outreach: (p) =>
     `Здравствуйте! \u{1F44B}\nЭто AI-агрегатор заявок на услуги в Казахстане.\nПрямо сейчас в вашем городе ищут исполнителя:\n\u{1F4E6} ${p.categoryRu}   \u{1F4CD} ${p.city}   \u{1F4DD} ${p.summaryRu}\n\n—\n\nСәлеметсіз бе! \u{1F44B}\nБұл — Қазақстандағы қызмет көрсету өтінімдерінің AI-агрегаторы.\nДәл қазір сіздің қалаңызда орындаушы іздеп жатыр:\n\u{1F4E6} ${p.categoryKk}   \u{1F4CD} ${p.city}   \u{1F4DD} ${p.summaryKk}`,
+  // First contact with a supplier an operator pre-loaded from a public
+  // directory — they're in our base but have never agreed to anything, so
+  // this deliberately carries a privacy-safe summary only: no client phone,
+  // no address (see safeSummary()). Full details follow only after they tap
+  // "Интересно", which sets SupplierProfile.confirmedAt and promotes them to
+  // the normal order_broadcast_full path.
+  supplier_cold_invite: (p, lang) =>
+    lang === "kk"
+      ? `Сәлеметсіз бе! Бұл KerekTap — Қазақстандағы қызмет көрсету өтінімдерінің сервисі.\n\nДәл қазір орындаушы іздеп жатыр:\n\u{1F4E6} ${p.categoryName}\n\u{1F4CD} ${p.city}\n\u{1F4DD} ${p.safeSummary}\n\nАлатын болсаңыз — клиенттің телефонын жібереміз. Тапсырыстан комиссия алмаймыз, айына алғашқы ${p.freeQuota} өтінім тегін.`
+      : `Здравствуйте! Это KerekTap — сервис заявок на услуги в Казахстане.\n\nПрямо сейчас ищут исполнителя:\n\u{1F4E6} ${p.categoryName}\n\u{1F4CD} ${p.city}\n\u{1F4DD} ${p.safeSummary}\n\nЕсли возьмётесь — пришлём телефон клиента. Комиссию с заказа не берём, первые ${p.freeQuota} заявок в месяц бесплатно.`,
 };
 
 export function renderTemplate(event: NotificationEvent, payload: Record<string, unknown>, lang: Language): string {

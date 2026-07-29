@@ -179,6 +179,11 @@ function SuppliersTab({ token }: { token: string }) {
             <div>
               <p className="font-medium">
                 {s.companyName ?? "—"} · {s.phone}
+                {!s.confirmedAt && (
+                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-700">
+                    не подтвердил — получит приглашение
+                  </span>
+                )}
               </p>
               <p className="text-slate-500">
                 {s.categories.join(", ")} · {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}

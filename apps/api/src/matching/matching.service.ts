@@ -9,10 +9,10 @@ import { AnalyticsService } from "../analytics/analytics.service";
 import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { BillingService } from "../billing/billing.service";
 import { env } from "../config/env";
-import { formatWhen, fullDescription } from "./matching-message.util";
+import { formatWhen, fullDescription, safeSummary } from "./matching-message.util";
 import { isSupplierReachableNow } from "./quiet-hours.util";
 import { toLang } from "../common/language.util";
-import { CategoryField, LocalizedText } from "@ai-zayavki/shared";
+import { CategoryField, Language, LocalizedText } from "@ai-zayavki/shared";
 
 @Injectable()
 export class MatchingService {
@@ -81,7 +81,13 @@ export class MatchingService {
    * anyone reached through the normal wave. */
   private async dispatchToSupplier(
     order: Awaited<ReturnType<MatchingService["loadOrderForDispatch"]>>,
-    supplier: { id: string; user: { phone: string; preferredLanguage: string }; workingHoursStart: string | null; workingHoursEnd: string | null },
+    supplier: {
+      id: string;
+      confirmedAt: Date | null;
+      user: { phone: string; preferredLanguage: string };
+      workingHoursStart: string | null;
+      workingHoursEnd: string | null;
+    },
     settings: { quietHoursStart: string | null; quietHoursEnd: string | null },
   ): Promise<void> {
     // Non-urgent orders respect the supplier's quiet hours — held here
@@ -91,10 +97,43 @@ export class MatchingService {
     // enforced by the caller) is the supplier's own agreement to be
     // reachable any time for those.
     if (!order.urgent && !isSupplierReachableNow(supplier, settings)) {
+      // A supplier who never opted in is simply skipped rather than queued:
+      // the digest carries full order details (client phone included), which
+      // must not reach someone who hasn't agreed to anything, and waking a
+      // stranger with an unsolicited invitation at night is exactly how a
+      // number earns blocks. They stay eligible for later orders.
+      if (!supplier.confirmedAt) return;
       await this.prisma.pendingSupplierNotification.upsert({
         where: { supplierId_orderId: { supplierId: supplier.id, orderId: order.id } },
         create: { supplierId: supplier.id, orderId: order.id },
         update: {},
+      });
+      return;
+    }
+
+    const lang = toLang(supplier.user.preferredLanguage);
+
+    // Never opted in — operator pre-loaded them from a public directory.
+    // They get a privacy-safe teaser (no client phone, no address) and an
+    // opt-in button instead of the real dispatch, and it costs them none of
+    // their free quota: this is our invitation, not a lead they asked for.
+    if (!supplier.confirmedAt) {
+      const categoryFields = (order.category?.fields as unknown as CategoryField[]) ?? [];
+      await this.notifications.send({
+        event: "supplier_cold_invite",
+        payload: {
+          categoryName: order.category ? (order.category.name as unknown as LocalizedText)[lang] : "",
+          city: order.city ?? "",
+          safeSummary: safeSummary(order.fieldsData, categoryFields, lang),
+          freeQuota: env.freeNotificationsPerMonth,
+        },
+        recipientPhone: supplier.user.phone,
+        supplierId: supplier.id,
+        orderId: order.id,
+        buttons: [
+          { id: `supconfirm|yes|${order.id}`, text: lang === "kk" ? "Қызығамын, аламын" : "Интересно, беру" },
+          { id: `supconfirm|no|${order.id}`, text: lang === "kk" ? "Жазбаңыздар" : "Не писать мне" },
+        ],
       });
       return;
     }
@@ -109,7 +148,17 @@ export class MatchingService {
       return;
     }
 
-    const lang = toLang(supplier.user.preferredLanguage);
+    await this.sendFullBroadcast(order, supplier, lang);
+  }
+
+  /** The real dispatch: everything the supplier needs to act, including the
+   * client's phone. Only ever reached for a confirmed supplier — see the
+   * cold-invite branch in dispatchToSupplier(). */
+  private async sendFullBroadcast(
+    order: Awaited<ReturnType<MatchingService["loadOrderForDispatch"]>>,
+    supplier: { id: string; user: { phone: string } },
+    lang: Language,
+  ): Promise<void> {
     await this.notifications.send({
       event: "order_broadcast_full",
       payload: {
@@ -125,6 +174,39 @@ export class MatchingService {
       supplierId: supplier.id,
       orderId: order.id,
     });
+  }
+
+  /** A cold supplier tapped "Интересно, беру" on the invite: record the
+   * opt-in and hand over the order they just asked about, contact details
+   * and all. Quiet hours are deliberately ignored here — they pressed the
+   * button themselves, so waiting until morning to answer would be absurd.
+   * Quota still applies: from this point on it's a normal lead. */
+  async confirmColdSupplier(supplierId: string, orderId: string): Promise<void> {
+    const supplier = await this.prisma.supplierProfile.findUnique({
+      where: { id: supplierId },
+      include: { user: true },
+    });
+    if (!supplier) return;
+
+    if (!supplier.confirmedAt) {
+      await this.prisma.supplierProfile.update({
+        where: { id: supplierId },
+        data: { confirmedAt: new Date() },
+      });
+    }
+
+    const anchor = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (anchor?.status !== "PUBLISHED") return;
+
+    const canNotify = await this.billing.checkAndConsumeQuota(supplierId);
+    if (!canNotify) {
+      await this.billing.maybeSendQuotaReminder(supplierId, supplier.user.phone);
+      return;
+    }
+
+    const order = await this.loadOrderForDispatch(orderId);
+    await this.sendFullBroadcast(order, supplier, toLang(supplier.user.preferredLanguage));
+    this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
   }
 
   private async loadOrderForDispatch(orderId: string) {

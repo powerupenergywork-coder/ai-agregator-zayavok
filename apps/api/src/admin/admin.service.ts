@@ -57,6 +57,7 @@ export class AdminService {
       declinedAfterSelected: s.declinedAfterSelected,
       activityStatus: s.activityStatus,
       isBlocked: s.isBlocked,
+      confirmedAt: s.confirmedAt,
       acceptsUrgent: s.acceptsUrgent,
       categories: s.categories.map((c) => c.category.slug),
       cities: s.serviceAreas.map((a) => a.city),

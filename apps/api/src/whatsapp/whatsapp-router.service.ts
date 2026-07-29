@@ -10,6 +10,7 @@ import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interfa
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { WhatsAppOnboardingService, isOnboardingTrigger } from "./whatsapp-onboarding.service";
 import { ProspectService } from "../prospect/prospect.service";
+import { MatchingService } from "../matching/matching.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 import {
   OutgoingWhatsAppMessage,
@@ -39,6 +40,7 @@ export class WhatsAppRouterService {
     private readonly onboarding: WhatsAppOnboardingService,
     private readonly billing: BillingService,
     private readonly prospect: ProspectService,
+    private readonly matching: MatchingService,
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
@@ -49,6 +51,14 @@ export class WhatsAppRouterService {
       // conversation ended, so handle it standalone regardless of session.flow.
       if (msg.buttonReplyId?.startsWith("complete|")) {
         await this.handleCompletionReply(msg.phone, msg.buttonReplyId, lang);
+        return;
+      }
+
+      // Reply to a cold-invite (see MatchingService.dispatchToSupplier) —
+      // handled standalone like the check-in above, since it arrives with no
+      // drafting session of its own.
+      if (msg.buttonReplyId?.startsWith("supconfirm|")) {
+        await this.handleColdInviteReply(msg.phone, msg.buttonReplyId, lang);
         return;
       }
 
@@ -148,6 +158,45 @@ export class WhatsAppRouterService {
         closed: { ru: "Хорошо, заявка закрыта.", kk: "Жарайды, өтінім жабылды." },
       };
       await this.whatsapp.sendText(phone, replies[outcome][lang]);
+    } catch (err) {
+      await this.whatsapp.sendText(phone, (err as Error).message);
+    }
+  }
+
+  /** "Интересно, беру" / "Не писать мне" under a cold invite. This is the
+   * opt-in gate: until it's tapped the supplier only ever saw a summary with
+   * no client contact details. Declining blocks them outright — an explicit
+   * "don't contact me" is worth honouring permanently, both for them and to
+   * keep the number's quality rating clean. */
+  private async handleColdInviteReply(phone: string, token: string, lang: Language): Promise<void> {
+    const [, answer, orderId] = token.split("|");
+    const supplier = await this.prisma.supplierProfile.findFirst({
+      where: { user: { phone: normalizePhone(phone) } },
+    });
+    if (!supplier) return;
+
+    try {
+      if (answer === "yes") {
+        await this.matching.confirmColdSupplier(supplier.id, orderId);
+        // confirmColdSupplier sends the full order itself when it's still
+        // open; this only sets expectations for the case where it isn't.
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Тіркелдіңіз! Сәйкес өтінімдерді жібереміз. Профильді өзгерту үшін «тіркелу» деп жазыңыз."
+            : "Готово! Будем присылать вам подходящие заявки. Чтобы изменить профиль, напишите «регистрация».",
+        );
+        return;
+      }
+
+      await this.prisma.supplierProfile.update({
+        where: { id: supplier.id },
+        data: { isBlocked: true, activityStatus: "BLOCKED" },
+      });
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk" ? "Түсіндік, енді жазбаймыз. Кешірім сұраймыз." : "Понял, больше писать не будем. Извините за беспокойство.",
+      );
     } catch (err) {
       await this.whatsapp.sendText(phone, (err as Error).message);
     }
