@@ -57,7 +57,7 @@ services:
     restart: unless-stopped
     ports:
       - "8002:8002"
-      # Port 80 stays untouched — another project on this box owns it.
+      - "80:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
