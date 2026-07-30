@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { Language } from "@ai-zayavki/shared";
+import { Language, citySuggestions, resolveCityList } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CategoriesService } from "../categories/categories.service";
 import { AuditLogService } from "../common/audit-log.service";
@@ -146,10 +146,21 @@ export class WhatsAppOnboardingService {
         await this.whatsapp.sendText(phone, lang === "kk" ? "Қалаларды мәтінмен, үтір арқылы жазыңыз." : "Напишите города текстом, через запятую.");
         return;
       }
-      state.collected.cities = msg.text
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
+      // Free text in, canonical city names out. Anything we can't place is
+      // bounced back rather than stored: an unrecognised city silently
+      // matches no orders, so the supplier would sit here waiting for work
+      // that never comes and nobody would ever know why.
+      const { cities, unresolved } = resolveCityList(msg.text);
+      if (unresolved.length > 0 || cities.length === 0) {
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? `Мына қаланы танымадым: ${unresolved.join(", ") || msg.text}.\nБіз жұмыс істейтін қалалар: ${citySuggestions("kk")} және басқалары.\nҚайта жазып көріңізші.`
+            : `Не узнал город: ${unresolved.join(", ") || msg.text}.\nМы работаем в городах: ${citySuggestions("ru")} и другие.\nНапишите ещё раз, пожалуйста.`,
+        );
+        return;
+      }
+      state.collected.cities = cities.map((c) => c.name.ru);
       state.step = "urgent";
       await this.saveState(chatId, state);
       const rendered = renderYesNo(

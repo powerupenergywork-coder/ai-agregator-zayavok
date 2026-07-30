@@ -12,7 +12,7 @@ import { env } from "../config/env";
 import { formatWhen, fullDescription, safeSummary } from "./matching-message.util";
 import { isSupplierReachableNow } from "./quiet-hours.util";
 import { toLang } from "../common/language.util";
-import { CategoryField, Language, LocalizedText } from "@ai-zayavki/shared";
+import { CategoryField, Language, LocalizedText, citiesServing } from "@ai-zayavki/shared";
 
 @Injectable()
 export class MatchingService {
@@ -351,10 +351,15 @@ export class MatchingService {
         activityStatus: "ACTIVE",
         id: { notIn: excludeIds },
         categories: { some: { categoryId: order.categoryId } },
-        // Case-insensitive: the city comes from free-text answers on both
-        // sides (client's order field, supplier's onboarding list) — no
-        // reason to let a stray capital letter split otherwise-identical names.
-        ...(order.city ? { serviceAreas: { some: { city: { equals: order.city, mode: "insensitive" } } } } : {}),
+        // Both sides are canonicalised through the city dictionary before
+        // storage, so this is a set membership test rather than fuzzy
+        // matching: the order's own city plus any metro area that lists it
+        // as a satellite (a supplier in Астана covers Косшы). Still
+        // case-insensitive as a belt-and-braces for rows written before
+        // canonicalisation existed.
+        ...(order.city
+          ? { serviceAreas: { some: { OR: citiesServing(order.city).map((c) => ({ city: { equals: c, mode: "insensitive" as const } })) } } }
+          : {}),
         // acceptsUrgent is collected at onboarding specifically so suppliers
         // can opt out of rush jobs — only worth enforcing for urgent orders;
         // non-urgent dispatch shouldn't care either way.

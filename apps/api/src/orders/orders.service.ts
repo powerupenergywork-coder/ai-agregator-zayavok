@@ -14,6 +14,8 @@ import {
   ORDER_STATUS_LABELS,
   ORDER_STATUS_TRANSITIONS,
   OrderStatus,
+  citySuggestions,
+  resolveCity,
 } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CategoriesService } from "../categories/categories.service";
@@ -226,7 +228,22 @@ export class OrdersService {
         return !field || isValidFieldValue(field, value);
       }),
     );
-    const { values: validatedFields, droppedPast } = dropPastDateTimeFields(fields, typeValidatedFields);
+    const { values: dateChecked, droppedPast } = dropPastDateTimeFields(fields, typeValidatedFields);
+    // The city arrives as whatever the client wrote and the AI echoed back.
+    // Store only a canonical name so dispatch can match it — an unrecognised
+    // one is dropped, which re-asks the question rather than accepting a
+    // value that would match no supplier and strand the order.
+    const validatedFields = { ...dateChecked };
+    let unknownCity: string | undefined;
+    if (typeof validatedFields.city === "string") {
+      const resolved = resolveCity(validatedFields.city);
+      if (resolved) {
+        validatedFields.city = resolved.name.ru;
+      } else {
+        unknownCity = validatedFields.city;
+        delete validatedFields.city;
+      }
+    }
     const progress = calculateProgressPercent(fields, validatedFields);
     const missing = nextQuestionFields(fields, validatedFields);
     const derived = deriveDenormalizedColumns(fields, validatedFields);
@@ -250,7 +267,13 @@ export class OrdersService {
         : lang === "kk"
           ? "Өткен күн/уақыт жарамсыз — болашақ мерзімді көрсетіңіз.\n\n"
           : "Прошедшая дата или время не подходят — укажите будущее.\n\n";
-    const assistantMessage = missing.length === 0 ? readyForReviewMessage(lang) : pastNotice + buildQuestionText(missing, lang);
+    const cityNotice = !unknownCity
+      ? ""
+      : lang === "kk"
+        ? `«${unknownCity}» қаласын танымадым. Біз жұмыс істейтін қалалар: ${citySuggestions("kk")} және басқалары.\n\n`
+        : `Не узнал город «${unknownCity}». Мы работаем в городах: ${citySuggestions("ru")} и другие.\n\n`;
+    const assistantMessage =
+      missing.length === 0 ? readyForReviewMessage(lang) : pastNotice + cityNotice + buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {

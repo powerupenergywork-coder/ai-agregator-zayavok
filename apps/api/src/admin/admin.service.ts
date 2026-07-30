@@ -1,7 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import { CategoryField, LocalizedText, ORDER_STATUS_LABELS_RU, OrderStatus } from "@ai-zayavki/shared";
+import {
+  CategoryField,
+  LocalizedText,
+  ORDER_STATUS_LABELS_RU,
+  OrderStatus,
+  citySuggestions,
+  resolveCityList,
+} from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { OrdersService } from "../orders/orders.service";
 import { deriveDenormalizedColumns } from "../orders/order-derive.util";
@@ -83,6 +90,17 @@ export class AdminService {
 
   async upsertSupplier(dto: UpsertSupplierDto, admin: AdminAuthUser) {
     const phone = normalizePhone(dto.phone);
+    // Bulk-loading suppliers from public directories is the main way the
+    // base gets filled, so a typo here would quietly cost that supplier
+    // every order in their city. Reject rather than store something dispatch
+    // can't match.
+    const { cities: resolvedCities, unresolved } = resolveCityList(dto.cities.join(","));
+    if (unresolved.length > 0) {
+      throw new BadRequestException(`Не распознаны города: ${unresolved.join(", ")}. Доступные: ${citySuggestions("ru", 12)}`);
+    }
+    if (resolvedCities.length === 0) {
+      throw new BadRequestException("Укажите хотя бы один город");
+    }
     const user = await this.prisma.user.upsert({ where: { phone }, create: { phone }, update: {} });
     let supplier = await this.prisma.supplierProfile.findUnique({ where: { userId: user.id } });
     if (!supplier) {
@@ -106,7 +124,7 @@ export class AdminService {
 
     await this.prisma.serviceArea.deleteMany({ where: { supplierId: supplier.id } });
     await this.prisma.serviceArea.createMany({
-      data: dto.cities.map((city) => ({ supplierId: supplier!.id, city })),
+      data: resolvedCities.map((c) => ({ supplierId: supplier!.id, city: c.name.ru })),
     });
 
     await this.audit.log({
