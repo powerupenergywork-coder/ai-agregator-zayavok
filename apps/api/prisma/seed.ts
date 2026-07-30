@@ -45,6 +45,17 @@ async function main() {
 
   // A couple of demo suppliers per category/city so the matching engine has
   // candidates to dispatch to during local smoke testing.
+  //
+  // Off unless asked for: these carry fake +7701000000x numbers, and the
+  // dispatcher can't tell them from real ones — it hands them a live client's
+  // phone number and counts them as "notified", so an order looks delivered
+  // while nobody was actually reachable. Re-seeding categories on a real
+  // server (the usual reason to run this) must not drag them along.
+  if (process.env.SEED_DEMO_SUPPLIERS !== "true") {
+    console.log("Skipped demo suppliers (set SEED_DEMO_SUPPLIERS=true to create them)");
+    return;
+  }
+
   const demoCity = "Астана";
   const manipulatorCategory = await prisma.category.findUnique({ where: { slug: "crane-truck" } });
   const gazelleCategory = await prisma.category.findUnique({ where: { slug: "gazelle" } });

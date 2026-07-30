@@ -204,7 +204,13 @@ export default function OrderPage() {
           {!needsCategoryPick && nextFields.length > 0 && (
             <div className="mt-3 flex flex-col gap-3">
               {nextFields.map((f, i) => (
-                <FieldInput key={f.key} field={f} autoFocus={focusAnswer && i === 0} onSubmit={(v) => setField(f.key, v)} />
+                <FieldInput
+                  key={f.key}
+                  field={f}
+                  autoFocus={focusAnswer && i === 0}
+                  showLabel={nextFields.length > 1}
+                  onSubmit={(v) => setField(f.key, v)}
+                />
               ))}
             </div>
           )}

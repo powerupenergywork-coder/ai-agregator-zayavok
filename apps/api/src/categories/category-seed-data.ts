@@ -192,10 +192,16 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
     fields: [
       {
         key: "addressFrom",
-        label: { ru: "Адрес", kk: "Мекенжай" },
+        label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
         type: "address",
         required: true,
-        question: { ru: "Укажите адрес загрузки.", kk: "Тиеу мекенжайын көрсетіңіз." },
+        // Both fields in a combineGroup share one question on purpose:
+        // buildQuestionText de-duplicates, so the client reads a single
+        // sentence instead of two commands stitched together.
+        question: {
+          ru: "Укажите адрес загрузки и адрес доставки.",
+          kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
+        },
         combineGroup: "addresses",
       },
       {
@@ -203,7 +209,10 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         label: { ru: "Адрес назначения", kk: "Межелі мекенжай" },
         type: "address",
         required: true,
-        question: { ru: "Укажите адрес, куда доставить груз.", kk: "Жүкті жеткізу керек мекенжайды көрсетіңіз." },
+        question: {
+          ru: "Укажите адрес загрузки и адрес доставки.",
+          kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
+        },
         combineGroup: "addresses",
       },
       {

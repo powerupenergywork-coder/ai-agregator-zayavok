@@ -13,6 +13,7 @@ export function FieldInput({
   field,
   onSubmit,
   autoFocus = false,
+  showLabel = false,
 }: {
   field: CategoryField;
   onSubmit: (value: unknown) => void;
@@ -20,6 +21,11 @@ export function FieldInput({
    * default so merely opening the page doesn't pop the mobile keyboard — the
    * caller turns it on once the client has started answering. */
   autoFocus?: boolean;
+  /** Name the field above its control. Needed whenever more than one field is
+   * asked at once (addresses from/to, date + time): the combined question
+   * mentions both, but the controls underneath are indistinguishable without
+   * this — you cannot tell which box is the pickup address. */
+  showLabel?: boolean;
 }) {
   const { locale, t } = useLocale();
   const [text, setText] = useState("");
@@ -31,20 +37,33 @@ export function FieldInput({
     if (autoFocus) inputRef.current?.focus();
   }, [autoFocus]);
 
+  const withLabel = (control: React.ReactNode) =>
+    showLabel ? (
+      // A plain div rather than <label>: most of these controls are chip
+      // groups with nothing labelable to point at, and wrapping the text
+      // variant's <form> in a label makes clicks ambiguous.
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-slate-500">{field.label[locale]}</span>
+        {control}
+      </div>
+    ) : (
+      <>{control}</>
+    );
+
   if (field.type === "enum" && field.options) {
-    return (
+    return withLabel(
       <div className="flex flex-wrap gap-2">
         {field.options.map((opt) => (
           <Chip key={opt.value} onClick={() => onSubmit(opt.value)}>
             {opt.label[locale]}
           </Chip>
         ))}
-      </div>
+      </div>,
     );
   }
 
   if (field.type === "boolean") {
-    return (
+    return withLabel(
       <div className="flex flex-wrap gap-2">
         <Chip onClick={() => onSubmit(true)}>{t.common.yes}</Chip>
         <Chip onClick={() => onSubmit(false)}>{t.common.no}</Chip>
@@ -59,7 +78,7 @@ export function FieldInput({
     const dayAfter = new Date(today);
     dayAfter.setDate(dayAfter.getDate() + 2);
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    return (
+    return withLabel(
       <div className="flex flex-wrap items-center gap-2">
         <Chip onClick={() => onSubmit(fmt(today))}>{t.common.today}</Chip>
         <Chip onClick={() => onSubmit(fmt(tomorrow))}>{t.common.tomorrow}</Chip>
@@ -69,12 +88,12 @@ export function FieldInput({
           className="rounded-full border border-slate-300 px-3 py-2 text-sm"
           onChange={(e) => e.target.value && onSubmit(e.target.value)}
         />
-      </div>
+      </div>,
     );
   }
 
   if (field.type === "time") {
-    return (
+    return withLabel(
       <div className="flex flex-wrap items-center gap-2">
         {["09:00", "12:00", "15:00", "18:00"].map((tm) => (
           <Chip key={tm} onClick={() => onSubmit(tm)}>
@@ -86,12 +105,12 @@ export function FieldInput({
           className="rounded-full border border-slate-300 px-3 py-2 text-sm"
           onChange={(e) => e.target.value && onSubmit(e.target.value)}
         />
-      </div>
+      </div>,
     );
   }
 
   // text / number / address — free input, plus "don't know" chips when allowed.
-  return (
+  return withLabel(
     <div className="flex flex-col gap-2">
       <form
         className="flex gap-2"
@@ -111,7 +130,9 @@ export function FieldInput({
           value={text}
           onChange={(e) => setText(e.target.value)}
           type={field.type === "number" ? "number" : "text"}
-          placeholder={field.unit ? t.common.valueWithUnit(field.unit) : t.common.yourAnswer}
+          // The field's own name beats a generic "your answer" — it's the only
+          // hint left once two boxes sit side by side.
+          placeholder={field.unit ? `${field.label[locale]} (${field.unit})` : field.label[locale]}
           className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-brand-500"
         />
         <Button type="submit" disabled={!text.trim()}>
@@ -127,6 +148,6 @@ export function FieldInput({
           ))}
         </div>
       )}
-    </div>
+    </div>,
   );
 }
