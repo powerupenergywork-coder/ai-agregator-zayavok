@@ -41,6 +41,9 @@ export default function OrderPage() {
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState<string>(CANCEL_REASON_VALUES[0]);
   const [showComplete, setShowComplete] = useState(false);
+  // Only after the client has answered something — focusing on first paint
+  // would open the keyboard over the page before they've read the question.
+  const [focusAnswer, setFocusAnswer] = useState(false);
 
   const clientToken = getToken("client");
 
@@ -90,6 +93,7 @@ export default function OrderPage() {
       const res = await ordersApi.chat(orderId, chatText.trim(), locale);
       applyTurn(res);
       setChatText("");
+      setFocusAnswer(true);
       analyticsApi.track("first_message_sent", { orderId });
     } finally {
       setBusy(false);
@@ -110,6 +114,7 @@ export default function OrderPage() {
     try {
       applyTurn(await ordersApi.setField(orderId, key, value, locale));
       setEditingKey(null);
+      setFocusAnswer(true);
     } finally {
       setBusy(false);
     }
@@ -198,8 +203,8 @@ export default function OrderPage() {
 
           {!needsCategoryPick && nextFields.length > 0 && (
             <div className="mt-3 flex flex-col gap-3">
-              {nextFields.map((f) => (
-                <FieldInput key={f.key} field={f} onSubmit={(v) => setField(f.key, v)} />
+              {nextFields.map((f, i) => (
+                <FieldInput key={f.key} field={f} autoFocus={focusAnswer && i === 0} onSubmit={(v) => setField(f.key, v)} />
               ))}
             </div>
           )}
@@ -261,7 +266,7 @@ export default function OrderPage() {
                 <div key={f.key} className="flex items-center justify-between gap-3 border-b border-slate-50 pb-2">
                   <dt className="text-slate-500">{f.label[locale]}</dt>
                   {editingKey === f.key ? (
-                    <FieldInput field={f} onSubmit={(v) => setField(f.key, v)} />
+                    <FieldInput field={f} autoFocus onSubmit={(v) => setField(f.key, v)} />
                   ) : (
                     <button className="font-medium text-slate-900 underline decoration-dotted" onClick={() => setEditingKey(f.key)}>
                       {formatValue(value, f, locale, t)}

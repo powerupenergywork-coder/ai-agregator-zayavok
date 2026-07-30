@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CategoryField } from "@ai-zayavki/shared";
 import { UNKNOWN_VALUE_OPTIONS } from "@ai-zayavki/shared";
 import { useLocale } from "@/lib/i18n/context";
@@ -9,9 +9,27 @@ import { Button, Chip } from "./ui";
 /** Renders the right control for one category field — chips wherever the
  * answer is enumerable, free text only when it genuinely has to be (matches
  * the "chips over typing" UX call from the design discussion). */
-export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit: (value: unknown) => void }) {
+export function FieldInput({
+  field,
+  onSubmit,
+  autoFocus = false,
+}: {
+  field: CategoryField;
+  onSubmit: (value: unknown) => void;
+  /** Put the cursor in the box as soon as this question appears. Off by
+   * default so merely opening the page doesn't pop the mobile keyboard — the
+   * caller turns it on once the client has started answering. */
+  autoFocus?: boolean;
+}) {
   const { locale, t } = useLocale();
   const [text, setText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Moving on to the next question remounts this component (keyed by field),
+  // so focusing on mount is what carries the cursor forward.
+  useEffect(() => {
+    if (autoFocus) inputRef.current?.focus();
+  }, [autoFocus]);
 
   if (field.type === "enum" && field.options) {
     return (
@@ -82,9 +100,14 @@ export function FieldInput({ field, onSubmit }: { field: CategoryField; onSubmit
           if (!text.trim()) return;
           onSubmit(field.type === "number" ? Number(text) : text.trim());
           setText("");
+          // Clicking «Ок» moves focus to the button, and when the answer is
+          // bounced back (unknown city, past date) the same field is asked
+          // again without a remount — so the mount effect above wouldn't fire.
+          inputRef.current?.focus();
         }}
       >
         <input
+          ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           type={field.type === "number" ? "number" : "text"}

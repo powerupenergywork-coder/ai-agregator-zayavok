@@ -37,6 +37,7 @@ import { env } from "../config/env";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
 import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } from "./order-derive.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
+import { formatFieldValue } from "../common/field-format.util";
 import { toLang } from "../common/language.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderCompletionOutcome } from "./dto/complete-order.dto";
@@ -158,6 +159,11 @@ export class OrdersService {
       await this.transitionStatus(orderId, "CLARIFYING", "client");
     }
     await this.prisma.order.update({ where: { id: orderId }, data: { categoryId: category.id } });
+    // Same reasoning as in setField: picking from the category chips is an
+    // answer to the bot's question, so it belongs in the transcript.
+    await this.prisma.chatMessage.create({
+      data: { orderId, role: "USER", content: (category.name as unknown as LocalizedText)[lang] },
+    });
 
     return this.applyFieldUpdate(orderId, category, (order.fieldsData ?? {}) as Record<string, unknown>, lang);
   }
@@ -176,6 +182,13 @@ export class OrdersService {
       throw new BadRequestException(`Некорректное значение для поля «${field.label.ru}»`);
     }
     const knownFields = { ...((order.fieldsData ?? {}) as Record<string, unknown>), [key]: value };
+    // Answers given through a chip or the field box are just as much the
+    // client's turn as free text is — without this the transcript showed a
+    // wall of questions with nothing in between, and the client couldn't see
+    // (or re-read) what they had already told us.
+    await this.prisma.chatMessage.create({
+      data: { orderId, role: "USER", content: formatFieldValue(value, field, lang) },
+    });
     return this.applyFieldUpdate(orderId, category, knownFields, lang);
   }
 
