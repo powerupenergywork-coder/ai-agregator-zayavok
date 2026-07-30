@@ -27,7 +27,10 @@ export const ORDER_STATUS_LABELS_RU: Record<OrderStatus, string> = {
   CLARIFYING: "Уточнение данных",
   AWAITING_PHONE_CONFIRMATION: "Ожидает подтверждения телефона",
   PUBLISHED: "Разослана поставщикам",
-  NEEDS_OPERATOR: "Требуется вмешательство оператора",
+  // The only thing that lands an order here is "no supplier matched this
+  // category/city" — there is no operator queue to escalate to, so the label
+  // says what actually happened instead of promising an intervention.
+  NEEDS_OPERATOR: "Нет подходящих поставщиков",
   COMPLETED: "Завершена",
   CANCELLED_BY_CLIENT: "Отменена клиентом",
   CANCELLED_BY_ADMIN: "Отменена администратором",
@@ -38,7 +41,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, LocalizedText> = {
   CLARIFYING: { ru: "Уточнение данных", kk: "Деректерді нақтылау" },
   AWAITING_PHONE_CONFIRMATION: { ru: "Ожидает подтверждения телефона", kk: "Телефонды растауды күтуде" },
   PUBLISHED: { ru: "Разослана поставщикам", kk: "Жеткізушілерге жіберілді" },
-  NEEDS_OPERATOR: { ru: "Требуется вмешательство оператора", kk: "Оператордың араласуы қажет" },
+  NEEDS_OPERATOR: { ru: "Не нашли подходящих исполнителей", kk: "Сәйкес орындаушылар табылмады" },
   COMPLETED: { ru: "Завершена", kk: "Аяқталды" },
   CANCELLED_BY_CLIENT: { ru: "Отменена клиентом", kk: "Клиент бас тартты" },
   CANCELLED_BY_ADMIN: { ru: "Отменена администратором", kk: "Әкімші бас тартты" },

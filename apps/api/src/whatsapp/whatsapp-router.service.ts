@@ -22,6 +22,10 @@ import {
 export { IncomingWhatsAppMessage } from "./whatsapp.types";
 
 const DRAFT_STATUSES = ["DRAFT", "CLARIFYING"];
+// Nothing further will happen to an order in one of these — including
+// NEEDS_OPERATOR, which now only means "no supplier matched" and has no
+// operator queue behind it. See handleText().
+const FINISHED_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "NEEDS_OPERATOR"];
 const BALANCE_TRIGGER_PHRASES = new Set(["баланс", "мой баланс", "подписка"]);
 // Explicit language-override phrases — same exact-match idiom as the
 // supplier-onboarding trigger phrases below, checked before auto-detection.
@@ -301,7 +305,13 @@ export class WhatsAppRouterService {
 
     if (session.currentOrderId) {
       const order = await this.orders.getRawOrThrow(session.currentOrderId);
-      if (!DRAFT_STATUSES.includes(order.status)) {
+      // A finished order has nothing left to say. Holding the session on it
+      // turned every later message into a replay of its final status, with
+      // the only escape being the exact phrase "новая заявка" — which nobody
+      // is told about. Release it and let the message start a fresh order.
+      if (FINISHED_STATUSES.includes(order.status)) {
+        await this.sessions.clearOrder(chatId);
+      } else if (!DRAFT_STATUSES.includes(order.status)) {
         if (/нов(ая|ый)\s*(заявк|заказ)/i.test(text) || /жаңа\s*өтінім/i.test(text)) {
           await this.sessions.clearOrder(chatId);
           await this.whatsapp.sendText(phone, lang === "kk" ? "Жарайды, жаңа өтінімнен бастайық. Не керек?" : "Хорошо, начнём новую заявку. Что вам нужно?");
