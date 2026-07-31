@@ -146,7 +146,9 @@ export class OrdersService {
       }
     }
 
-    return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted }, lang);
+    return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted }, lang, {
+      previousFields: knownFields,
+    });
   }
 
   async pickCategory(orderId: string, categorySlug: string, lang: Language = "ru"): Promise<ChatTurnResponse> {
@@ -189,7 +191,10 @@ export class OrdersService {
     await this.prisma.chatMessage.create({
       data: { orderId, role: "USER", content: formatFieldValue(value, field, lang) },
     });
-    return this.applyFieldUpdate(orderId, category, knownFields, lang);
+    return this.applyFieldUpdate(orderId, category, knownFields, lang, {
+      previousFields: (order.fieldsData ?? {}) as Record<string, unknown>,
+      answeredKey: key,
+    });
   }
 
   async addPhoto(orderId: string, buffer: Buffer, filename: string, mimeType: string) {
@@ -229,6 +234,13 @@ export class OrdersService {
     category: { id: string; fields: unknown },
     mergedFields: Record<string, unknown>,
     lang: Language = "ru",
+    context: {
+      /** What was already filled before this turn — anything new that the
+       * client didn't type in answer to a question was inferred by the AI. */
+      previousFields?: Record<string, unknown>;
+      /** The field the client answered outright, so it isn't read back. */
+      answeredKey?: string;
+    } = {},
   ): Promise<ChatTurnResponse> {
     const fields = category.fields as unknown as CategoryField[];
     // Defense in depth against AI extraction (chat/pickCategory path): an
@@ -285,8 +297,29 @@ export class OrdersService {
       : lang === "kk"
         ? `«${unknownCity}» қаласын танымадым. Біз жұмыс істейтін қалалар: ${citySuggestions("kk")} және басқалары.\n\n`
         : `Не узнал город «${unknownCity}». Мы работаем в городах: ${citySuggestions("ru")} и другие.\n\n`;
+    // Anything the AI pulled out of free text was never asked about, so the
+    // client has no idea it was decided — order №51 ended up with a date
+    // taken from "на завтра" that appears nowhere in the conversation, and a
+    // wrong guess would have been just as invisible. Read those values back.
+    const previousFields = context.previousFields ?? {};
+    const inferred = fields.filter(
+      (f) =>
+        f.key !== context.answeredKey &&
+        f.type !== "photo" &&
+        validatedFields[f.key] !== undefined &&
+        previousFields[f.key] === undefined,
+    );
+    const inferredNotice =
+      inferred.length === 0
+        ? ""
+        : `${lang === "kk" ? "Хабарламаңыздан түсінгенім" : "Из вашего сообщения понял"}: ` +
+          inferred.map((f) => `${f.label[lang].toLowerCase()} — ${formatFieldValue(validatedFields[f.key], f, lang)}`).join(", ") +
+          `.\n\n`;
+
     const assistantMessage =
-      missing.length === 0 ? readyForReviewMessage(lang) : pastNotice + cityNotice + buildQuestionText(missing, lang);
+      missing.length === 0
+        ? inferredNotice + readyForReviewMessage(lang)
+        : inferredNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {

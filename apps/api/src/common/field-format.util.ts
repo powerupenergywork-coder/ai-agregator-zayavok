@@ -10,5 +10,14 @@ export function formatFieldValue(value: unknown, field: CategoryField, lang: Lan
   if (value === "needs_consultation") return lang === "kk" ? "орындаушының кеңесі керек" : "нужна консультация";
   if (field.type === "boolean") return value ? (lang === "kk" ? "иә" : "да") : lang === "kk" ? "жоқ" : "нет";
   if (field.type === "enum") return field.options?.find((o) => o.value === value)?.label[lang] ?? String(value);
+  // Dates are stored ISO. Nobody reads "2026-07-31" as a date at a glance —
+  // and this same string goes out in the supplier broadcast, where a date
+  // that takes a second to parse is a date that gets misread.
+  if (field.type === "date" && typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString(lang === "kk" ? "kk-KZ" : "ru-RU", { day: "numeric", month: "long" });
+    }
+  }
   return `${value}${field.unit ? ` ${field.unit}` : ""}`;
 }

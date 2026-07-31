@@ -397,6 +397,14 @@ function formatValue(value: unknown, field: CategoryField, locale: "ru" | "kk", 
   if (value === "needs_consultation") return t.fieldValue.needsConsultation;
   if (field.type === "boolean") return value ? t.fieldValue.yes : t.fieldValue.no;
   if (field.type === "enum") return field.options?.find((o) => o.value === value)?.label[locale] ?? String(value);
+  // Mirrors formatFieldValue on the API — the review card is the last place
+  // the client checks the date before submitting, so it has to be readable.
+  if (field.type === "date" && typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString(locale === "kk" ? "kk-KZ" : "ru-RU", { day: "numeric", month: "long" });
+    }
+  }
   return `${value}${field.unit ? ` ${field.unit}` : ""}`;
 }
 
