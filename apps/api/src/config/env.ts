@@ -94,6 +94,10 @@ export const env = {
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   kaspiMerchantId: str("KASPI_MERCHANT_ID", ""),
   kaspiApiKey: str("KASPI_API_KEY", ""),
+  // Shared secret Kaspi echoes back on the payment callback. Without it the
+  // webhook activates a subscription for anyone who knows a reference — and
+  // the supplier who requested the payment knows their own.
+  kaspiWebhookSecret: str("KASPI_WEBHOOK_SECRET", ""),
   // Placeholder price — not a real business decision, just what the mock flow
   // charges so the quota/subscription logic has something to test against.
   subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 5000),

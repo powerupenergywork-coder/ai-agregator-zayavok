@@ -65,10 +65,19 @@ export class BillingService {
 
     const now = new Date();
     const periodEnd = new Date(now.getTime() + env.subscriptionPeriodDays * 24 * 60 * 60 * 1000);
-    await this.prisma.supplierSubscription.update({
-      where: { id: sub.id },
-      data: { status: "ACTIVE", currentPeriodStart: now, currentPeriodEnd: periodEnd },
+    // Payment providers retry a callback until they get a 200, so the same
+    // reference arrives more than once as a matter of routine. Clearing it
+    // here makes the second delivery a no-op instead of another free month:
+    // the lookup above is by reference, and only one caller can win the
+    // conditional update.
+    const consumed = await this.prisma.supplierSubscription.updateMany({
+      where: { id: sub.id, paymentReference: reference },
+      data: { status: "ACTIVE", currentPeriodStart: now, currentPeriodEnd: periodEnd, paymentReference: null },
     });
+    if (consumed.count === 0) {
+      this.logger.log(`Повторный вебхук по ${reference} — платёж уже подтверждён, пропускаю`);
+      return;
+    }
     await this.notifications.send({
       event: "subscription_activated",
       payload: { periodDays: env.subscriptionPeriodDays },
