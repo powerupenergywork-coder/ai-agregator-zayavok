@@ -35,10 +35,12 @@ import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { assertTransition } from "../common/state-machine/state-machine.util";
 import { env } from "../config/env";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
+import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } from "./order-derive.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { formatFieldValue } from "../common/field-format.util";
 import { toLang } from "../common/language.util";
+import { normalizePhone, isValidPhone } from "../common/phone.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderCompletionOutcome } from "./dto/complete-order.dto";
 import { OrderDto } from "./order.dto";
@@ -63,6 +65,7 @@ export class OrdersService {
     @Inject(AI_PROVIDER) private readonly ai: AiProvider,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     @InjectQueue("matching") private readonly matchingQueue: Queue,
+    private readonly authOtp: AuthOtpService,
   ) {}
 
   // ---------- draft lifecycle ----------
@@ -350,6 +353,36 @@ export class OrdersService {
    * requires an explicit tap on the "Подтвердить" button sent to the
    * client's WhatsApp (or, with no WhatsApp, a fallback SMS) before
    * finalizePublish() actually runs — see confirmPublish(). */
+  /**
+   * Same confirmation, reached without an OTP first. Typing a code proved the
+   * phone, then tapping the WhatsApp button proved it again — two challenges
+   * for one fact, and the code step was the one that dropped people. The tap
+   * is the stronger of the two anyway: it arrives by webhook from the number
+   * itself, where a code can be read off someone else's screen.
+   *
+   * The order stays unpublished until that tap, so the worst an unverified
+   * caller achieves is sending one message to a number they typed — which is
+   * why the rate limit below exists.
+   */
+  async requestPublishConfirmationByPhone(orderId: string, rawPhone: string) {
+    const phone = normalizePhone(rawPhone);
+    if (!isValidPhone(phone)) throw new BadRequestException("Некорректный номер телефона");
+
+    // Without a code standing in the way, this endpoint is a way to make us
+    // send a WhatsApp message to any number someone types. Capped per number
+    // per day so it can't be turned into a way to pester one.
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sentToday = await this.prisma.notificationLog.count({
+      where: { recipientPhone: phone, templateKey: "order_confirm_request", createdAt: { gt: dayAgo } },
+    });
+    if (sentToday >= 5) {
+      throw new BadRequestException("Слишком много запросов подтверждения на этот номер. Попробуйте завтра.");
+    }
+
+    const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
+    return this.requestPublishConfirmation(orderId, authUser);
+  }
+
   async requestPublishConfirmation(orderId: string, user: AuthUser) {
     const { category, fields, order } = await this.prepareForPublish(orderId, user);
     const dto = await this.toDto(orderId);

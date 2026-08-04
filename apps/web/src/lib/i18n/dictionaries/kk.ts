@@ -40,6 +40,9 @@ export const kk: Dictionary = {
     reviewTitle: "Өтінімді тексеріңіз",
     editInChat: "Чатта өзгерту",
     submitOrder: "Өтінімді жіберу",
+    phoneTitle: "Телефон нөміріңіз",
+    phoneHint: "Өтінімді WhatsApp-қа жібереміз — бір түймемен растайсыз. Қоңырау шалу үшін осы нөмірді орындаушылар алады.",
+    sendToWhatsApp: "WhatsApp-қа жіберу",
     awaitingConfirmationText: (phone: string | null) =>
       `Өтінім сипаттамасын WhatsApp-қа${phone ? ` ${phone} нөміріне` : ""} жібердік — өтінімді жариялап, орындаушыларды іздей бастау үшін сол жерде «Растау» батырмасын басыңыз.`,
     autoRefreshHint: "Бұл бет өзі жаңарады, қайта жүктеудің қажеті жоқ.",

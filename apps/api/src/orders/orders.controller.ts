@@ -16,6 +16,7 @@ import { ChatMessageDto } from "./dto/chat-message.dto";
 import { SetFieldDto } from "./dto/set-field.dto";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { CompleteOrderDto } from "./dto/complete-order.dto";
+import { RequestConfirmationDto } from "./dto/request-confirmation.dto";
 import { JwtAuthGuard } from "../auth-otp/jwt-auth.guard";
 import { CurrentUser } from "../auth-otp/current-user.decorator";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
@@ -74,6 +75,17 @@ export class OrdersController {
   @Post(":id/publish")
   publish(@Param("id") id: string, @CurrentUser() user: AuthUser) {
     return this.orders.requestPublishConfirmation(id, user);
+  }
+
+  /**
+   * Public on purpose: the client has just filled in an order and typed
+   * their number, and nothing is published until they tap the button that
+   * arrives on that number. Demanding an OTP first asked them to prove the
+   * same phone twice — see requestPublishConfirmationByPhone().
+   */
+  @Post(":id/request-confirmation")
+  requestConfirmation(@Param("id") id: string, @Body() dto: RequestConfirmationDto) {
+    return this.orders.requestPublishConfirmationByPhone(id, dto.phone);
   }
 
   /** Public: reached from the confirmUrl link in the order_confirm_request

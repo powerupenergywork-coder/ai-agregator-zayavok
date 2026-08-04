@@ -38,6 +38,9 @@ export const ru = {
     reviewTitle: "Проверьте заявку",
     editInChat: "Редактировать в чате",
     submitOrder: "Отправить заявку",
+    phoneTitle: "Ваш номер телефона",
+    phoneHint: "Пришлём заявку в WhatsApp — подтвердите её одной кнопкой. Этот же номер получат исполнители, чтобы позвонить.",
+    sendToWhatsApp: "Отправить в WhatsApp",
     awaitingConfirmationText: (phone: string | null) =>
       `Мы отправили описание заявки в WhatsApp${phone ? ` на ${phone}` : ""} — нажмите там кнопку «Подтвердить», чтобы опубликовать заявку и начать поиск исполнителей.`,
     autoRefreshHint: "Эта страница обновится сама, перезагружать не нужно.",

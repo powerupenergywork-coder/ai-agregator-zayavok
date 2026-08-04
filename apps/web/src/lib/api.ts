@@ -127,6 +127,12 @@ export const ordersApi = {
     return request<OrderDto>(`/orders/${id}/photos`, { method: "POST", body: form });
   },
   publish: (id: string, token: string) => request<OrderDto>(`/orders/${id}/publish`, { method: "POST" }, token),
+  /** No auth token: the confirmation tap in WhatsApp is what proves the phone. */
+  requestConfirmation: (id: string, phone: string) =>
+    request<OrderDto>(`/orders/${id}/request-confirmation`, {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    }),
   getByToken: (token: string) => request<OrderDto>(`/orders/by-token/${token}`),
   confirmPublishByToken: (token: string) =>
     request<OrderDto>(`/orders/confirm-publish-by-token/${token}`, { method: "POST" }),

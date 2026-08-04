@@ -10,14 +10,12 @@ import {
   ordersApi,
   categoriesApi,
   analyticsApi,
-  AuthResult,
 } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { watchOrder } from "@/lib/socket";
 import { useLocale } from "@/lib/i18n/context";
 import { Button, Card, Chip, Spinner, StatusBadge } from "@/components/ui";
 import { FieldInput } from "@/components/field-input";
-import { PhoneConfirm } from "@/components/phone-confirm";
 import { CANCEL_REASON_VALUES } from "@/lib/reasons";
 import type { Dictionary } from "@/lib/i18n/dictionaries/ru";
 
@@ -37,6 +35,7 @@ export default function OrderPage() {
   const [isReadyForReview, setIsReadyForReview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showPhoneConfirm, setShowPhoneConfirm] = useState(false);
+  const [phone, setPhone] = useState("");
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState<string>(CANCEL_REASON_VALUES[0]);
@@ -130,11 +129,12 @@ export default function OrderPage() {
     }
   };
 
-  const publish = async (auth: AuthResult) => {
+  const requestConfirmation = async () => {
+    if (!phone.trim() || busy) return;
     setBusy(true);
     try {
-      const published = await ordersApi.publish(orderId, auth.token);
-      setOrder(published);
+      const updated = await ordersApi.requestConfirmation(orderId, phone.trim());
+      setOrder(updated);
       setShowPhoneConfirm(false);
     } catch (e: any) {
       alert(e.message);
@@ -303,7 +303,32 @@ export default function OrderPage() {
 
       {isDraftPhase && isReadyForReview && showPhoneConfirm && (
         <Card className="p-4">
-          <PhoneConfirm purpose="CLIENT_LOGIN" onAuthenticated={publish} onCancel={() => setShowPhoneConfirm(false)} />
+          <h2 className="mb-1 text-base font-medium">{t.order.phoneTitle}</h2>
+          <p className="mb-3 text-sm text-slate-500">{t.order.phoneHint}</p>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              requestConfirmation();
+            }}
+          >
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              type="tel"
+              autoFocus
+              placeholder="+7 7XX XXX XX XX"
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-brand-500"
+            />
+            <div className="flex gap-2">
+              <Button variant="ghost" type="button" onClick={() => setShowPhoneConfirm(false)}>
+                {t.common.back}
+              </Button>
+              <Button type="submit" className="flex-1" disabled={busy || !phone.trim()}>
+                {t.order.sendToWhatsApp}
+              </Button>
+            </div>
+          </form>
         </Card>
       )}
 

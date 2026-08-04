@@ -21,6 +21,10 @@ export const WHATSAPP_TEMPLATE_EVENTS = [
   "completion_checkin",
   "prospect_outreach",
   "supplier_cold_invite",
+  // A client ordering on the web has never messaged the bot, so their window
+  // is shut by definition — free text can't reach them at all, which is what
+  // made the whole web flow depend on SMS.
+  "order_confirm_request",
 ] as const;
 export type WhatsAppTemplateEvent = (typeof WHATSAPP_TEMPLATE_EVENTS)[number];
 
@@ -36,6 +40,7 @@ const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = 
   // three button payloads against a two-button template is rejected by Meta.
   completion_checkin: { ru: "completion_checkin_v2_ru", kk: "completion_checkin_v2_kk" },
   supplier_cold_invite: { ru: "supplier_cold_invite_ru", kk: "supplier_cold_invite_kk" },
+  order_confirm_request: { ru: "order_confirm_request_ru", kk: "order_confirm_request_kk" },
   // One combined bilingual template (not split ru/kk) — see ТЗ_прогрев_поставщиков_v2
   // раздел 5: the recipient's language isn't known yet, so both language
   // blocks ship in one message and the tapped quick-reply button picks it.
@@ -94,5 +99,16 @@ export function buildWhatsAppTemplateParams(event: WhatsAppTemplateEvent, payloa
       ];
     case "supplier_cold_invite":
       return [String(payload.categoryName), String(payload.city), String(payload.safeSummary), String(payload.freeQuota)];
+    // confirmUrl is deliberately absent: the approved template carries a
+    // quick-reply button instead, and the URL only exists for the SMS
+    // fallback, which never goes through here.
+    case "order_confirm_request":
+      return [
+        String(payload.orderNumber),
+        String(payload.categoryName),
+        String(payload.city),
+        String(payload.whenText),
+        String(payload.fullDescription),
+      ];
   }
 }
