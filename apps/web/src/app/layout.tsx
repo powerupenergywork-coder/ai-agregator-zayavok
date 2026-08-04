@@ -3,6 +3,7 @@ import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n/context";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Logo } from "@/components/logo";
+import { Footer } from "@/components/footer";
 
 export const metadata: Metadata = {
   title: "KerekTap — AI-агрегатор заявок",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Logo className="fixed left-3 top-3 z-50" />
           <LanguageSwitcher />
           {children}
+          <Footer />
         </LocaleProvider>
       </body>
     </html>

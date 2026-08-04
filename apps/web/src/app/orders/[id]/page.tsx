@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import type { CategoryField } from "@ai-zayavki/shared";
 import {
   ChatTurnResponse,
@@ -328,6 +329,19 @@ export default function OrderPage() {
                 {t.order.sendToWhatsApp}
               </Button>
             </div>
+            {/* Consent belongs here, at the step that actually hands the phone
+                number to suppliers — not buried in a footer link. */}
+            <p className="text-xs leading-relaxed text-slate-400">
+              {t.order.consentBefore}{" "}
+              <Link href="/terms" className="underline decoration-dotted hover:text-slate-600">
+                {t.footer.terms}
+              </Link>{" "}
+              {t.common.and}{" "}
+              <Link href="/privacy" className="underline decoration-dotted hover:text-slate-600">
+                {t.footer.privacy}
+              </Link>
+              .
+            </p>
           </form>
         </Card>
       )}

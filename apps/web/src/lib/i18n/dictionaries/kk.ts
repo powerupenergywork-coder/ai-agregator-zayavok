@@ -5,6 +5,7 @@ export const kk: Dictionary = {
   common: {
     loading: "Жүктелуде...",
     orderNotFound: "Өтінім табылмады",
+    and: "және",
     back: "Артқа",
     edit: "Өзгерту",
     cancel: "Бас тарту",
@@ -42,6 +43,7 @@ export const kk: Dictionary = {
     submitOrder: "Өтінімді жіберу",
     phoneTitle: "Телефон нөміріңіз",
     phoneHint: "Өтінімді WhatsApp-қа жібереміз — бір түймемен растайсыз. Қоңырау шалу үшін осы нөмірді орындаушылар алады.",
+    consentBefore: "Өтінімді жіберу арқылы сіз қабылдайсыз",
     sendToWhatsApp: "WhatsApp-қа жіберу",
     awaitingConfirmationText: (phone: string | null) =>
       `Өтінім сипаттамасын WhatsApp-қа${phone ? ` ${phone} нөміріне` : ""} жібердік — өтінімді жариялап, орындаушыларды іздей бастау үшін сол жерде «Растау» батырмасын басыңыз.`,
@@ -114,5 +116,10 @@ export const kk: Dictionary = {
     offers_not_suitable: "Орындаушыларға хабарласа алмадым",
     order_mistake: "Өтінімде қате бар",
     other: "Басқа себеп",
+  },
+  footer: {
+    privacy: "Құпиялылық саясаты",
+    terms: "Пайдалану шарттары",
+    disclaimer: "Сервис тапсырыс беруші мен орындаушыны байланыстырады. Біз мәмілеге қатыспаймыз және жауап беруге кепілдік бермейміз.",
   },
 };
