@@ -36,6 +36,12 @@ export const env = {
 
   smsProvider: str("SMS_PROVIDER", "console"),
   mobizonApiKey: str("MOBIZON_API_KEY", ""),
+  // .kz and .com are separate installations with separate accounts — a key
+  // issued on one returns "invalid" on the other, which reads like a bad key.
+  mobizonApiHost: str("MOBIZON_API_HOST", "api.mobizon.kz"),
+  // Alphanumeric sender name, if one has been approved. Left empty, Mobizon
+  // uses the account default.
+  mobizonSenderName: str("MOBIZON_SENDER_NAME", ""),
 
   aiProvider: str("AI_PROVIDER", "mock"),
   openaiApiKey: str("OPENAI_API_KEY", ""),
