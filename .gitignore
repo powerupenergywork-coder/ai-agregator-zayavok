@@ -7,6 +7,10 @@ dist/
 !.env.example
 !.env.production.example
 *.log
+# Боевые TLS-сертификаты живут в рабочем дереве на сервере. Ключ там
+# настоящий, и без этой строки он в одном `git add -A` от того, чтобы
+# уехать в публичную историю репозитория.
+nginx/certs/
 .turbo/
 apps/api/generated/
 packages/shared/dist/
