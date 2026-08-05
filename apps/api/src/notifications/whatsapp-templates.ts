@@ -33,8 +33,15 @@ export function isWhatsAppTemplateEvent(event: NotificationEvent): event is What
 }
 
 const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = {
-  order_broadcast_full: { ru: "order_broadcast_full_ru", kk: "order_broadcast_full_kk" },
-  order_digest: { ru: "order_digest_ru", kk: "order_digest_kk" },
+  // v2 — the only two templates a supplier receives over and over, and the
+  // originals said nothing about how to make them stop. A supplier who can't
+  // find the off switch reports the message as spam instead, and spam reports
+  // are what cost a number its quality rating. Both v2 bodies are the
+  // approved originals plus one line naming the "стоп" command; the
+  // placeholder order is untouched, so buildWhatsAppTemplateParams is
+  // unchanged.
+  order_broadcast_full: { ru: "order_broadcast_full_v2_ru", kk: "order_broadcast_full_v2_kk" },
+  order_digest: { ru: "order_digest_v2_ru", kk: "order_digest_v2_kk" },
   // v2 — the original had two buttons (Да/Нет), left over from when closing
   // an order was a yes/no question. It now has three outcomes, and sending
   // three button payloads against a two-button template is rejected by Meta.
