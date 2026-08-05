@@ -8,6 +8,7 @@ import { CurrentAdmin } from "./current-admin.decorator";
 import { LoginDto } from "./dto/login.dto";
 import { UpsertCategoryDto } from "./dto/upsert-category.dto";
 import { UpsertSupplierDto } from "./dto/upsert-supplier.dto";
+import { ImportSuppliersDto } from "./dto/import-suppliers.dto";
 import { UpdateDispatchSettingsDto } from "./dto/update-dispatch-settings.dto";
 import { AdminEditOrderDto } from "./dto/admin-edit-order.dto";
 import { InitiateProspectDto } from "./dto/initiate-prospect.dto";
@@ -83,6 +84,13 @@ export class AdminController {
   @Post("suppliers")
   upsertSupplier(@CurrentAdmin() admin: AdminAuthUser, @Body() dto: UpsertSupplierDto) {
     return this.admin.upsertSupplier(dto, admin);
+  }
+
+  /** Defaults to a dry run — see AdminService.importSuppliers(). */
+  @UseGuards(AdminAuthGuard)
+  @Post("suppliers/import")
+  importSuppliers(@CurrentAdmin() admin: AdminAuthUser, @Body() dto: ImportSuppliersDto) {
+    return this.admin.importSuppliers(dto, admin);
   }
 
   @UseGuards(AdminAuthGuard)
