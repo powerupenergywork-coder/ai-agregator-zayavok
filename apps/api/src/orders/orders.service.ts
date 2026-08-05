@@ -293,8 +293,8 @@ export class OrdersService {
       droppedPast.length === 0
         ? ""
         : lang === "kk"
-          ? "Өткен күн/уақыт жарамсыз — болашақ мерзімді көрсетіңіз.\n\n"
-          : "Прошедшая дата или время не подходят — укажите будущее.\n\n";
+          ? "Бұл уақыт өтіп кетті. Күні мен уақытын қайта көрсетіңіз, мысалы «ертең 9:00».\n\n"
+          : "Это время уже прошло. Укажите дату и время заново — например, «завтра в 9:00».\n\n";
     const cityNotice = !unknownCity
       ? ""
       : lang === "kk"
@@ -305,12 +305,16 @@ export class OrdersService {
     // taken from "на завтра" that appears nowhere in the conversation, and a
     // wrong guess would have been just as invisible. Read those values back.
     const previousFields = context.previousFields ?? {};
+    // Changed counts, not just newly filled. A client correcting a date the
+    // AI had already guessed got no acknowledgement at all — the value moved
+    // silently, so the conversation looked frozen while it was in fact
+    // working.
     const inferred = fields.filter(
       (f) =>
         f.key !== context.answeredKey &&
         f.type !== "photo" &&
         validatedFields[f.key] !== undefined &&
-        previousFields[f.key] === undefined,
+        previousFields[f.key] !== validatedFields[f.key],
     );
     const inferredNotice =
       inferred.length === 0

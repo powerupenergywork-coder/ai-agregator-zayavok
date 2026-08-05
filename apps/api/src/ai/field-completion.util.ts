@@ -89,6 +89,14 @@ export function dropPastDateTimeFields(
         if (candidate < now) {
           delete result[timeField.key];
           droppedPast.push(timeField.key);
+          // The date goes with it. Keeping "today" and asking only for a time
+          // is a trap: every remaining hour today is also in the past, and
+          // "tomorrow" cannot be said in an answer to "what time?" — the
+          // client is left retyping times that keep getting rejected. Dropping
+          // both puts the combined question back, which is the one their
+          // answer actually fits.
+          delete result[field.key];
+          droppedPast.push(field.key);
         }
       }
     }
