@@ -111,7 +111,16 @@ export class AdminService {
     if (resolvedCities.length === 0) {
       throw new BadRequestException("Укажите хотя бы один город");
     }
-    const user = await this.prisma.user.upsert({ where: { phone }, create: { phone }, update: {} });
+    // WHATSAPP, not the schema default of SMS: everything a supplier ever
+    // does with us — the cold invite's "Интересно, беру", онбординг, «стоп»,
+    // «мой профиль» — is a button or a reply in WhatsApp. Left on SMS, the
+    // invite arrives as a wall of text with the buttons silently dropped and
+    // nothing to reply to.
+    const user = await this.prisma.user.upsert({
+      where: { phone },
+      create: { phone, preferredChannel: "WHATSAPP" },
+      update: {},
+    });
     let supplier = await this.prisma.supplierProfile.findUnique({ where: { userId: user.id } });
     if (!supplier) {
       supplier = await this.prisma.supplierProfile.create({ data: { userId: user.id } });

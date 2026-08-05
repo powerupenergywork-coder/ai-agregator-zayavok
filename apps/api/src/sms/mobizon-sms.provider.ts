@@ -5,7 +5,10 @@ import { SmsProvider } from "./sms-provider.interface";
 
 interface MobizonResponse {
   code: number;
-  data?: { messageId?: number | string; campaignId?: number | string; status?: number };
+  /** On success: the sent message's ids. On a validation refusal (code 1):
+   * the per-field reasons — the top-level message only ever says
+   * "одно или несколько полей", which alone is undiagnosable. */
+  data?: { messageId?: number | string; campaignId?: number | string; status?: number } | Record<string, unknown>;
   message?: string;
 }
 
@@ -63,7 +66,8 @@ export class MobizonSmsProvider implements SmsProvider {
 
     const json = (await res.json()) as MobizonResponse;
     if (json.code !== 0) {
-      throw new Error(`Mobizon отклонил запрос (code ${json.code}): ${json.message || "без пояснения"}`);
+      const details = json.data ? ` ${JSON.stringify(json.data)}` : "";
+      throw new Error(`Mobizon отклонил запрос (code ${json.code}): ${json.message || "без пояснения"}${details}`);
     }
     return json;
   }

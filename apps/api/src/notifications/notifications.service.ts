@@ -38,7 +38,16 @@ export class NotificationsService {
 
   async send(opts: SendOptions): Promise<void> {
     const { channel: resolvedChannel, lang, lastInboundWhatsAppAt } = await this.resolveRecipient(opts.recipientPhone);
-    const channel = opts.channel ?? resolvedChannel;
+    // A message whose whole point is its buttons cannot be delivered over SMS:
+    // the buttons are dropped, the recipient has nothing to tap, and replies to
+    // an SMS never reach the webhook — the flow dead-ends silently. Suppliers
+    // bulk-imported by an operator carry the schema's SMS default, so this is
+    // not hypothetical; it silently broke every cold invite.
+    // Safe to override because nothing ever *writes* preferredChannel=SMS:
+    // it only ever means "this phone has never told us anything", not "we
+    // checked and there is no WhatsApp here" (the OTP path in
+    // auth-otp.service.ts decides that per-send and doesn't persist it).
+    const channel = opts.channel ?? (opts.buttons?.length && resolvedChannel === "SMS" ? "WHATSAPP" : resolvedChannel);
     const text = renderTemplate(opts.event, opts.payload, lang);
 
     let status: "SENT" | "FAILED" = "SENT";
