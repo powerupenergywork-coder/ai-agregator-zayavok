@@ -144,8 +144,12 @@ function SuppliersTab({ token }: { token: string }) {
   const [companyName, setCompanyName] = useState("");
   const [categorySlugs, setCategorySlugs] = useState("");
   const [cities, setCities] = useState("");
+  const [allCategories, setAllCategories] = useState<any[]>([]);
 
   const load = () => adminApi.listSuppliers(token).then(setSuppliers);
+  useEffect(() => {
+    adminApi.listCategories(token).then(setAllCategories).catch(() => {});
+  }, [token]);
   useEffect(() => {
     load();
   }, [token]);
@@ -172,6 +176,33 @@ function SuppliersTab({ token }: { token: string }) {
         <input value={categorySlugs} onChange={(e) => setCategorySlugs(e.target.value)} placeholder="Категории (slug через запятую)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
         <input value={cities} onChange={(e) => setCities(e.target.value)} placeholder="Города через запятую" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
         <Button onClick={create}>Добавить поставщика</Button>
+        {/* The form takes slugs, so the slugs have to be readable from here —
+            otherwise picking "crane" when you meant "crane-truck" (autocrane
+            vs manipulator) is a typo with no symptom. */}
+        <p className="w-full text-xs text-slate-500">
+          Коды категорий:{" "}
+          {allCategories.length === 0
+            ? "загружаются…"
+            : allCategories.map((c: any, i: number) => (
+                <span key={c.slug}>
+                  {i > 0 && " · "}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCategorySlugs((prev) =>
+                        prev.split(",").map((s) => s.trim()).filter(Boolean).includes(c.slug)
+                          ? prev
+                          : [...prev.split(",").map((s) => s.trim()).filter(Boolean), c.slug].join(", "),
+                      )
+                    }
+                    className="underline decoration-dotted hover:text-brand-600"
+                    title="Добавить в поле"
+                  >
+                    {c.name?.ru ?? c.slug} <span className="text-slate-400">({c.slug})</span>
+                  </button>
+                </span>
+              ))}
+        </p>
       </Card>
       <div className="flex flex-col gap-2">
         {suppliers.map((s) => (
@@ -186,7 +217,17 @@ function SuppliersTab({ token }: { token: string }) {
                 )}
               </p>
               <p className="text-slate-500">
-                {s.categories.join(", ")} · {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}
+                {(s.categoryNames ?? s.categories.map((slug: string) => ({ slug, name: slug }))).map(
+                  (c: { slug: string; name: string }, i: number) => (
+                    <span key={c.slug}>
+                      {i > 0 && ", "}
+                      {c.name}
+                      <span className="text-slate-400"> ({c.slug})</span>
+                    </span>
+                  ),
+                )}
+                {" · "}
+                {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}
               </p>
               <p className="text-slate-500">
                 Бесплатных заявок в этом месяце: {s.notificationsUsedThisMonth} ·{" "}

@@ -67,7 +67,16 @@ export class AdminService {
       isBlocked: s.isBlocked,
       confirmedAt: s.confirmedAt,
       acceptsUrgent: s.acceptsUrgent,
+      // Both, deliberately. The slug is what the add-supplier form takes, so
+      // it has to stay visible — but "crane" and "crane-truck" are an
+      // autocrane and a manipulator, two different machines that are easy to
+      // pick wrong from the slug alone, and picking wrong sends a supplier
+      // somebody else's orders with nothing to notice it by.
       categories: s.categories.map((c) => c.category.slug),
+      categoryNames: s.categories.map((c) => ({
+        slug: c.category.slug,
+        name: (c.category.name as unknown as LocalizedText).ru,
+      })),
       cities: s.serviceAreas.map((a) => a.city),
       notificationsUsedThisMonth: s.notificationsUsedThisMonth,
       subscriptionActive: this.billing.isSubscriptionActive(s.subscription),
