@@ -12,7 +12,6 @@ import {
   categoriesApi,
   analyticsApi,
 } from "@/lib/api";
-import { getToken } from "@/lib/auth";
 import { watchOrder } from "@/lib/socket";
 import { useLocale } from "@/lib/i18n/context";
 import { Button, Card, Chip, Spinner, StatusBadge } from "@/components/ui";
@@ -44,8 +43,6 @@ export default function OrderPage() {
   // Only after the client has answered something — focusing on first paint
   // would open the keyboard over the page before they've read the question.
   const [focusAnswer, setFocusAnswer] = useState(false);
-
-  const clientToken = getToken("client");
 
   const applyTurn = (res: ChatTurnResponse) => {
     setOrder(res.order);
@@ -145,24 +142,30 @@ export default function OrderPage() {
   };
 
   const cancelOrder = async () => {
-    if (!clientToken) return;
+    if (!order || busy) return;
     setBusy(true);
     try {
-      const updated = await ordersApi.cancel(orderId, clientToken, cancelReason);
+      const updated = await ordersApi.cancelByToken(order.publicToken, cancelReason);
       setOrder(updated);
       setShowCancel(false);
+    } catch (e: any) {
+      // Without this the button just does nothing visible on failure, which
+      // is indistinguishable from a dead button.
+      alert(e.message);
     } finally {
       setBusy(false);
     }
   };
 
   const complete = async (outcome: "resolved" | "redispatch" | "closed") => {
-    if (!clientToken) return;
+    if (!order || busy) return;
     setBusy(true);
     try {
-      const updated = await ordersApi.complete(orderId, clientToken, outcome);
+      const updated = await ordersApi.completeByToken(order.publicToken, outcome);
       setOrder(updated);
       setShowComplete(false);
+    } catch (e: any) {
+      alert(e.message);
     } finally {
       setBusy(false);
     }

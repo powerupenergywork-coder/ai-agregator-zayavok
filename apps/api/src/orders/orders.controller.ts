@@ -95,6 +95,18 @@ export class OrdersController {
     return this.orders.confirmPublishByToken(token);
   }
 
+  /** Public, keyed on the order's own unguessable token — the web client has
+   * no JWT since the OTP step was removed. See ownerFromPublicToken(). */
+  @Post("complete-by-token/:token")
+  completeByToken(@Param("token") token: string, @Body() dto: CompleteOrderDto) {
+    return this.orders.completeOrderByToken(token, dto.outcome, dto.comment);
+  }
+
+  @Post("cancel-by-token/:token")
+  cancelByToken(@Param("token") token: string, @Body() dto: CancelOrderDto) {
+    return this.orders.cancelByToken(token, dto);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post(":id/cancel")
   cancel(@Param("id") id: string, @CurrentUser() user: AuthUser, @Body() dto: CancelOrderDto) {

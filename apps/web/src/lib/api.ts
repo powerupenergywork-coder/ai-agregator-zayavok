@@ -140,6 +140,18 @@ export const ordersApi = {
     request<OrderDto>(`/orders/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason, comment }) }, token),
   complete: (id: string, token: string, outcome: "resolved" | "redispatch" | "closed", comment?: string) =>
     request<OrderDto>(`/orders/${id}/complete`, { method: "POST", body: JSON.stringify({ outcome, comment }) }, token),
+  /** No auth token — the order's own unguessable publicToken is the proof.
+   * The client has no session since the OTP step was removed. */
+  cancelByToken: (publicToken: string, reason: string, comment?: string) =>
+    request<OrderDto>(`/orders/cancel-by-token/${publicToken}`, {
+      method: "POST",
+      body: JSON.stringify({ reason, comment }),
+    }),
+  completeByToken: (publicToken: string, outcome: "resolved" | "redispatch" | "closed", comment?: string) =>
+    request<OrderDto>(`/orders/complete-by-token/${publicToken}`, {
+      method: "POST",
+      body: JSON.stringify({ outcome, comment }),
+    }),
   repeat: (id: string, token: string) => request<OrderDto>(`/orders/${id}/repeat`, { method: "POST" }, token),
   listMine: (token: string) =>
     request<

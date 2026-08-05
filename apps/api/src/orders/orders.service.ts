@@ -511,6 +511,44 @@ export class OrdersService {
     );
   }
 
+  /**
+   * Resolves an order from its publicToken into the identity of the client
+   * who owns it. Dropping the OTP step left the web client with no JWT, so
+   * the buttons on their own order page — "услуга оказана", "отменить" —
+   * silently did nothing: the handler returned early on a missing token with
+   * no error to show. Possession of the unguessable token is the proof here,
+   * the same model the confirm-by-link and supplier-card routes already use.
+   */
+  private async ownerFromPublicToken(token: string): Promise<{ orderId: string; user: AuthUser }> {
+    const order = await this.prisma.order.findUnique({
+      where: { publicToken: token },
+      include: { client: { include: { user: true } } },
+    });
+    if (!order) throw new NotFoundException("Заявка не найдена");
+    if (!order.clientId || !order.client) {
+      throw new BadRequestException("Заявка ещё не подтверждена");
+    }
+    return {
+      orderId: order.id,
+      user: {
+        sub: order.client.userId,
+        phone: order.client.user.phone,
+        role: "client",
+        profileId: order.clientId,
+      },
+    };
+  }
+
+  async completeOrderByToken(token: string, outcome: OrderCompletionOutcome, comment?: string) {
+    const { orderId, user } = await this.ownerFromPublicToken(token);
+    return this.completeOrder(orderId, user, outcome, comment);
+  }
+
+  async cancelByToken(token: string, dto: CancelOrderDto) {
+    const { orderId, user } = await this.ownerFromPublicToken(token);
+    return this.cancel(orderId, user, dto);
+  }
+
   async cancel(orderId: string, user: AuthUser, dto: CancelOrderDto) {
     const order = await this.getRawOrThrow(orderId);
     this.assertOwnership(order, user);
