@@ -1,8 +1,9 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { detectLanguage, Language } from "@ai-zayavki/shared";
+import { detectLanguage, Language, LocalizedText } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
+import { env } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
@@ -27,6 +28,24 @@ const DRAFT_STATUSES = ["DRAFT", "CLARIFYING"];
 // operator queue behind it. See handleText().
 const FINISHED_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "NEEDS_OPERATOR"];
 const BALANCE_TRIGGER_PHRASES = new Set(["баланс", "мой баланс", "подписка"]);
+// A supplier who can't stop the messages reports them as spam instead, and
+// spam reports cost the number's quality rating — so opting out has to work
+// on a plain word, at any moment, without a menu to find first.
+const STOP_TRIGGER_PHRASES = new Set([
+  "стоп", "стоп рассылка", "отписаться", "не писать", "не присылать", "отключить рассылку",
+  "тоқта", "жазылымнан бас тарту", "жазбаңыз",
+]);
+const RESUME_TRIGGER_PHRASES = new Set([
+  "возобновить", "включить рассылку", "старт", "продолжить",
+  "жалғастыру", "қосу",
+]);
+const PROFILE_TRIGGER_PHRASES = new Set([
+  "профиль", "мой профиль", "помощь", "меню", "команды",
+  "профиль көрсету", "көмек", "мәзір",
+]);
+// An explicit way out of the supplier help reply and into ordering something
+// for yourself — a supplier is also a person who occasionally needs a truck.
+const NEW_ORDER_PHRASES = /нов(ая|ый)\s*(заявк|заказ)|жаңа\s*өтінім/i;
 // Explicit language-override phrases — same exact-match idiom as the
 // supplier-onboarding trigger phrases below, checked before auto-detection.
 const RU_TRIGGER_PHRASES = new Set(["по-русски", "на русском", "русский"]);
@@ -82,6 +101,24 @@ export class WhatsAppRouterService {
       if (msg.text && BALANCE_TRIGGER_PHRASES.has(msg.text.trim().toLowerCase())) {
         await this.handleBalanceCommand(msg.phone, lang);
         return;
+      }
+
+      // Checked before the session and the onboarding flow: someone trying to
+      // stop the messages must not have to finish a dialogue first.
+      if (msg.text) {
+        const t = msg.text.trim().toLowerCase();
+        if (STOP_TRIGGER_PHRASES.has(t)) {
+          await this.setSupplierPaused(msg.phone, true, lang);
+          return;
+        }
+        if (RESUME_TRIGGER_PHRASES.has(t)) {
+          await this.setSupplierPaused(msg.phone, false, lang);
+          return;
+        }
+        if (PROFILE_TRIGGER_PHRASES.has(t)) {
+          await this.sendSupplierProfile(msg.phone, lang);
+          return;
+        }
       }
 
       const session = await this.sessions.findOrCreate(msg.chatId, msg.phone);
@@ -184,11 +221,22 @@ export class WhatsAppRouterService {
         await this.matching.confirmColdSupplier(supplier.id, orderId);
         // confirmColdSupplier sends the full order itself when it's still
         // open; this only sets expectations for the case where it isn't.
+        // Tapping "yes" opens the 24h window, so this can be plain text with
+        // no template to approve — and it lands at the one moment the
+        // supplier is certainly looking at the chat. It is the only place the
+        // commands are discoverable: the broadcast's wording is frozen at
+        // template-approval time and can't carry them.
         await this.whatsapp.sendText(
           phone,
           lang === "kk"
-            ? "Тіркелдіңіз! Сәйкес өтінімдерді жібереміз. Профильді өзгерту үшін «тіркелу» деп жазыңыз."
-            : "Готово! Будем присылать вам подходящие заявки. Чтобы изменить профиль, напишите «регистрация».",
+            ? "Тіркелдіңіз! Сәйкес өтінімдерді жібереміз.\n\n" +
+              "«профиль» — санаттар мен қалалар\n" +
+              "«баланс» — хабарламалар мен жазылым\n" +
+              "«стоп» — рассылканы өшіру"
+            : "Готово! Будем присылать вам подходящие заявки.\n\n" +
+              "«профиль» — ваши категории и города\n" +
+              "«баланс» — уведомления и подписка\n" +
+              "«стоп» — отключить рассылку",
         );
         return;
       }
@@ -300,6 +348,84 @@ export class WhatsAppRouterService {
     }
   }
 
+  private async findSupplier(phone: string) {
+    return this.prisma.supplierProfile.findFirst({
+      where: { user: { phone: normalizePhone(phone) } },
+      include: { categories: { include: { category: true } }, serviceAreas: true, subscription: true },
+    });
+  }
+
+  /** Self-service pause. Deliberately not isBlocked: that's an admin
+   * punishment, while this is a supplier stepping out for a while and
+   * expecting one word to bring them back. Dispatch already filters on
+   * activityStatus === "ACTIVE" (matching.service.ts), so pausing is enough. */
+  private async setSupplierPaused(phone: string, paused: boolean, lang: Language): Promise<void> {
+    const supplier = await this.findSupplier(phone);
+    if (!supplier) {
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? "Сіз орындаушы ретінде тіркелмегенсіз, сондықтан сізге өтінімдер жіберілмейді."
+          : "Вы не зарегистрированы как исполнитель — заявки вам и так не приходят.",
+      );
+      return;
+    }
+    await this.prisma.supplierProfile.update({
+      where: { id: supplier.id },
+      data: { activityStatus: paused ? "PAUSED" : "ACTIVE" },
+    });
+    await this.whatsapp.sendText(
+      phone,
+      paused
+        ? lang === "kk"
+          ? "Рассылка тоқтатылды — бұдан былай өтінімдер жіберілмейді.\nҚайта қосу үшін «жалғастыру» деп жазыңыз."
+          : "Рассылка отключена — заявки больше приходить не будут.\nЧтобы включить обратно, напишите «возобновить»."
+        : lang === "kk"
+          ? "Рассылка қайта қосылды — өтінімдер қайтадан келеді."
+          : "Рассылка включена — заявки снова будут приходить.",
+    );
+  }
+
+  private async sendSupplierProfile(phone: string, lang: Language): Promise<void> {
+    const supplier = await this.findSupplier(phone);
+    if (!supplier) {
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? "Сіз орындаушы ретінде тіркелмегенсіз. Тіркелу үшін «жеткізуші» деп жазыңыз."
+          : "Вы не зарегистрированы как исполнитель. Чтобы зарегистрироваться, напишите «поставщик».",
+      );
+      return;
+    }
+    const cats = supplier.categories
+      .map((c) => (c.category.name as unknown as LocalizedText)[lang])
+      .join(", ");
+    const cities = supplier.serviceAreas.map((a) => a.city).join(", ");
+    const paused = supplier.activityStatus !== "ACTIVE";
+    const used = supplier.notificationsUsedThisMonth;
+    const free = env.freeNotificationsPerMonth;
+
+    const body =
+      lang === "kk"
+        ? `${supplier.companyName ?? "Орындаушы"}\n` +
+          `Санаттар: ${cats || "жоқ"}\n` +
+          `Қалалар: ${cities || "жоқ"}\n` +
+          `Айдағы хабарламалар: ${used} / ${free}\n` +
+          `Рассылка: ${paused ? "өшірілген" : "қосулы"}\n\n` +
+          `«жеткізуші» — санаттар мен қалаларды өзгерту\n` +
+          `«баланс» — жазылым\n` +
+          `«${paused ? "жалғастыру" : "стоп"}» — рассылканы ${paused ? "қосу" : "өшіру"}`
+        : `${supplier.companyName ?? "Исполнитель"}\n` +
+          `Категории: ${cats || "не выбраны"}\n` +
+          `Города: ${cities || "не указаны"}\n` +
+          `Уведомлений за месяц: ${used} из ${free} бесплатных\n` +
+          `Рассылка: ${paused ? "отключена" : "включена"}\n\n` +
+          `«поставщик» — изменить категории и города\n` +
+          `«баланс» — подписка\n` +
+          `«${paused ? "возобновить" : "стоп"}» — ${paused ? "включить" : "отключить"} рассылку`;
+    await this.whatsapp.sendText(phone, body);
+  }
+
   private async handleText(chatId: string, phone: string, text: string, lang: Language): Promise<void> {
     const session = await this.sessions.findOrCreate(chatId, phone);
 
@@ -337,6 +463,33 @@ export class WhatsAppRouterService {
             );
           }
         }
+        return;
+      }
+    }
+
+    // A registered supplier saying "спасибо" or "сколько стоит подписка" was
+    // being funnelled into drafting an order for themselves — the router
+    // treats every unrecognised message as a client request. That filled the
+    // base with abandoned drafts and left the supplier with a bot asking what
+    // they need. Answer with what they can actually do instead, and keep an
+    // explicit way through for the times they really do want to order.
+    if (!session.currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
+      const supplier = await this.findSupplier(phone);
+      if (supplier) {
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Сіз орындаушы ретінде тіркелгенсіз.\n\n" +
+              "«профиль» — санаттарыңыз бен қалаларыңыз\n" +
+              "«баланс» — хабарламалар мен жазылым\n" +
+              "«стоп» — рассылканы өшіру\n\n" +
+              "Өзіңізге қызмет керек пе? «жаңа өтінім» деп жазыңыз."
+            : "Вы зарегистрированы как исполнитель.\n\n" +
+              "«профиль» — ваши категории и города\n" +
+              "«баланс» — уведомления и подписка\n" +
+              "«стоп» — отключить рассылку\n\n" +
+              "Нужна услуга для себя? Напишите «новая заявка».",
+        );
         return;
       }
     }
