@@ -49,9 +49,14 @@ export class MockAiProvider implements AiProvider {
     const missingTextFields = fields.filter((f) => f.type === "text" && knownFields[f.key] === undefined);
 
     for (const field of fields) {
-      if (knownFields[field.key] !== undefined) continue;
+      // An already-filled field can still be corrected ("не в 9 утра, а в
+      // 12:00"), but only by the branches below that require an explicit
+      // match in the text. The two branches that would otherwise swallow the
+      // whole message — the unknown-keyword shortcut and free text — stay
+      // limited to fields that are still empty.
+      const known = knownFields[field.key] !== undefined;
 
-      if (field.allowUnknown) {
+      if (field.allowUnknown && !known) {
         const keyword = matchUnknownValueKeyword(text);
         if (keyword) {
           out[field.key] = keyword;
@@ -64,9 +69,14 @@ export class MockAiProvider implements AiProvider {
           // Free-text fields (e.g. "dimensions") have no chip UI on WhatsApp —
           // the whole reply IS the answer, as long as it's unambiguous which
           // field it's answering (only safe when exactly one is missing).
-          if (missingTextFields.length === 1 && message.trim().length > 0) {
+          if (!known && missingTextFields.length === 1 && message.trim().length > 0) {
             out[field.key] = message.trim();
           }
+          break;
+        }
+        case "time": {
+          const time = extractTime(text);
+          if (time) out[field.key] = time;
           break;
         }
         case "date": {
@@ -101,6 +111,23 @@ export class MockAiProvider implements AiProvider {
 
     return out;
   }
+}
+
+function extractTime(text: string): string | null {
+  // "в 12:00", "к 9", "на 18 часов" — the hour is what people actually
+  // type; a bare number is left alone so "2 тонны" is not read as 02:00.
+  const withMinutes = text.match(/(\d{1,2})[:.](\d{2})/);
+  if (withMinutes) {
+    const h = Number(withMinutes[1]);
+    const m = Number(withMinutes[2]);
+    if (h < 24 && m < 60) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+  const hourOnly = text.match(/(?:в|к|на)\s+(\d{1,2})\s*(?:час|ч|утра|вечера|дня)?/);
+  if (hourOnly) {
+    const h = Number(hourOnly[1]);
+    if (h < 24) return `${String(h).padStart(2, "0")}:00`;
+  }
+  return null;
 }
 
 function extractDate(text: string): string | null {

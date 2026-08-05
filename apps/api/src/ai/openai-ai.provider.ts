@@ -56,15 +56,20 @@ export class OpenAiProvider implements AiProvider {
     fields: CategoryField[],
     knownFields: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    // Every field, including the ones already filled. Hiding them meant a
+    // client correcting the review card ("не в 9 утра, а в 12:00") was
+    // matched against an empty field list — so nothing could ever change
+    // once the card was complete, which is precisely when people correct it.
     const fieldsDoc = fields
-      .filter((f) => knownFields[f.key] === undefined)
+      .filter((f) => f.type !== "photo")
       .map((f) => {
         const opts = f.options ? ` варианты: ${f.options.map((o) => `${o.value}=${o.label.ru}`).join(", ")}` : "";
         const unit = f.unit ? ` единица: ${f.unit}` : "";
         const unknownHint = f.allowUnknown
           ? " [клиент может не знать точное значение — см. правило про unknown/approximate/needs_consultation ниже]"
           : "";
-        return `- ${f.key} (${f.type}${unit}): ${f.label.ru}.${opts}${unknownHint}`;
+        const current = knownFields[f.key] !== undefined ? ` ТЕКУЩЕЕ ЗНАЧЕНИЕ: ${String(knownFields[f.key])}.` : "";
+        return `- ${f.key} (${f.type}${unit}): ${f.label.ru}.${current}${opts}${unknownHint}`;
       })
       .join("\n");
 
@@ -73,6 +78,10 @@ export class OpenAiProvider implements AiProvider {
     const system =
       "Извлекай из сообщения клиента значения перечисленных полей заявки. " +
       "Заполняй только те поля, для которых в тексте есть явное значение. " +
+      "У части полей уже есть ТЕКУЩЕЕ ЗНАЧЕНИЕ — это заполненные ранее данные. " +
+      "Включай такое поле в ответ, только если клиент явно называет для него новое значение " +
+      "или просит его изменить (например «не в 9 утра, а в 12:00» — верни новое время). " +
+      "Если про поле в сообщении ничего нет, не включай его в ответ вообще. " +
       "Даты возвращай в формате YYYY-MM-DD (сегодня, завтра, послезавтра считай от текущей даты). " +
       "Для полей, помеченных как допускающие незнание точного значения: если клиент прямо говорит, что не знает — верни строку \"unknown\"; " +
       "если он даёт грубую прикидку не в требуемых единицах (например, сравнивает с объёмом машины вместо числа в м³) — верни строку \"approximate\"; " +
