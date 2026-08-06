@@ -3,7 +3,7 @@ import { Cron } from "@nestjs/schedule";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { env } from "../config/env";
+import { env, paymentsEnabled } from "../config/env";
 import { PAYMENT_PROVIDER, PaymentProvider } from "./payment-provider.interface";
 
 interface SubscriptionLike {
@@ -112,13 +112,17 @@ export class BillingService {
     if (supplier.lastQuotaReminderAt && supplier.lastQuotaReminderAt > dayAgo) return;
 
     await this.prisma.supplierProfile.update({ where: { id: supplierId }, data: { lastQuotaReminderAt: new Date() } });
-    const { paymentUrl } = await this.requestSubscription(supplierId);
+
+    // Пока оплаты нет — ни ссылки, ни кнопки: и то и другое ведёт в
+    // requestSubscription(), то есть к мок-ссылке, дающей платную подписку
+    // даром. Поставщик пишет нам, подписку ставит оператор из админки.
+    const paymentUrl = paymentsEnabled() ? (await this.requestSubscription(supplierId)).paymentUrl : undefined;
     await this.notifications.send({
       event: "quota_exceeded",
-      payload: { freeQuota: env.freeNotificationsPerMonth, paymentUrl },
+      payload: { freeQuota: env.freeNotificationsPerMonth, paymentUrl, supportPhone: env.supportPhone },
       recipientPhone: phone,
       supplierId,
-      buttons: [{ id: "billing|subscribe", text: "Оформить подписку" }],
+      ...(paymentUrl ? { buttons: [{ id: "billing|subscribe", text: "Оформить подписку" }] } : {}),
     });
   }
 

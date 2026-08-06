@@ -3,7 +3,7 @@ import { detectLanguage, Language, LocalizedText } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
-import { env } from "../config/env";
+import { env, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
@@ -270,22 +270,28 @@ export class WhatsAppRouterService {
   private async handleBalanceCommand(phone: string, lang: Language): Promise<void> {
     const authUser = await this.authOtp.getOrCreateSupplierAuthUser(phone);
     const status = await this.billing.getStatus(authUser.profileId);
-    const lines =
+    // Пока оплаты нет, не называем цену и не показываем кнопку: обещать тариф,
+    // который невозможно оплатить, и вести на мок-ссылку одинаково плохо.
+    const canPay = paymentsEnabled();
+    const secondLine = status.subscriptionActive
+      ? lang === "kk"
+        ? `Жазылым ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("kk-KZ")} дейін белсенді`
+        : `Подписка активна до ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("ru-RU")}`
+      : canPay
+        ? lang === "kk"
+          ? `Жазылым рәсімделмеген — шексіз үшін ${status.periodDays} күнге ${status.priceTenge} ₸`
+          : `Подписка не оформлена — ${status.priceTenge} ₸ за ${status.periodDays} дней безлимита`
+        : lang === "kk"
+          ? `Лимит таусылса — бізге жазыңыз: ${env.supportPhone}`
+          : `Если лимит закончится — напишите нам: ${env.supportPhone}`;
+    const body = [
       lang === "kk"
-        ? [
-            `Осы айда тегін өтінімдер: ${status.remainingFree} / ${status.freeQuota}`,
-            status.subscriptionActive
-              ? `Жазылым ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("kk-KZ")} дейін белсенді`
-              : `Жазылым рәсімделмеген — шексіз үшін ${status.periodDays} күнге ${status.priceTenge} ₸`,
-          ]
-        : [
-            `Бесплатных заявок в этом месяце: ${status.remainingFree} из ${status.freeQuota}`,
-            status.subscriptionActive
-              ? `Подписка активна до ${new Date(status.subscriptionExpiresAt!).toLocaleDateString("ru-RU")}`
-              : `Подписка не оформлена — ${status.priceTenge} ₸ за ${status.periodDays} дней безлимита`,
-          ];
-    const body = lines.join("\n");
-    if (status.subscriptionActive) {
+        ? `Осы айда тегін өтінімдер: ${status.remainingFree} / ${status.freeQuota}`
+        : `Бесплатных заявок в этом месяце: ${status.remainingFree} из ${status.freeQuota}`,
+      secondLine,
+    ].join("\n");
+
+    if (status.subscriptionActive || !canPay) {
       await this.whatsapp.sendText(phone, body);
     } else {
       await this.whatsapp.sendButtons(phone, body, [
@@ -295,6 +301,17 @@ export class WhatsAppRouterService {
   }
 
   private async handleSubscribeRequest(phone: string, lang: Language): Promise<void> {
+    // Мок-провайдер выдаёт ссылку, включающую подписку бесплатно, — пока
+    // принимать деньги нечем, отправляем к человеку. См. paymentsEnabled().
+    if (!paymentsEnabled()) {
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? `Жазылым рәсімдеу үшін бізге жазыңыз: ${env.supportPhone}`
+          : `Чтобы оформить подписку, напишите нам: ${env.supportPhone}`,
+      );
+      return;
+    }
     const authUser = await this.authOtp.getOrCreateSupplierAuthUser(phone);
     const { paymentUrl } = await this.billing.requestSubscription(authUser.profileId);
     await this.whatsapp.sendText(phone, `${lang === "kk" ? "Жазылымға төлем" : "Оплата подписки"}: ${paymentUrl}`);

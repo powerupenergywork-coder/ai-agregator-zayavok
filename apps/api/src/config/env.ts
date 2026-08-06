@@ -98,6 +98,8 @@ export const env = {
   prospectResendCooldownDays: num("PROSPECT_RESEND_COOLDOWN_DAYS", 7),
 
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
+  // Куда звать поставщика, пока принимать деньги нечем: см. paymentsEnabled().
+  supportPhone: str("SUPPORT_PHONE", "+7 778 709 8251"),
   kaspiMerchantId: str("KASPI_MERCHANT_ID", ""),
   kaspiApiKey: str("KASPI_API_KEY", ""),
   // Shared secret Kaspi echoes back on the payment callback. Without it the
@@ -110,3 +112,13 @@ export const env = {
   subscriptionPeriodDays: num("SUBSCRIPTION_PERIOD_DAYS", 30),
   freeNotificationsPerMonth: num("FREE_NOTIFICATIONS_PER_MONTH", 10),
 };
+
+/**
+ * Умеем ли мы вообще принять деньги. PAYMENT_PROVIDER=mock выдаёт ссылку на
+ * наш же /billing/mock-confirm/:reference, которая включает платную подписку
+ * бесплатно в один тап — отправить такую ссылку поставщику значит раздать
+ * подписки даром. Пока провайдер мок, зовём написать человеку.
+ */
+export function paymentsEnabled(): boolean {
+  return env.paymentProvider !== "mock";
+}
