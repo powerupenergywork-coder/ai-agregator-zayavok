@@ -70,14 +70,28 @@ export class OrdersService {
 
   // ---------- draft lifecycle ----------
 
-  async createDraft(categorySlug?: string, urgent = false) {
+  async createDraft(
+    categorySlug?: string,
+    urgent = false,
+    attribution?: { source?: string; sourceParams?: Record<string, string>; landingPath?: string },
+  ) {
     let categoryId: string | undefined;
     if (categorySlug) {
       const category = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
       if (category) categoryId = category.id;
     }
+    // Источник фиксируем только здесь, при рождении заявки: позже человек
+    // ходит по сайту, метки теряются, и «последний клик» приписал бы заказ
+    // не тому каналу.
     const order = await this.prisma.order.create({
-      data: { categoryId, urgent, status: categoryId ? "CLARIFYING" : "DRAFT" },
+      data: {
+        categoryId,
+        urgent,
+        status: categoryId ? "CLARIFYING" : "DRAFT",
+        source: attribution?.source,
+        sourceParams: (attribution?.sourceParams as object) ?? undefined,
+        landingPath: attribution?.landingPath,
+      },
     });
     return this.toDto(order.id);
   }

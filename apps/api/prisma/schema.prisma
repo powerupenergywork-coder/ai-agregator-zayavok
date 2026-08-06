@@ -208,6 +208,14 @@ model Order {
   categoryId                  String?
   category                    Category?          @relation(fields: [categoryId], references: [id])
   status                      String             @default("DRAFT")
+  /// Откуда пришёл человек: нормализованный канал ("google", "2gis",
+  /// "instagram", "direct") и страница, с которой он начал. Без этого после
+  /// месяца рекламы нельзя сказать, какой канал принёс заказы, а какой сжёг
+  /// бюджет. Заполняется один раз при создании черновика — по меткам в
+  /// ссылке или, если их нет, по домену перехода.
+  source                      String?
+  sourceParams                Json?
+  landingPath                 String?
   urgent                      Boolean            @default(false)
   fieldsData                  Json               @default("{}")
   progressPercent             Int                @default(0)

@@ -1,4 +1,5 @@
 import type { CategoryField, Language, LocalizedText } from "@ai-zayavki/shared";
+import type { Attribution } from "./attribution";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -112,8 +113,11 @@ export const authApi = {
 // ---------- orders ----------
 
 export const ordersApi = {
-  createDraft: (categorySlug?: string, urgent?: boolean) =>
-    request<OrderDto>("/orders", { method: "POST", body: JSON.stringify({ categorySlug, urgent }) }),
+  createDraft: (categorySlug?: string, urgent?: boolean, attribution?: Attribution) =>
+    request<OrderDto>("/orders", {
+      method: "POST",
+      body: JSON.stringify({ categorySlug, urgent, ...attribution }),
+    }),
   get: (id: string) => request<OrderDto>(`/orders/${id}`),
   chat: (id: string, message: string, lang?: Language) =>
     request<ChatTurnResponse>(`/orders/${id}/chat`, { method: "POST", body: JSON.stringify({ message, lang }) }),
@@ -218,6 +222,7 @@ export interface InsightsDto {
     cancelled: number;
     noSuppliers: number;
   };
+  sources: { source: string; orders: number; published: number }[];
   stuck: {
     clarifying: { id: string; number: number; city: string | null; createdAt: string; fieldsData: unknown }[];
     awaitingConfirm: { id: string; number: number; city: string | null; createdAt: string }[];

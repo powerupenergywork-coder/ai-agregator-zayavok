@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { categoriesApi, CategoryTemplateDto, ordersApi, analyticsApi } from "@/lib/api";
+import { captureAttribution, getAttribution } from "@/lib/attribution";
 import { useLocale } from "@/lib/i18n/context";
 import { Button, Chip, Spinner } from "@/components/ui";
 
@@ -17,6 +18,7 @@ export default function LandingPage() {
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
+    captureAttribution();
     categoriesApi.listActive().then(setCategories).catch(() => setCategories([]));
     analyticsApi.track("landing_view");
   }, []);
@@ -50,7 +52,7 @@ export default function LandingPage() {
     if (!text.trim() || submitting) return;
     setSubmitting(true);
     try {
-      const draft = await ordersApi.createDraft(undefined, urgent);
+      const draft = await ordersApi.createDraft(undefined, urgent, getAttribution());
       await analyticsApi.track("order_draft_started", { orderId: draft.id });
       await ordersApi.chat(draft.id, text.trim(), locale);
       router.push(`/orders/${draft.id}`);

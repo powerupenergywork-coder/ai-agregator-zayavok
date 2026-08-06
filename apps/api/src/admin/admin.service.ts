@@ -492,8 +492,29 @@ export class AdminService {
       take: 50,
     });
 
+    // Источник считаем не по всем заявкам, а по дошедшим до публикации: канал,
+    // который гонит брошенные черновики, и канал, который приносит настоящие
+    // заказы, — это разные вещи, и в отчёте их надо видеть рядом.
+    const [bySourceAll, bySourcePublished] = await Promise.all([
+      this.prisma.order.groupBy({ by: ["source"], _count: { _all: true } }),
+      this.prisma.order.groupBy({
+        by: ["source"],
+        where: { publishedAt: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    const publishedBySource = new Map(bySourcePublished.map((r) => [r.source ?? "—", r._count._all]));
+    const sources = bySourceAll
+      .map((r) => ({
+        source: r.source ?? "—",
+        orders: r._count._all,
+        published: publishedBySource.get(r.source ?? "—") ?? 0,
+      }))
+      .sort((a, b) => b.orders - a.orders);
+
     return {
       funnel: { total, withCategory, reachedConfirm, published, completed, cancelled, noSuppliers },
+      sources,
       stuck: { clarifying: stuckClarifying, awaitingConfirm: stuckAwaiting, publishedNoResult: stuckPublished },
       failedDelivery,
       unrecognized,

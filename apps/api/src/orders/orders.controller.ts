@@ -27,7 +27,11 @@ export class OrdersController {
 
   @Post()
   createDraft(@Body() dto: CreateDraftDto) {
-    return this.orders.createDraft(dto.categorySlug, dto.urgent);
+    return this.orders.createDraft(dto.categorySlug, dto.urgent, {
+      source: dto.source,
+      sourceParams: dto.sourceParams,
+      landingPath: dto.landingPath,
+    });
   }
 
   @UseGuards(JwtAuthGuard)

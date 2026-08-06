@@ -87,6 +87,36 @@ export function QualityTab({ token }: { token: string }) {
       </Card>
 
       <Card>
+        <h2 className="mb-1 font-semibold">Откуда приходят</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Канал, который гонит брошенные черновики, и канал, который приносит настоящие заказы, — разные вещи,
+          поэтому обе колонки рядом. Источник фиксируется один раз, при создании заявки.
+        </p>
+        {data.sources.length === 0 ? (
+          <p className="text-sm text-slate-500">Пока нет данных.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500">
+                <th className="pb-1">Источник</th>
+                <th className="pb-1 text-right">Заявок</th>
+                <th className="pb-1 text-right">Дошли до рассылки</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.sources.map((s) => (
+                <tr key={s.source} className="border-t border-slate-100">
+                  <td className="py-1">{s.source}</td>
+                  <td className="py-1 text-right tabular-nums">{s.orders}</td>
+                  <td className="py-1 text-right tabular-nums">{s.published}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      <Card>
         <h2 className="mb-1 font-semibold">Застряли</h2>
         <p className="mb-3 text-xs text-slate-500">
           Не всякая пауза — поломка: человек мог просто отвлечься. Смотреть стоит на повторяющиеся места.
