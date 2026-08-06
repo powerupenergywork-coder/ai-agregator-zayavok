@@ -84,18 +84,34 @@ export class WhatsAppController {
 
   /**
    * Meta Cloud API delivers messages and status callbacks (sent/delivered/
-   * read/failed) to this one URL — we only act on inbound messages and 200
+   * read/failed) to this one URL — we route inbound messages and 200
    * everything else so Meta stops retrying.
    */
   @Post("cloud-webhook")
   @HttpCode(200)
   async cloudWebhook(@Body() body: any): Promise<{ ok: true }> {
     const value = body?.entry?.[0]?.changes?.[0]?.value;
-    const message = value?.messages?.[0];
-    if (!message) {
-      // No inbound message (e.g. a status callback) — nothing to route.
-      return { ok: true };
+
+    // Статус доставки — единственное место, где видно, что сообщение не дошло.
+    // NotificationLog.status=SENT означает лишь «Мета приняла запрос»: отказ
+    // на её стороне (нет WhatsApp у номера, блокировка, лимит) приходит
+    // только сюда. Раньше эти колбэки молча выбрасывались, и провал доставки
+    // не было видно вообще нигде.
+    const status = value?.statuses?.[0];
+    if (status) {
+      const errors = (status.errors ?? [])
+        .map((e: any) => [e.code, e.title, e.error_data?.details].filter(Boolean).join(" — "))
+        .join("; ");
+      const who = status.recipient_id ?? "?";
+      if (status.status === "failed") {
+        this.logger.error(`Доставка на ${who}: FAILED ${errors || "без пояснения"} (id ${status.id})`);
+      } else {
+        this.logger.log(`Доставка на ${who}: ${status.status} (id ${status.id})`);
+      }
     }
+
+    const message = value?.messages?.[0];
+    if (!message) return { ok: true };
 
     const phone = chatIdToPhone(message.from);
     const chatId = `${message.from}@c.us`;
