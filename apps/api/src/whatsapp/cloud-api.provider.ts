@@ -64,7 +64,10 @@ export class CloudApiProvider implements WhatsAppProvider {
   async sendTemplate(phone: string, templateName: string, lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void> {
     const components: Record<string, unknown>[] = [];
     if (bodyParams.length > 0) {
-      components.push({ type: "body", parameters: bodyParams.map((text) => ({ type: "text", text })) });
+      components.push({
+        type: "body",
+        parameters: bodyParams.map((text) => ({ type: "text", text: this.flattenParam(text) })),
+      });
     }
     (buttonPayloads ?? []).forEach((payload, index) => {
       components.push({
@@ -110,6 +113,22 @@ export class CloudApiProvider implements WhatsAppProvider {
    * to SMS proactively the way the GREEN-API path can. */
   async checkExists(_phone: string): Promise<boolean> {
     return true;
+  }
+
+  /**
+   * Meta отклоняет параметр шаблона с переводом строки, табуляцией или
+   * четырьмя пробелами подряд — ошибка 132018. А описание заявки многострочное
+   * по своей природе (fullDescription, safeSummary), поэтому под запрет
+   * попадала вся рассылка поставщикам, а не отдельный шаблон. Схлопываем здесь,
+   * а не в каждом buildWhatsAppTemplateParams: так на это не наступит ни один
+   * будущий шаблон. Перенос строки внутри параметра всё равно не виден —
+   * в готовом сообщении вёрстку задаёт сам утверждённый шаблон.
+   *
+   * Пустая строка тоже отбивается, поэтому подставляем прочерк.
+   */
+  private flattenParam(text: string): string {
+    const flat = text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();
+    return flat.length > 0 ? flat : "—";
   }
 
   private toDigits(phone: string): string {
