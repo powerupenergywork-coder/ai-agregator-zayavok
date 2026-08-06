@@ -46,6 +46,10 @@ const PROFILE_TRIGGER_PHRASES = new Set([
 // An explicit way out of the supplier help reply and into ordering something
 // for yourself — a supplier is also a person who occasionally needs a truck.
 const NEW_ORDER_PHRASES = /нов(ая|ый)\s*(заявк|заказ)|жаңа\s*өтінім/i;
+
+/** Через сколько часов простоя черновик перестаёт считаться «текущим
+ * разговором» и отцепляется от чата — см. releaseStaleOrder(). */
+const STALE_DRAFT_HOURS = 6;
 // Explicit language-override phrases — same exact-match idiom as the
 // supplier-onboarding trigger phrases below, checked before auto-detection.
 const RU_TRIGGER_PHRASES = new Set(["по-русски", "на русском", "русский"]);
@@ -389,6 +393,48 @@ export class WhatsAppRouterService {
     }
   }
 
+  /**
+   * Отцепляет от сессии заявку, которая больше не является «текущим
+   * разговором», и возвращает true, если отцепила.
+   *
+   * Отцепляем в трёх случаях:
+   * — заявки уже нет (удалена оператором) — иначе следующий же ход упадёт;
+   * — она давно закончена: опубликована, завершена или отменена, а человек
+   *   пишет заново уже про другое;
+   * — это черновик, к которому не возвращались несколько часов. Человек,
+   *   бросивший заполнение вчера, сегодня пишет с новым вопросом, а не
+   *   продолжает ту же мысль.
+   *
+   * Порог намеренно в часах, а не в минутах: прерваться на десять минут
+   * посреди заполнения — нормально, и терять при этом введённое было бы хуже,
+   * чем ответить не по делу.
+   */
+  private async releaseStaleOrder(chatId: string, currentOrderId: string | null): Promise<boolean> {
+    if (!currentOrderId) return false;
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: currentOrderId },
+      select: { status: true, updatedAt: true },
+    });
+    if (!order) {
+      await this.sessions.clearOrder(chatId);
+      return true;
+    }
+
+    const IN_PROGRESS = ["DRAFT", "CLARIFYING"];
+    if (!IN_PROGRESS.includes(order.status)) {
+      await this.sessions.clearOrder(chatId);
+      return true;
+    }
+
+    const staleAfterMs = STALE_DRAFT_HOURS * 60 * 60 * 1000;
+    if (Date.now() - order.updatedAt.getTime() > staleAfterMs) {
+      await this.sessions.clearOrder(chatId);
+      return true;
+    }
+    return false;
+  }
+
   private async findSupplier(phone: string) {
     return this.prisma.supplierProfile.findFirst({
       where: { user: { phone: normalizePhone(phone) } },
@@ -508,13 +554,22 @@ export class WhatsAppRouterService {
       }
     }
 
+    // Брошенный черновик не должен владеть чатом вечно. Пока он привязан к
+    // сессии, проверка ниже не срабатывает, и поставщик, однажды начавший
+    // заявку для себя и бросивший её, НАВСЕГДА застревает в режиме
+    // оформления: на каждое «здравствуйте» получает выбор категории.
+    const releasedStale = await this.releaseStaleOrder(chatId, session.currentOrderId);
+    // ensureOrder() ниже перечитывает сессию из базы и увидит очищенное поле,
+    // поэтому здесь достаточно локального значения для проверки.
+    const currentOrderId = releasedStale ? null : session.currentOrderId;
+
     // A registered supplier saying "спасибо" or "сколько стоит подписка" was
     // being funnelled into drafting an order for themselves — the router
     // treats every unrecognised message as a client request. That filled the
     // base with abandoned drafts and left the supplier with a bot asking what
     // they need. Answer with what they can actually do instead, and keep an
     // explicit way through for the times they really do want to order.
-    if (!session.currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
+    if (!currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
         await this.markUnrecognized(phone);
