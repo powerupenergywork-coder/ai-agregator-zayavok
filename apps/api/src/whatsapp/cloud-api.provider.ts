@@ -2,7 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Language } from "@ai-zayavki/shared";
 import { env } from "../config/env";
 import { normalizePhone } from "../common/phone.util";
-import { WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface";
+import { PrismaService } from "../prisma/prisma.service";
+import { SentMessageId, WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface";
 
 /**
  * Official Meta WhatsApp Cloud API adapter — confirmed against Meta's docs:
@@ -17,27 +18,37 @@ import { WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface"
  *   repurposes its `url` param to accept that id and resolves it via the
  *   two-step id -> temp URL -> bytes flow (see whatsapp.controller.ts caller).
  */
+/** Cloud API отвечает {"messages":[{"id":"wamid...."}]} — по этому id потом
+ * приходит статус доставки отдельным вебхуком. */
+function messageIdOf(res: any): SentMessageId {
+  return res?.messages?.[0]?.id;
+}
+
 @Injectable()
 export class CloudApiProvider implements WhatsAppProvider {
   private readonly logger = new Logger(CloudApiProvider.name);
   private readonly baseUrl: string;
 
-  constructor() {
+  constructor(private readonly prisma: PrismaService) {
     this.baseUrl = `https://graph.facebook.com/${env.whatsappCloudApiVersion}/${env.whatsappCloudPhoneNumberId}`;
   }
 
-  async sendText(phone: string, text: string): Promise<void> {
-    await this.call("messages", {
+  async sendText(phone: string, text: string, opts?: { sensitive?: boolean }): Promise<SentMessageId> {
+    const res = await this.call("messages", {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: this.toDigits(phone),
       type: "text",
       text: { body: text },
     });
+    // Одноразовый код в стенограмме — лишний риск без всякой пользы для
+    // разбора диалога, поэтому текст заменяем пометкой.
+    await this.record(phone, "text", opts?.sensitive ? "[одноразовый код]" : text);
+    return messageIdOf(res);
   }
 
-  async sendButtons(phone: string, body: string, buttons: WhatsAppButton[], header?: string): Promise<void> {
-    await this.call("messages", {
+  async sendButtons(phone: string, body: string, buttons: WhatsAppButton[], header?: string): Promise<SentMessageId> {
+    const res = await this.call("messages", {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: this.toDigits(phone),
@@ -54,6 +65,8 @@ export class CloudApiProvider implements WhatsAppProvider {
         },
       },
     });
+    await this.record(phone, "buttons", body, buttons.map((b) => b.id).join(" | "));
+    return messageIdOf(res);
   }
 
   /** `templateName` must exactly match an approved template in Meta Business
@@ -61,7 +74,13 @@ export class CloudApiProvider implements WhatsAppProvider {
    * required names) — an unrecognized or unapproved name fails the same way
    * a free-form send outside the 24h window does (this.call() throws,
    * caller logs it as a failed NotificationLog). */
-  async sendTemplate(phone: string, templateName: string, lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void> {
+  async sendTemplate(
+    phone: string,
+    templateName: string,
+    lang: Language,
+    bodyParams: string[],
+    buttonPayloads?: string[],
+  ): Promise<SentMessageId> {
     const components: Record<string, unknown>[] = [];
     if (bodyParams.length > 0) {
       components.push({
@@ -78,7 +97,7 @@ export class CloudApiProvider implements WhatsAppProvider {
       });
     });
 
-    await this.call("messages", {
+    const res = await this.call("messages", {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: this.toDigits(phone),
@@ -89,6 +108,27 @@ export class CloudApiProvider implements WhatsAppProvider {
         ...(components.length > 0 ? { components } : {}),
       },
     });
+    await this.record(phone, "template", bodyParams.join(" | "), templateName);
+    return messageIdOf(res);
+  }
+
+  /**
+   * Стенограмма пишется здесь, а не в сервисах: роутер и онбординг шлют
+   * сообщения напрямую, минуя NotificationsService, и на уровне сервисов
+   * половина переписки была бы потеряна.
+   *
+   * Сбой записи не должен ронять саму отправку — сообщение уже ушло, и
+   * потерять его из-за проблем с логированием было бы хуже, чем потерять
+   * строку стенограммы.
+   */
+  private async record(phone: string, kind: string, text?: string, payload?: string, unrecognized = false) {
+    try {
+      await this.prisma.whatsAppMessage.create({
+        data: { phone: normalizePhone(phone), direction: "OUT", kind, text, payload, unrecognized },
+      });
+    } catch (err) {
+      this.logger.warn(`Не удалось записать исходящее в стенограмму: ${(err as Error).message}`);
+    }
   }
 
   async downloadMedia(mediaId: string): Promise<Buffer> {

@@ -58,6 +58,10 @@ export class NotificationsService {
 
     let status: "SENT" | "FAILED" = "SENT";
     let errorMessage: string | undefined;
+    // Идентификатор у провайдера — единственная ниточка к статусу доставки:
+    // отказ приходит отдельным вебхуком уже после того, как вызов API вернул
+    // успех. Без него status=SENT означает только «провайдер принял запрос».
+    let providerMessageId: string | undefined;
 
     try {
       if (channel === "SMS" && opts.recipientPhone) {
@@ -67,7 +71,7 @@ export class NotificationsService {
         // this event is business-initiated — free text would just get
         // rejected by Meta (error 131047), so use the pre-approved template
         // instead. See whatsapp-templates.ts for the exact registry.
-        await this.whatsapp.sendTemplate(
+        providerMessageId = await this.whatsapp.sendTemplate(
           opts.recipientPhone,
           whatsappTemplateName(opts.event, lang),
           whatsappTemplateLanguage(opts.event, lang),
@@ -75,9 +79,9 @@ export class NotificationsService {
           opts.buttons?.map((b) => b.id),
         );
       } else if (channel === "WHATSAPP" && opts.recipientPhone && opts.buttons?.length) {
-        await this.whatsapp.sendButtons(opts.recipientPhone, text, opts.buttons);
+        providerMessageId = await this.whatsapp.sendButtons(opts.recipientPhone, text, opts.buttons);
       } else if (channel === "WHATSAPP" && opts.recipientPhone) {
-        await this.whatsapp.sendText(opts.recipientPhone, text);
+        providerMessageId = await this.whatsapp.sendText(opts.recipientPhone, text);
       } else {
         this.logger.log(`[${channel}] ${opts.event} → ${opts.recipientPhone ?? "n/a"}: ${text}`);
       }
@@ -98,6 +102,7 @@ export class NotificationsService {
         renderedText: text,
         status,
         errorMessage,
+        providerMessageId,
       },
     });
   }

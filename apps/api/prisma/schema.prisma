@@ -340,6 +340,13 @@ model NotificationLog {
   status         NotificationStatus  @default(SENT)
   errorMessage   String?
   createdAt      DateTime            @default(now())
+  /// Идентификатор сообщения у провайдера. Нужен, чтобы связать отправку с
+  /// асинхронным статусом доставки: сам вызов API возвращает успех, а отказ
+  /// («нет WhatsApp», «окно закрыто») приходит отдельным вебхуком позже.
+  /// Без этой связки status=SENT означал лишь «провайдер принял запрос».
+  providerMessageId String?          @unique
+  deliveredAt    DateTime?
+  readAt         DateTime?
 
   @@index([orderId])
 }
@@ -347,6 +354,39 @@ model NotificationLog {
 enum Language {
   RU
   KK
+}
+
+enum MessageDirection {
+  IN
+  OUT
+}
+
+/// Сырая стенограмма переписки в WhatsApp — обе стороны, все каналы.
+/// Существующий ChatMessage покрывает только диалог на сайте, а вся сторона
+/// поставщика живёт исключительно в WhatsApp: онбординг, «стоп», «баланс»,
+/// согласие взять заявку. Без этой таблицы на вопрос «что мы ему написали и
+/// что он ответил» ответить нечем, а восстановить задним числом нельзя.
+///
+/// Пишется на уровне провайдера, а не сервисов, — так в неё попадает и то,
+/// что роутер с онбордингом шлют напрямую, минуя NotificationsService.
+model WhatsAppMessage {
+  id            String           @id @default(uuid())
+  /// Номер контрагента (не наш) — по нему собирается лента диалога.
+  phone         String
+  direction     MessageDirection
+  /// text | buttons | template | button_reply | image | unknown
+  kind          String
+  text          String?
+  /// Для шаблона — его имя, для нажатия кнопки — payload. Именно payload
+  /// показывает, что человек на самом деле выбрал.
+  payload       String?
+  /// Входящее, которое бот не понял и ответил общей фразой. Главный
+  /// материал для улучшения: реальные формулировки, которые мы не держим.
+  unrecognized  Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+
+  @@index([phone, createdAt])
+  @@index([unrecognized, createdAt])
 }
 
 enum NotificationChannel {

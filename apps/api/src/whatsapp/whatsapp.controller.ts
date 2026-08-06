@@ -1,6 +1,8 @@
 import { Body, Controller, Get, HttpCode, Logger, Post, Query, Res, UnauthorizedException, Headers } from "@nestjs/common";
 import type { Response } from "express";
 import { env } from "../config/env";
+import { PrismaService } from "../prisma/prisma.service";
+import { normalizePhone } from "../common/phone.util";
 import { WhatsAppRouterService } from "./whatsapp-router.service";
 import { chatIdToPhone } from "./whatsapp.util";
 
@@ -13,7 +15,58 @@ import { chatIdToPhone } from "./whatsapp.util";
 export class WhatsAppController {
   private readonly logger = new Logger(WhatsAppController.name);
 
-  constructor(private readonly router: WhatsAppRouterService) {}
+  constructor(
+    private readonly router: WhatsAppRouterService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  /**
+   * Входящее — в стенограмму. Пишем до разбора: сообщение, которое бот не
+   * понял или на котором упал, нужнее всего, а именно оно и терялось бы,
+   * если записывать после успешной обработки.
+   */
+  private async recordInbound(phone: string, message: any) {
+    const kind =
+      message.type === "button" || message.type === "interactive" ? "button_reply" : String(message.type ?? "unknown");
+    const text =
+      message.text?.body ?? message.button?.text ?? message.interactive?.button_reply?.title ?? undefined;
+    const payload =
+      message.button?.payload ?? message.interactive?.button_reply?.id ?? message.image?.id ?? undefined;
+    try {
+      await this.prisma.whatsAppMessage.create({
+        data: { phone: normalizePhone(phone), direction: "IN", kind, text, payload },
+      });
+    } catch (err) {
+      this.logger.warn(`Не удалось записать входящее в стенограмму: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Статус доставки приходит асинхронно и до сих пор жил только в логах
+   * контейнера, которые перетираются. Переносим его в NotificationLog, иначе
+   * в админке у неполученного сообщения так и стоит «отправлено».
+   */
+  private async applyDeliveryStatus(providerMessageId: string, status: string, errors: string) {
+    if (!providerMessageId) return;
+    const data: Record<string, unknown> = {};
+    if (status === "failed") {
+      data.status = "FAILED";
+      data.errorMessage = errors || "Мета отказала в доставке";
+    } else if (status === "delivered") {
+      data.deliveredAt = new Date();
+    } else if (status === "read") {
+      data.readAt = new Date();
+    } else {
+      return; // "sent" уже отражён самим фактом записи
+    }
+    try {
+      // updateMany, а не update: у сообщений, отправленных мимо
+      // NotificationsService (ответы роутера), записи там нет — и это норма.
+      await this.prisma.notificationLog.updateMany({ where: { providerMessageId }, data });
+    } catch (err) {
+      this.logger.warn(`Не удалось обновить статус доставки: ${(err as Error).message}`);
+    }
+  }
 
   @Post("webhook")
   @HttpCode(200)
@@ -108,6 +161,7 @@ export class WhatsAppController {
       } else {
         this.logger.log(`Доставка на ${who}: ${status.status} (id ${status.id})`);
       }
+      await this.applyDeliveryStatus(status.id, status.status, errors);
     }
 
     const message = value?.messages?.[0];
@@ -115,6 +169,7 @@ export class WhatsAppController {
 
     const phone = chatIdToPhone(message.from);
     const chatId = `${message.from}@c.us`;
+    await this.recordInbound(phone, message);
 
     try {
       if (message.type === "text") {

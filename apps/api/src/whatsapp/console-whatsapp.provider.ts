@@ -1,25 +1,29 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Language } from "@ai-zayavki/shared";
-import { WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface";
+import { WhatsAppButton, SentMessageId, WhatsAppProvider } from "./whatsapp-provider.interface";
 
 /** Dev-mode stand-in — logs instead of calling a real WhatsApp API, same role as ConsoleSmsProvider. */
 @Injectable()
 export class ConsoleWhatsAppProvider implements WhatsAppProvider {
   private readonly logger = new Logger("WhatsApp(console)");
 
-  async sendText(phone: string, text: string): Promise<void> {
+  async sendText(phone: string, text: string, _opts?: { sensitive?: boolean }): Promise<SentMessageId> {
     this.logger.log(`→ ${phone}: ${text}`);
+    // Консоль не выдаёт идентификаторов — статусов доставки здесь и не бывает.
+    return undefined;
   }
 
-  async sendButtons(phone: string, body: string, buttons: WhatsAppButton[]): Promise<void> {
+  async sendButtons(phone: string, body: string, buttons: WhatsAppButton[]): Promise<SentMessageId> {
     const buttonsText = buttons.map((b) => `[${b.text} -> ${b.id}]`).join("  ");
     this.logger.log(`→ ${phone}: ${body}\n  buttons: ${buttonsText}`);
+    return undefined;
   }
 
   /** Console has no 24h-window restriction to work around — just log the
    * params as if they'd been rendered, so dev logs stay readable. */
-  async sendTemplate(phone: string, templateName: string, lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void> {
+  async sendTemplate(phone: string, templateName: string, lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<SentMessageId> {
     this.logger.log(`→ ${phone}: [template ${templateName}/${lang}] ${bodyParams.join(" | ")}${buttonPayloads?.length ? ` buttons: ${buttonPayloads.join(", ")}` : ""}`);
+    return undefined;
   }
 
   async downloadMedia(url: string): Promise<Buffer> {

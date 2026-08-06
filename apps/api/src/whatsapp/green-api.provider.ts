@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Language } from "@ai-zayavki/shared";
 import { env } from "../config/env";
-import { WhatsAppButton, WhatsAppProvider } from "./whatsapp-provider.interface";
+import { WhatsAppButton, SentMessageId, WhatsAppProvider } from "./whatsapp-provider.interface";
 import { phoneToChatId } from "./whatsapp.util";
 
 /**
@@ -23,11 +23,13 @@ export class GreenApiProvider implements WhatsAppProvider {
     this.baseUrl = `${env.greenApiBaseUrl}/waInstance${env.greenApiIdInstance}`;
   }
 
-  async sendText(phone: string, text: string): Promise<void> {
+  async sendText(phone: string, text: string, _opts?: { sensitive?: boolean }): Promise<SentMessageId> {
     await this.call("sendMessage", { chatId: phoneToChatId(phone), message: text });
+    // GREEN-API не возвращает id, по которому потом приходит статус доставки.
+    return undefined;
   }
 
-  async sendButtons(phone: string, body: string, buttons: WhatsAppButton[], header?: string): Promise<void> {
+  async sendButtons(phone: string, body: string, buttons: WhatsAppButton[], header?: string): Promise<SentMessageId> {
     await this.call("sendInteractiveButtons", {
       chatId: phoneToChatId(phone),
       header,
@@ -38,12 +40,13 @@ export class GreenApiProvider implements WhatsAppProvider {
         buttonText: b.text.slice(0, 25),
       })),
     });
+    return undefined;
   }
 
   /** GREEN-API bridges a real personal/business WhatsApp app session, not
    * the official Cloud API — no 24h-window/template restriction to work
    * around, so just render the params as plain free text. */
-  async sendTemplate(phone: string, _templateName: string, _lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void> {
+  async sendTemplate(phone: string, _templateName: string, _lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<SentMessageId> {
     if (buttonPayloads?.length) {
       await this.sendButtons(
         phone,

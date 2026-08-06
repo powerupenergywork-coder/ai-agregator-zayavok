@@ -7,10 +7,18 @@ export interface WhatsAppButton {
   text: string;
 }
 
+/**
+ * Идентификатор отправленного сообщения у провайдера, если он его вернул.
+ * По нему приходит асинхронный статус доставки, поэтому вызывающая сторона
+ * (NotificationsService) сохраняет его рядом с записью об отправке.
+ */
+export type SentMessageId = string | undefined;
+
 export interface WhatsAppProvider {
-  sendText(phone: string, text: string): Promise<void>;
+  /** `sensitive` — не сохранять текст в стенограмме (одноразовые коды). */
+  sendText(phone: string, text: string, opts?: { sensitive?: boolean }): Promise<SentMessageId>;
   /** At most 3 buttons — that's a WhatsApp platform limit, not ours. Callers must fall back to a numbered list beyond that. */
-  sendButtons(phone: string, body: string, buttons: WhatsAppButton[], header?: string): Promise<void>;
+  sendButtons(phone: string, body: string, buttons: WhatsAppButton[], header?: string): Promise<SentMessageId>;
   downloadMedia(url: string): Promise<Buffer>;
   /** sendText/sendButtons don't fail for a number with no WhatsApp account —
    * the platform just silently never delivers. Callers that need a real
@@ -29,7 +37,13 @@ export interface WhatsAppProvider {
    * Providers without Meta's window restriction (console, GREEN-API) can
    * just render the same params as free text — there's no real "template"
    * concept there. */
-  sendTemplate(phone: string, templateName: string, lang: Language, bodyParams: string[], buttonPayloads?: string[]): Promise<void>;
+  sendTemplate(
+    phone: string,
+    templateName: string,
+    lang: Language,
+    bodyParams: string[],
+    buttonPayloads?: string[],
+  ): Promise<SentMessageId>;
 }
 
 export const WHATSAPP_PROVIDER = Symbol("WHATSAPP_PROVIDER");

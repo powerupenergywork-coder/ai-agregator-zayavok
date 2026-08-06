@@ -365,6 +365,30 @@ export class WhatsAppRouterService {
     }
   }
 
+  /**
+   * Помечает последнее входящее как непонятое. Сама запись уже сделана
+   * контроллером вебхука до разбора, поэтому здесь достаточно поставить флаг
+   * на свежайшей строке этого номера.
+   *
+   * Ради этого флага всё и затевалось: он даёт список реальных формулировок,
+   * на которые бот отвечает отпиской, — то есть готовый список того, что
+   * стоит начать понимать, вместо догадок.
+   */
+  private async markUnrecognized(phone: string) {
+    try {
+      const last = await this.prisma.whatsAppMessage.findFirst({
+        where: { phone: normalizePhone(phone), direction: "IN" },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (last) {
+        await this.prisma.whatsAppMessage.update({ where: { id: last.id }, data: { unrecognized: true } });
+      }
+    } catch {
+      // Диагностика не должна ломать ответ пользователю.
+    }
+  }
+
   private async findSupplier(phone: string) {
     return this.prisma.supplierProfile.findFirst({
       where: { user: { phone: normalizePhone(phone) } },
@@ -493,6 +517,7 @@ export class WhatsAppRouterService {
     if (!session.currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
+        await this.markUnrecognized(phone);
         await this.whatsapp.sendText(
           phone,
           lang === "kk"
