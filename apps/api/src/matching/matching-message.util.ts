@@ -21,10 +21,15 @@ export function formatWhen(order: OrderLike, lang: Language): string {
   return order.timeWindow ? `${date}, ${order.timeWindow}` : date;
 }
 
+/** Город и «когда» каждый шаблон и так печатает отдельными строками в шапке —
+ * повторять их внутри описания значит показать клиенту одно и то же дважды в
+ * одном сообщении. */
+const SHOWN_SEPARATELY = new Set(["city", "date", "time"]);
+
 export function fullDescription(fieldsData: unknown, categoryFields: CategoryField[], lang: Language): string {
   const data = (fieldsData ?? {}) as Record<string, unknown>;
   return categoryFields
-    .filter((f) => f.type !== "photo" && data[f.key] !== undefined)
+    .filter((f) => f.type !== "photo" && !SHOWN_SEPARATELY.has(f.key) && data[f.key] !== undefined)
     .map((f) => `${f.label[lang]}: ${formatFieldValue(data[f.key], f, lang)}`)
     .join("\n");
 }

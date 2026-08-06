@@ -127,7 +127,15 @@ export class CloudApiProvider implements WhatsAppProvider {
    * Пустая строка тоже отбивается, поэтому подставляем прочерк.
    */
   private flattenParam(text: string): string {
-    const flat = text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();
+    // Разделитель именно видимый: схлопнутый в пробел многострочный список
+    // превращается в сплошную кашу вида «Адрес: ул. Ерубаева, 12 Вид работ:
+    // не знаю Вес груза: 2 т», где не видно, где кончается одно поле и
+    // начинается следующее.
+    const flat = text
+      .replace(/[\r\n\t]+/g, " · ")
+      .replace(/ {2,}/g, " ")
+      .replace(/(?: · )+$/, "")
+      .trim();
     return flat.length > 0 ? flat : "—";
   }
 
