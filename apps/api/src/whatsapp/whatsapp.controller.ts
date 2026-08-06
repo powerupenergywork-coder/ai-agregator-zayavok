@@ -119,12 +119,25 @@ export class WhatsAppController {
     try {
       if (message.type === "text") {
         await this.router.handleIncoming({ chatId, phone, text: message.text?.body });
+      } else if (message.type === "button") {
+        // Нажатие quick-reply в ШАБЛОНЕ приходит именно так: type "button" и
+        // payload, а не interactive.button_reply — тот бывает только у
+        // интерактивных сообщений, то есть внутри открытого 24-часового окна.
+        // Первое касание с клиентом или холодным поставщиком всегда идёт
+        // шаблоном, поэтому без этой ветки были мертвы все кнопки: и
+        // «Подтвердить» под заявкой, и «Интересно, беру» в приглашении.
+        // Нажатие доходило до вебхука и молча выбрасывалось.
+        await this.router.handleIncoming({ chatId, phone, buttonReplyId: message.button?.payload });
       } else if (message.type === "interactive" && message.interactive?.type === "button_reply") {
         await this.router.handleIncoming({ chatId, phone, buttonReplyId: message.interactive.button_reply?.id });
       } else if (message.type === "image") {
         // Cloud API gives an opaque media id, not a URL — CloudApiProvider's
         // downloadMedia() knows to resolve this id via the Graph API instead.
         await this.router.handleIncoming({ chatId, phone, imageUrl: message.image?.id });
+      } else {
+        // Молчаливое игнорирование — ровно то, из-за чего предыдущая дыра
+        // прожила до боевого номера незамеченной.
+        this.logger.warn(`Необработанный тип входящего сообщения: ${message.type}`);
       }
     } catch (err) {
       this.logger.error(`cloud webhook handling failed: ${(err as Error).message}`);
