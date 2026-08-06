@@ -111,6 +111,12 @@ export const env = {
   subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 5000),
   subscriptionPeriodDays: num("SUBSCRIPTION_PERIOD_DAYS", 30),
   freeNotificationsPerMonth: num("FREE_NOTIFICATIONS_PER_MONTH", 10),
+
+  // Сколько дней держать стенограмму переписки в WhatsApp. Это персональные
+  // данные, и разбор «где человек застрял» идёт по горячим следам, а не через
+  // полгода. 0 = хранить бессрочно (осознанный выключатель, не значение по
+  // умолчанию). См. whatsapp/transcript-retention.service.ts.
+  whatsappTranscriptRetentionDays: num("WHATSAPP_TRANSCRIPT_RETENTION_DAYS", 7),
 };
 
 /**

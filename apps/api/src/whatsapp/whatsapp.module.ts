@@ -3,6 +3,7 @@ import { WhatsAppController } from "./whatsapp.controller";
 import { WhatsAppRouterService } from "./whatsapp-router.service";
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { WhatsAppOnboardingService } from "./whatsapp-onboarding.service";
+import { TranscriptRetentionService } from "./transcript-retention.service";
 import { WhatsAppProviderModule } from "./whatsapp-provider.module";
 import { OrdersModule } from "../orders/orders.module";
 import { AuthOtpModule } from "../auth-otp/auth-otp.module";
@@ -23,6 +24,12 @@ import { AuditLogService } from "../common/audit-log.service";
     MatchingModule,
   ],
   controllers: [WhatsAppController],
-  providers: [WhatsAppRouterService, WhatsAppSessionService, WhatsAppOnboardingService, AuditLogService],
+  providers: [
+    WhatsAppRouterService,
+    WhatsAppSessionService,
+    WhatsAppOnboardingService,
+    TranscriptRetentionService,
+    AuditLogService,
+  ],
 })
 export class WhatsAppModule {}
