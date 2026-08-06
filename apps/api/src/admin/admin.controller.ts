@@ -170,6 +170,20 @@ export class AdminController {
   initiateProspect(@CurrentAdmin() admin: AdminAuthUser, @Body() dto: InitiateProspectDto) {
     return this.admin.initiateProspect(dto, admin);
   }
+
+  @UseGuards(AdminAuthGuard)
+  @Get("insights")
+  insights() {
+    return this.admin.insights();
+  }
+
+  /** Переписка — персональные данные, поэтому только под админским токеном
+   * и по конкретному номеру: списка «все диалоги подряд» здесь намеренно нет. */
+  @UseGuards(AdminAuthGuard)
+  @Get("conversation")
+  conversation(@Query("phone") phone: string) {
+    return this.admin.conversation(phone ?? "");
+  }
 }
 
 function slugify(name: string): string {

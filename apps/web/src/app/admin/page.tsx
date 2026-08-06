@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { adminApi, ProspectContactDto, ProspectFunnelDto } from "@/lib/api";
 import { Button, Card, Spinner, StatusBadge } from "@/components/ui";
+import { QualityTab } from "./quality-tab";
 
 const PROSPECT_STATUS_LABEL: Record<string, string> = {
   sent: "Отправлено",
@@ -25,7 +26,7 @@ export default function AdminPage() {
   const [email, setEmail] = useState("admin@example.com");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"orders" | "suppliers" | "categories" | "settings" | "prospects">("orders");
+  const [tab, setTab] = useState<"orders" | "suppliers" | "categories" | "settings" | "prospects" | "quality">("orders");
 
   useEffect(() => {
     setTokenState(typeof window !== "undefined" ? window.localStorage.getItem(ADMIN_TOKEN_KEY) : null);
@@ -69,13 +70,13 @@ export default function AdminPage() {
       </div>
 
       <div className="mb-6 flex gap-2">
-        {(["orders", "suppliers", "categories", "settings", "prospects"] as const).map((t) => (
+        {(["orders", "suppliers", "categories", "settings", "prospects", "quality"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-full px-4 py-2 text-sm ${tab === t ? "bg-brand-600 text-white" : "bg-white text-slate-600 border border-slate-300"}`}
           >
-            {{ orders: "Заявки", suppliers: "Поставщики", categories: "Категории", settings: "Рассылка", prospects: "Прогрев поставщиков" }[t]}
+            {{ orders: "Заявки", suppliers: "Поставщики", categories: "Категории", settings: "Рассылка", prospects: "Прогрев поставщиков", quality: "Качество" }[t]}
           </button>
         ))}
       </div>
@@ -85,6 +86,7 @@ export default function AdminPage() {
       {tab === "categories" && <CategoriesTab token={token} />}
       {tab === "settings" && <SettingsTab token={token} />}
       {tab === "prospects" && <ProspectsTab token={token} />}
+      {tab === "quality" && <QualityTab token={token} />}
     </main>
   );
 }

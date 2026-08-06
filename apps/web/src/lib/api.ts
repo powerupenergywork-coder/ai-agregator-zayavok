@@ -203,7 +203,47 @@ export const adminApi = {
   getProspectFunnel: (token: string) => request<ProspectFunnelDto>("/admin/prospects/funnel", {}, token),
   initiateProspect: (token: string, phone: string, orderId: string) =>
     request<ProspectContactDto>("/admin/prospects", { method: "POST", body: JSON.stringify({ phone, orderId }) }, token),
+  getInsights: (token: string) => request<InsightsDto>("/admin/insights", {}, token),
+  getConversation: (token: string, phone: string) =>
+    request<ConversationDto>(`/admin/conversation?phone=${encodeURIComponent(phone)}`, {}, token),
 };
+
+export interface InsightsDto {
+  funnel: {
+    total: number;
+    withCategory: number;
+    reachedConfirm: number;
+    published: number;
+    completed: number;
+    cancelled: number;
+    noSuppliers: number;
+  };
+  stuck: {
+    clarifying: { id: string; number: number; city: string | null; createdAt: string; fieldsData: unknown }[];
+    awaitingConfirm: { id: string; number: number; city: string | null; createdAt: string }[];
+    publishedNoResult: { id: string; number: number; city: string | null; publishedAt: string }[];
+  };
+  failedDelivery: {
+    id: string;
+    templateKey: string;
+    recipientPhone: string | null;
+    errorMessage: string | null;
+    createdAt: string;
+  }[];
+  unrecognized: { id: string; phone: string; text: string | null; createdAt: string }[];
+}
+
+export interface ConversationDto {
+  phone: string;
+  timeline: {
+    at: string;
+    type: "in" | "out" | "delivery";
+    kind: string;
+    text: string;
+    unrecognized: boolean;
+    orderId?: string | null;
+  }[];
+}
 
 export interface ProspectContactDto {
   id: string;

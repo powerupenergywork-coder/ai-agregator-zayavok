@@ -428,4 +428,134 @@ export class AdminService {
       id: admin.sub,
     });
   }
+
+  // ---------- качество: где застревают и что не поняли ----------
+
+  /**
+   * Воронка и «залипшие» заявки одним запросом.
+   *
+   * Воронка считается по фактам в самой заявке, а не по счётчику событий:
+   * счётчик врёт при любой смене логики задним числом, а publishedAt и статус
+   * — это то, что произошло на самом деле.
+   */
+  async insights() {
+    const now = Date.now();
+    const minutesAgo = (m: number) => new Date(now - m * 60 * 1000);
+
+    const [total, withCategory, reachedConfirm, published, completed, cancelled, noSuppliers] = await Promise.all([
+      this.prisma.order.count(),
+      this.prisma.order.count({ where: { categoryId: { not: null } } }),
+      this.prisma.order.count({
+        where: { OR: [{ status: "AWAITING_PHONE_CONFIRMATION" }, { publishedAt: { not: null } }] },
+      }),
+      this.prisma.order.count({ where: { publishedAt: { not: null } } }),
+      this.prisma.order.count({ where: { status: "COMPLETED" } }),
+      this.prisma.order.count({ where: { status: { in: ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN"] } } }),
+      this.prisma.order.count({ where: { status: "NEEDS_OPERATOR" } }),
+    ]);
+
+    // Пороги подобраны так, чтобы не считать «залипшим» того, кто просто
+    // сейчас печатает: заполнение занимает минуты, а не полчаса.
+    const [stuckClarifying, stuckAwaiting, stuckPublished] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { status: "CLARIFYING", createdAt: { lt: minutesAgo(30) } },
+        select: { id: true, number: true, city: true, createdAt: true, fieldsData: true },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+      this.prisma.order.findMany({
+        where: { status: "AWAITING_PHONE_CONFIRMATION", createdAt: { lt: minutesAgo(60) } },
+        select: { id: true, number: true, city: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+      this.prisma.order.findMany({
+        where: { status: "PUBLISHED", publishedAt: { lt: minutesAgo(24 * 60) } },
+        select: { id: true, number: true, city: true, publishedAt: true },
+        orderBy: { publishedAt: "desc" },
+        take: 50,
+      }),
+    ]);
+
+    // Недоставленное: раньше отказ Меты жил только в логах контейнера.
+    const failedDelivery = await this.prisma.notificationLog.findMany({
+      where: { status: "FAILED", createdAt: { gt: minutesAgo(7 * 24 * 60) } },
+      select: { id: true, templateKey: true, recipientPhone: true, errorMessage: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    const unrecognized = await this.prisma.whatsAppMessage.findMany({
+      where: { unrecognized: true },
+      select: { id: true, phone: true, text: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    return {
+      funnel: { total, withCategory, reachedConfirm, published, completed, cancelled, noSuppliers },
+      stuck: { clarifying: stuckClarifying, awaitingConfirm: stuckAwaiting, publishedNoResult: stuckPublished },
+      failedDelivery,
+      unrecognized,
+    };
+  }
+
+  /**
+   * Одна лента переписки по номеру: что человек написал, что ушло ему и чем
+   * закончилась доставка. Стенограмма и журнал уведомлений живут в разных
+   * таблицах намеренно — первая это сырьё, вторая деловая запись с привязкой
+   * к заявке, — поэтому сводим их здесь, а не дублируем в базе.
+   */
+  async conversation(rawPhone: string) {
+    const phone = normalizePhone(rawPhone);
+    const [messages, notifications] = await Promise.all([
+      this.prisma.whatsAppMessage.findMany({
+        where: { phone },
+        orderBy: { createdAt: "asc" },
+        take: 500,
+      }),
+      this.prisma.notificationLog.findMany({
+        where: { recipientPhone: phone },
+        select: {
+          id: true,
+          templateKey: true,
+          status: true,
+          errorMessage: true,
+          deliveredAt: true,
+          readAt: true,
+          createdAt: true,
+          orderId: true,
+        },
+        orderBy: { createdAt: "asc" },
+        take: 500,
+      }),
+    ]);
+
+    const timeline = [
+      ...messages.map((m) => ({
+        at: m.createdAt,
+        type: m.direction === "IN" ? ("in" as const) : ("out" as const),
+        kind: m.kind,
+        text: m.text ?? m.payload ?? "",
+        unrecognized: m.unrecognized,
+      })),
+      ...notifications.map((n) => ({
+        at: n.createdAt,
+        type: "delivery" as const,
+        kind: n.templateKey,
+        text:
+          n.status === "FAILED"
+            ? `не доставлено: ${n.errorMessage ?? "без пояснения"}`
+            : n.readAt
+              ? "прочитано"
+              : n.deliveredAt
+                ? "доставлено"
+                : "принято провайдером",
+        unrecognized: false,
+        orderId: n.orderId,
+      })),
+    ].sort((a, b) => a.at.getTime() - b.at.getTime());
+
+    return { phone, timeline };
+  }
 }
