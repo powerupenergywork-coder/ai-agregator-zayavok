@@ -5,7 +5,13 @@ import { toLang } from "../common/language.util";
 import { SMS_PROVIDER, SmsProvider } from "../sms/sms-provider.interface";
 import { WHATSAPP_PROVIDER, WhatsAppButton, WhatsAppProvider } from "../whatsapp/whatsapp-provider.interface";
 import { NotificationEvent, renderTemplate } from "./notification-templates";
-import { buildWhatsAppTemplateParams, isWhatsAppTemplateEvent, whatsappTemplateName, WhatsAppTemplateEvent } from "./whatsapp-templates";
+import {
+  buildWhatsAppTemplateParams,
+  isWhatsAppTemplateEvent,
+  whatsappTemplateLanguage,
+  whatsappTemplateName,
+  WhatsAppTemplateEvent,
+} from "./whatsapp-templates";
 
 // Meta's actual cutoff is 24h — this margin guards against clock skew and
 // the time this request itself takes to run, so we don't attempt free text
@@ -64,7 +70,7 @@ export class NotificationsService {
         await this.whatsapp.sendTemplate(
           opts.recipientPhone,
           whatsappTemplateName(opts.event, lang),
-          lang,
+          whatsappTemplateLanguage(opts.event, lang),
           buildWhatsAppTemplateParams(opts.event, opts.payload),
           opts.buttons?.map((b) => b.id),
         );

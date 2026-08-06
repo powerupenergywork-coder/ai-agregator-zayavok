@@ -58,6 +58,17 @@ export function whatsappTemplateName(event: WhatsAppTemplateEvent, lang: Languag
   return TEMPLATE_NAMES[event][lang];
 }
 
+/**
+ * The language Meta has the template registered under, which is not always the
+ * recipient's. Every event above ships as a matching ru/kk pair except
+ * prospect_outreach, which is a single template registered as "ru" carrying
+ * both language blocks — asking for it as "kk" fails with 132001 and the
+ * outreach silently never arrives.
+ */
+export function whatsappTemplateLanguage(event: WhatsAppTemplateEvent, lang: Language): Language {
+  return event === "prospect_outreach" ? "ru" : lang;
+}
+
 /** Builds the {{1}}, {{2}}... body params in the exact order each approved
  * template expects — must stay in sync with the template text submitted to
  * Meta. order_digest's fixed-shape template can't loop over a variable
