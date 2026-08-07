@@ -163,12 +163,17 @@ export class WhatsAppOnboardingService {
         await this.whatsapp.sendText(phone, lang === "kk" ? "Қалаларды мәтінмен, үтір арқылы жазыңыз." : "Напишите города текстом, через запятую.");
         return;
       }
-      // Free text in, canonical city names out. Anything we can't place is
-      // bounced back rather than stored: an unrecognised city silently
-      // matches no orders, so the supplier would sit here waiting for work
-      // that never comes and nobody would ever know why.
+      // Нераспознанное не сохраняем как город: он молча не совпал бы ни с
+      // одной заявкой, и поставщик ждал бы работы, которая никогда не придёт.
+      //
+      // Но и переспрашивать всю строку из-за лишнего куска нельзя. Реальный
+      // ответ: «Астана, оплата наличными и без наличными» — город назван, а мы
+      // отвергли всё целиком и заставили писать заново. Поэтому переспрашиваем
+      // только когда не распознан НИ ОДИН город; иначе берём распознанные, а
+      // остаток убираем в заметку о поставщике: условия оплаты хранить больше
+      // негде, а выбрасывать сказанное человеком — то же самое, что не слушать.
       const { cities, unresolved } = resolveCityList(msg.text);
-      if (unresolved.length > 0 || cities.length === 0) {
+      if (cities.length === 0) {
         await this.whatsapp.sendText(
           phone,
           lang === "kk"
@@ -176,6 +181,16 @@ export class WhatsAppOnboardingService {
             : `Не узнал город: ${unresolved.join(", ") || msg.text}.\nМы работаем в городах: ${citySuggestions("ru")} и другие.\nНапишите ещё раз, пожалуйста.`,
         );
         return;
+      }
+      if (unresolved.length > 0) {
+        const aside = unresolved.join(", ");
+        await this.noteAside(phone, aside);
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? `Қалалар: ${cities.map((c) => c.name.kk).join(", ")}.\n«${aside}» — қала емес деп түсіндім, бірақ профиліңізге жазып алдым. Егер бұл қала болса, кейін «жеткізуші» деп жазып түзетіңіз.`
+            : `Города: ${cities.map((c) => c.name.ru).join(", ")}.\n«${aside}» — как город не распознал, но записал к вашему профилю. Если это всё-таки город, поправьте позже командой «поставщик».`,
+        );
       }
       state.collected.cities = cities.map((c) => c.name.ru);
       state.step = "urgent";
@@ -239,6 +254,32 @@ export class WhatsAppOnboardingService {
         return;
       }
       await this.whatsapp.sendText(phone, lang === "kk" ? "Жоғарыда «Растау» немесе «Өзгерту» батырмасын басыңыз." : "Нажмите «Подтвердить» или «Изменить» выше.");
+    }
+  }
+
+  /**
+   * Сказанное между делом — в заметку о поставщике.
+   *
+   * «Астана, оплата наличными и без наличными»: город мы взяли, а условия
+   * оплаты девать некуда — отдельного поля для них нет. Выбросить проще, но
+   * это ровно то, за что людей раздражает разговор с автоматом: сказал —
+   * пропало. Складываем туда же, где лежат его слова о технике.
+   */
+  private async noteAside(phone: string, text: string): Promise<void> {
+    try {
+      const supplier = await this.prisma.supplierProfile.findFirst({
+        where: { user: { phone: normalizePhone(phone) } },
+        select: { id: true, selfDescription: true },
+      });
+      if (!supplier) return; // профиля ещё нет — заметку сохранит persist()
+      const merged = [supplier.selfDescription, text].filter(Boolean).join("\n").slice(-4000);
+      await this.prisma.supplierProfile.update({
+        where: { id: supplier.id },
+        data: { selfDescription: merged, selfDescriptionAt: new Date() },
+      });
+    } catch (err) {
+      // Заметка полезна, но не настолько, чтобы из-за неё сорвать регистрацию.
+      this.logger.warn(`Не удалось записать заметку о поставщике: ${(err as Error).message}`);
     }
   }
 
@@ -352,8 +393,12 @@ export class WhatsAppOnboardingService {
       phone,
       state.isNewSupplier
         ? lang === "kk"
-          ? "Дайын! Поставщик профиліңіз құрылды және модератор тексереді. Санаттарыңызда өтінімдер пайда болысымен хабарлаймыз."
-          : "Готово! Ваш профиль поставщика создан и будет проверен модератором. Как только заявки в ваших категориях появятся — пришлём уведомление."
+          // Без «проверит модератор»: модерации в системе нет — поле
+          // needsReview убрали при упрощении модели, очереди за ним не стоит.
+          // Обещание, которое некому исполнить, хуже отсутствия обещания:
+          // человек будет ждать проверки, которой не будет.
+          ? "Дайын! Профиліңіз құрылды. Санаттарыңызда өтінім пайда болысымен бірден жібереміз.\n«профиль» — деректерді тексеру немесе өзгерту."
+          : "Готово! Профиль создан. Как только появится заявка в ваших категориях — пришлём сразу.\n«профиль» — посмотреть или изменить данные."
         : lang === "kk"
           ? "Поставщик профилі жаңартылды."
           : "Профиль поставщика обновлён.",
