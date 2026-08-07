@@ -15,6 +15,7 @@ import {
   ORDER_STATUS_TRANSITIONS,
   OrderStatus,
   citySuggestions,
+  isQuestionNotAnswer,
   resolveCity,
 } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
@@ -271,7 +272,25 @@ export class OrdersService {
         return !field || isValidFieldValue(field, value);
       }),
     );
-    const { values: dateChecked, droppedPast } = dropPastDateTimeFields(fields, typeValidatedFields);
+    // Клиент, ответивший вопросом, ничего не сообщил — но извлечение видит
+    // непустую строку и кладёт её в поле. Так «Так что хотели» оказалось в
+    // графе «адрес объекта»: заявка ушла поставщику с репликой из разговора
+    // вместо адреса, и заметить это мог только человек, читающий её глазами.
+    // Проверяем лишь то, что меняется на этом шаге: уже сохранённое трогать
+    // нельзя, иначе правка соседнего поля вычистит старые значения.
+    const previousValues = context.previousFields ?? {};
+    const droppedQuestions: string[] = [];
+    const answerChecked = Object.fromEntries(
+      Object.entries(typeValidatedFields).filter(([key, value]) => {
+        if (previousValues[key] === value) return true;
+        if (typeof value === "string" && isQuestionNotAnswer(value)) {
+          droppedQuestions.push(key);
+          return false;
+        }
+        return true;
+      }),
+    );
+    const { values: dateChecked, droppedPast } = dropPastDateTimeFields(fields, answerChecked);
     // The city arrives as whatever the client wrote and the AI echoed back.
     // Store only a canonical name so dispatch can match it — an unrecognised
     // one is dropped, which re-asks the question rather than accepting a
@@ -315,11 +334,20 @@ export class OrdersService {
       : lang === "kk"
         ? `«${unknownCity}» қаласын танымадым. Біз жұмыс істейтін қалалар: ${citySuggestions("kk")} және басқалары.\n\n`
         : `Не узнал город «${unknownCity}». Мы работаем в городах: ${citySuggestions("ru")} и другие.\n\n`;
+    // Отброшенный вопрос нельзя проглотить молча: тот же вопрос, заданный
+    // заново без единого слова объяснения, выглядит так, будто бот не читает
+    // собеседника — а человек и так уже написал, что не понимает происходящего.
+    const questionNotice =
+      droppedQuestions.length === 0
+        ? ""
+        : lang === "kk"
+          ? `Бұл жауап емес, сұрақ сияқты — мен оны түсінбедім. Қайта сұраймын, ал тірі адам керек болса: ${env.supportPhone}\n\n`
+          : `Кажется, это вопрос, а не ответ — я его не понял. Спрошу ещё раз, а если нужен живой человек: ${env.supportPhone}\n\n`;
     // Anything the AI pulled out of free text was never asked about, so the
     // client has no idea it was decided — order №51 ended up with a date
     // taken from "на завтра" that appears nowhere in the conversation, and a
     // wrong guess would have been just as invisible. Read those values back.
-    const previousFields = context.previousFields ?? {};
+    const previousFields = previousValues;
     // Changed counts, not just newly filled. A client correcting a date the
     // AI had already guessed got no acknowledgement at all — the value moved
     // silently, so the conversation looked frozen while it was in fact
@@ -341,7 +369,7 @@ export class OrdersService {
     const assistantMessage =
       missing.length === 0
         ? inferredNotice + readyForReviewMessage(lang)
-        : inferredNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
+        : inferredNotice + questionNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {

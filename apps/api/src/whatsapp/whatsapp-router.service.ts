@@ -1,5 +1,12 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { CITIES, detectLanguage, findCitiesInText, Language, LocalizedText } from "@ai-zayavki/shared";
+import {
+  CITIES,
+  detectLanguage,
+  findCitiesInText,
+  Language,
+  LocalizedText,
+  looksLikeQuestion,
+} from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
@@ -50,23 +57,6 @@ const NEW_ORDER_PHRASES = /нов(ая|ый)\s*(заявк|заказ)|жаңа\
 /** Через сколько часов простоя черновик перестаёт считаться «текущим
  * разговором» и отцепляется от чата — см. releaseStaleOrder(). */
 const STALE_DRAFT_HOURS = 6;
-// Отличает вопрос от рассказа о себе — см. captureSupplierInfo(). На вопрос
-// «а сколько это стоит?» отвечать «записал» абсурдно, а на «у меня автокран
-// 25тн» абсурдно отвечать меню команд.
-//
-// Вопросительное слово ищем целым словом в любом месте, но только в коротких
-// сообщениях: «вы кто люди» — вопрос, хотя начинается с «вы», а в длинном
-// рассказе про технику «что» почти всегда часть повествования. Обе ошибки
-// дёшевы: непонятый вопрос уйдёт в подсказки, непонятое утверждение — в
-// заметку оператору.
-const QUESTION_WORD_RE =
-  /(?:^|\s)(что|чего|кто|кого|кому|как|какой|какая|какие|каком|какую|где|куда|когда|почему|зачем|сколько|можно ли|есть ли|кім|қалай|қайда|қашан|неге|қанша|қандай)(?:$|[\s,.!])/i;
-const SHORT_MESSAGE_WORDS = 7;
-function looksLikeQuestion(text: string): boolean {
-  if (text.includes("?")) return true;
-  const words = text.trim().split(/\s+/).length;
-  return words <= SHORT_MESSAGE_WORDS && QUESTION_WORD_RE.test(text);
-}
 // «Спасибо», «ок», «здравствуйте» — не рассказ о себе, и записывать это в
 // профиль как характеристику техники было бы враньём.
 const PLEASANTRIES = new Set([
