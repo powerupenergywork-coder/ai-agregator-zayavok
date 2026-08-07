@@ -74,6 +74,26 @@ const DECLINED_RE =
  */
 const MORE_ORDERS_RE =
   /есть\s*(ещ[её]|еще)?\s*(заказ|заявк|работ)|нужн[ыа]\s*заказ|дайте\s*(заказ|заявк)|тапсырыс бар ма|(если|когда|как)\s*(будет|будут|появ|поступ)|обращайтесь|обращайся|зовите|звоните|пишите|хабарласыңыз|болса айтыңыз/i;
+/**
+ * Приветствие. По префиксу, а не по точному совпадению: реальные люди пишут
+ * «Здраствуйте» без «в», «Салеметсізбе» одним словом, «Сәлеметсіз бе» двумя.
+ * Список точных форм такое не ловит, а именно с приветствия начинается
+ * половина первых контактов.
+ */
+const GREETING_RE =
+  /^\s*(здравств|здраств|привет|добр(ый|ое)\s|сал[аеә]м|сәлем|салеметс|сәлеметс|ассал|assal|қайырлы)/i;
+/**
+ * «Я не клиент, у меня услуги». Человек прямым текстом говорит, что он
+ * исполнитель, а не заказчик — и это надо услышать в любой момент, даже
+ * посреди заполнения заявки.
+ */
+const NOT_A_CLIENT_RE =
+  /я\s*не\s*(клиент|заказчик)|не\s*клиент|я\s*(поставщик|исполнитель|подрядчик)|у\s*меня\s*(есть\s*)?(услуг|техник|машин|кран|манипулятор|самосвал|газель)|оказыва[юе]\s*услуг|предлага[юе]\s*услуг|услуги\s*(манипулятора|крана|самосвала|газели)|мен\s*жеткізушімін|қызмет\s*көрсетемін|(манипулятор|кран|самосвал|газель|техника)\s*қызмет/i;
+/** Ищет услугу, а не предлагает: отличает клиента от исполнителя в тех же словах. */
+const NEED_RE = /нужн|нужен|ищу|требу|надо|хочу\s*(заказ|нанять)|закаж|аренд|керек|іздеп/i;
+function looksLikeSupplierDeclaration(text: string): boolean {
+  return NOT_A_CLIENT_RE.test(text) && !NEED_RE.test(text);
+}
 // Подтверждение прочтения: ответа не требует. Держим отдельно от вежливости —
 // на «спасибо» после разговора уместно промолчать так же, но причина другая.
 const ACK_RE = /^[\s\p{Extended_Pictographic}‍️]+$/u;
@@ -183,6 +203,30 @@ export class WhatsAppRouterService {
         return;
       }
 
+      // «Я не клиент, у меня услуги манипулятора» — проверяем ДО разбора
+      // заявки и независимо от того, есть ли активный черновик. Реальный
+      // случай: человек написал это посреди оформления и получил тот же
+      // вопрос про адрес ещё четыре раза, потому что проверка «не поставщик
+      // ли это» стояла под условием «если заявки нет», а заявка уже была.
+      if (msg.text && looksLikeSupplierDeclaration(msg.text)) {
+        await this.switchToSupplier(msg.chatId, msg.phone, lang);
+        return;
+      }
+
+      // Приветствие не должно заводить заявку. Незнакомец, написавший
+      // «Здравствуйте», раньше получал список категорий и молча оказывался в
+      // оформлении заказа — включая тех, кто пришёл предложить свои услуги.
+      // Спрашиваем, кто он, вместо того чтобы решать за него.
+      if (msg.text && !session.currentOrderId && GREETING_RE.test(msg.text)) {
+        await this.askWhoTheyAre(msg.phone, lang);
+        return;
+      }
+
+      if (msg.buttonReplyId?.startsWith("who|")) {
+        await this.handleWhoAnswer(msg.chatId, msg.phone, msg.buttonReplyId, lang);
+        return;
+      }
+
       // A tapped button always wins; otherwise a bare number typed against the
       // last numbered list we sent resolves to the same token — see
       // whatsapp-message-render.util.ts for the "cat|/fld|/action|" encoding.
@@ -227,7 +271,13 @@ export class WhatsAppRouterService {
       : trimmed && KK_TRIGGER_PHRASES.has(trimmed)
         ? "kk"
         : null;
-    const resolved = override ?? (text ? detectLanguage(text) : null);
+    // Приветствие язык не определяет. Реальный случай: человек написал
+    // «Салеметсізбе», разговор целиком переехал на казахский, а следующие два
+    // его сообщения были по-русски — но в русском тексте нет букв, по которым
+    // язык распознаётся, поэтому настройка так и осталась казахской.
+    // Самое неинформативное сообщение не должно решать за весь разговор.
+    const informative = !!text && !GREETING_RE.test(text);
+    const resolved = override ?? (informative ? detectLanguage(text!) : null);
     const now = new Date();
 
     const user = await this.prisma.user.upsert({
@@ -614,6 +664,74 @@ export class WhatsAppRouterService {
           this.commandHints(lang) +
           "\n\nНужна услуга для себя? Напишите «новая заявка».",
     );
+  }
+
+  /**
+   * Первый вопрос незнакомцу: кто он.
+   *
+   * До этого любой нераспознанный текст немедленно заводил черновик заказа —
+   * то есть система решала за человека, что он клиент, ещё до того, как он
+   * что-либо сказал. Двух кнопок достаточно, чтобы не гадать.
+   */
+  private async askWhoTheyAre(phone: string, lang: Language): Promise<void> {
+    await this.whatsapp.sendButtons(
+      phone,
+      lang === "kk"
+        ? "Сәлеметсіз бе! Бұл KerekTap — Қазақстандағы қызмет көрсету өтінімдерінің сервисі.\n\nСізге техника керек пе, әлде өзіңіз қызмет көрсетесіз бе?"
+        : "Здравствуйте! Это KerekTap — сервис заявок на услуги в Казахстане.\n\nВам нужна техника или вы сами оказываете услуги?",
+      [
+        { id: "who|client", text: lang === "kk" ? "Қызмет керек" : "Нужна услуга" },
+        { id: "who|supplier", text: lang === "kk" ? "Мен орындаушымын" : "Я исполнитель" },
+      ],
+    );
+  }
+
+  private async handleWhoAnswer(chatId: string, phone: string, token: string, lang: Language): Promise<void> {
+    if (token === "who|supplier") {
+      await this.switchToSupplier(chatId, phone, lang);
+      return;
+    }
+    // Заявку по-прежнему не создаём: она появится от первого содержательного
+    // сообщения, как и раньше. Здесь только приглашение его написать.
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Не керектігін жазыңыз — техника түрі, қала және қашан керек. Мысалы: «ертең Астанада 10 тонналық манипулятор керек»."
+        : "Напишите, что нужно — техника, город и когда. Например: «нужен манипулятор 10 тонн, Астана, завтра».",
+    );
+  }
+
+  /**
+   * Человек оказался исполнителем, а не заказчиком.
+   *
+   * Черновик обязательно отцепляем: пока он привязан к чату, любое следующее
+   * сообщение снова уедет в оформление заказа — именно так человек и застрял
+   * на пяти одинаковых вопросах про адрес.
+   */
+  private async switchToSupplier(chatId: string, phone: string, lang: Language): Promise<void> {
+    const session = await this.sessions.findOrCreate(chatId, phone);
+    if (session.currentOrderId) {
+      await this.sessions.clearOrder(chatId);
+    }
+    const supplier = await this.findSupplier(phone);
+    if (supplier) {
+      // Уже в базе — регистрировать заново незачем, показываем профиль.
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? "Түсіндім, сіз орындаушысыз. Сіз базадасыз — бейініңізге сай өтінім пайда болғанда жібереміз."
+          : "Понял, вы исполнитель. Вы уже в базе — пришлём заявку, как появится подходящая по вашему профилю.",
+      );
+      await this.sendSupplierProfile(phone, lang);
+      return;
+    }
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Түсіндім, сіз орындаушысыз — өтінім іздеп жүрсіз. Бірнеше сұрақ қоямын, содан кейін бейініңізге сай өтінімдерді жібереміз."
+        : "Понял, вы исполнитель — ищете заказы, а не технику. Задам несколько вопросов, и будем присылать заявки по вашему профилю.",
+    );
+    await this.onboarding.start(chatId, phone, lang);
   }
 
   /**
@@ -1025,7 +1143,47 @@ export class WhatsAppRouterService {
     }
 
     const orderId = await this.ensureOrder(chatId, phone);
-    await this.sendTurn(chatId, phone, await this.orders.chat(orderId, text, lang), lang);
+    const turn = await this.orders.chat(orderId, text, lang);
+    // Третий одинаковый вопрос подряд — это не диалог, а стена. Человек уже
+    // дважды показал, что не понимает, чего от него хотят; повторить в третий
+    // раз то же самое значит потерять его окончательно.
+    if (await this.isRepeating(orderId, turn.assistantMessage)) {
+      await this.escalateStuckDialogue(phone, lang);
+      return;
+    }
+    await this.sendTurn(chatId, phone, turn, lang);
+  }
+
+  /** Задавали ли мы уже этот же вопрос дважды подряд. */
+  private async isRepeating(orderId: string, message: string): Promise<boolean> {
+    try {
+      const recent = await this.prisma.chatMessage.findMany({
+        where: { orderId, role: "ASSISTANT" },
+        orderBy: { createdAt: "desc" },
+        take: 3,
+        select: { content: true },
+      });
+      // Свежая реплика уже записана applyFieldUpdate(), поэтому считаем от
+      // трёх: сама она и две такие же до неё.
+      return recent.length >= 3 && recent.every((m) => m.content === message);
+    } catch {
+      return false; // диагностика не должна ломать разговор
+    }
+  }
+
+  /**
+   * Выход из тупика. Не повторяем вопрос, а признаём, что не справились, и
+   * даём два выхода: живого человека и путь для исполнителя — потому что
+   * половина застрявших это исполнители, попавшие в оформление заказа.
+   */
+  private async escalateStuckDialogue(phone: string, lang: Language): Promise<void> {
+    await this.whatsapp.sendButtons(
+      phone,
+      lang === "kk"
+        ? `Кешіріңіз, мен сізді түсінбей тұрмын.\n\nТірі адамға жазыңыз: ${env.supportPhone}`
+        : `Извините, я вас не понимаю.\n\nНапишите живому человеку: ${env.supportPhone}`,
+      [{ id: "who|supplier", text: lang === "kk" ? "Мен орындаушымын" : "Я исполнитель" }],
+    );
   }
 
   private async handlePhoto(chatId: string, phone: string, imageUrl: string, lang: Language): Promise<void> {
