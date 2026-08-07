@@ -158,11 +158,12 @@ export const env = {
   // настройка, а не константа. Запрос может переопределить: ?format=xml или
   // заголовок Accept.
   kaspiResponseFormat: str("KASPI_RESPONSE_FORMAT", "json"),
-  // Сколько записей X-Forwarded-For принадлежит нашим собственным прокси.
-  // Перед контейнером стоит nginx хоста, а перед ним nginx compose — реальный
-  // адрес клиента лежит левее их обоих. Значение проверяется опытом, а не
-  // догадкой: см. GET /kaspi/whoami.
-  trustedProxyHops: num("TRUSTED_PROXY_HOPS", 2),
+  // На сколько записей отступить от КОНЦА X-Forwarded-For, чтобы получить
+  // настоящий адрес клиента. Ноль — то есть последняя запись — потому что
+  // сегодня своих прокси в заголовке не видно; проверено опытом на боевом
+  // сервере, см. комментарий в kaspi-biller.controller.ts::clientIp().
+  // Отсчёт именно от конца: левые записи подделываются клиентом целиком.
+  trustedProxyHops: num("TRUSTED_PROXY_HOPS", 0),
   // Placeholder price — not a real business decision, just what the mock flow
   // charges so the quota/subscription logic has something to test against.
   subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 5000),
