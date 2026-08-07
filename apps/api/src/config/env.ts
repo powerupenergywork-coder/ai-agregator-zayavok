@@ -66,7 +66,11 @@ export const env = {
   mapsProvider: str("MAPS_PROVIDER", "none"),
   twoGisApiKey: str("TWOGIS_API_KEY", ""),
 
-  dispatchWaveSize: num("DISPATCH_WAVE_SIZE", 15),
+  // ТОЛЬКО начальное значение: при первом запуске из него создаётся строка
+  // DispatchSettings, дальше размер волны живёт в базе и правится из админки.
+  // Менять здесь у работающего сервиса бесполезно — легко принять за
+  // действующую настройку и потом искать, почему она ни на что не влияет.
+  dispatchWaveSize: num("DISPATCH_WAVE_SIZE", 30),
   // Global default quiet-hours window for suppliers who haven't set their own
   // (DispatchSettings.quietHoursStart/End takes priority when set — this is
   // just the fallback). See matching/quiet-hours.util.ts.
