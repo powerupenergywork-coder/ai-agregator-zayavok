@@ -167,8 +167,12 @@ export const env = {
   // Цена подписки. Попадает в выставленный счёт и в сообщение поставщику,
   // поэтому меняется только вместе с уже открытыми счетами: в них сумма
   // зафиксирована на момент выставления и новой ценой не переписывается.
-  subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 1000),
+  subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 10000),
   subscriptionPeriodDays: num("SUBSCRIPTION_PERIOD_DAYS", 30),
+  // За сколько дней до конца подписки выставить счёт и предупредить. Не в
+  // день окончания: поставщик должен успеть заплатить, не потеряв ни дня
+  // рассылки, а деньги в Kaspi доходят не мгновенно.
+  subscriptionExpiryNoticeDays: num("SUBSCRIPTION_EXPIRY_NOTICE_DAYS", 3),
   freeNotificationsPerMonth: num("FREE_NOTIFICATIONS_PER_MONTH", 10),
 
   // Сколько дней держать стенограмму переписки в WhatsApp. Это персональные

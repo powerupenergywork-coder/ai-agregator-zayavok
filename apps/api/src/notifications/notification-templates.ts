@@ -21,6 +21,8 @@ export type NotificationEvent =
   | "needs_operator"
   | "quota_exceeded"
   | "subscription_activated"
+  | "subscription_expiring"
+  | "subscription_expired"
   | "prospect_outreach"
   | "supplier_cold_invite";
 
@@ -120,6 +122,53 @@ const templates: Record<NotificationEvent, (p: any, lang: Language) => string> =
     lang === "kk"
       ? `Жазылым ${p.periodDays} күнге белсендірілді${p.expiresAt ? `, ${p.expiresAt} дейін` : ""}. Рахмет!`
       : `Подписка активирована на ${p.periodDays} дней${p.expiresAt ? `, до ${p.expiresAt}` : ""}. Спасибо!`,
+  // Заранее, а не в день окончания: человек должен успеть заплатить, не
+  // потеряв ни дня рассылки, а деньги в Kaspi доходят не мгновенно. Счёт
+  // прикладываем сразу — «продлите подписку» без номера счёта это задача,
+  // которую человек отложит и забудет.
+  subscription_expiring: (p, lang) =>
+    lang === "kk"
+      ? `Жазылымыңыз ${p.expiresAt} аяқталады.
+
+Жалғастыру үшін шот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.
+` +
+        (p.payUrl ? `Төлеу: ${p.payUrl}
+Немесе қолмен: ` : "Төлеу: ") +
+        `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірі: ${p.invoiceNumber}
+
+Күндер қалған мерзімге қосылады — ерте төлесеңіз де ештеңе жоғалтпайсыз.`
+      : `Ваша подписка заканчивается ${p.expiresAt}.
+
+Чтобы продлить — счёт №${p.invoiceNumber} на ${p.priceTenge} ₸ за ${p.periodDays} дней.
+` +
+        (p.payUrl ? `Оплатить: ${p.payUrl}
+Или вручную: ` : "Оплата: ") +
+        `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → номер счёта: ${p.invoiceNumber}
+
+Дни добавятся к остатку — заплатив заранее, вы ничего не теряете.`,
+  // Второе сообщение существует потому, что первое могли не заметить, а
+  // «заявки перестали приходить» человек замечает всегда — и должен сразу
+  // видеть, что это не поломка и что с этим делать.
+  subscription_expired: (p, lang) =>
+    lang === "kk"
+      ? `Жазылым аяқталды. Өтінімдер айына ${p.freeQuota} тегін лимитпен келеді.
+
+Шектеусіз алу үшін шот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.
+` +
+        (p.payUrl ? `Төлеу: ${p.payUrl}
+Немесе қолмен: ` : "Төлеу: ") +
+        `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірі: ${p.invoiceNumber}
+
+Сұрақтар: ${p.supportPhone}`
+      : `Подписка закончилась. Заявки продолжат приходить, но по бесплатному лимиту — ${p.freeQuota} в месяц.
+
+Чтобы снова без ограничений — счёт №${p.invoiceNumber} на ${p.priceTenge} ₸ за ${p.periodDays} дней.
+` +
+        (p.payUrl ? `Оплатить: ${p.payUrl}
+Или вручную: ` : "Оплата: ") +
+        `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → номер счёта: ${p.invoiceNumber}
+
+Вопросы: ${p.supportPhone}`,
   // Cold outreach to a phone that has never messaged the bot — we don't yet
   // know their language, so unlike every other template this one ignores
   // `lang` and always renders both blocks. See whatsapp-templates.ts for the

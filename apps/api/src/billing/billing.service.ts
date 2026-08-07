@@ -158,6 +158,9 @@ export class BillingService {
         currentPeriodStart: supplier.subscription?.currentPeriodStart ?? now,
         currentPeriodEnd: periodEnd,
         paymentProvider: provider,
+        // Новый период — новое предупреждение. Без сброса поставщик, продливший
+        // подписку однажды, больше никогда бы не узнал о её окончании.
+        expiryNoticeAt: null,
       },
     });
 
@@ -230,6 +233,100 @@ export class BillingService {
       supplierId,
       ...(paymentUrl ? { buttons: [{ id: "billing|subscribe", text: "Оформить подписку" }] } : {}),
     });
+  }
+
+  /**
+   * Ежедневно: выставить счёт тем, у кого подписка вот-вот кончится или уже
+   * кончилась.
+   *
+   * До этого подписка просто молча заканчивалась. Поставщик узнавал об этом
+   * по тому, что заявки перестали приходить — то есть в худший момент и без
+   * объяснения, а мы теряли деньги на ровном месте: платить он был готов,
+   * просто никто не напомнил.
+   *
+   * Два разных случая и два разных текста. За несколько дней до конца —
+   * «заканчивается, вот счёт», чтобы человек успел заплатить и не потерять
+   * ни дня. В день окончания — «закончилась, снова по лимиту», потому что
+   * первое сообщение могли не заметить.
+   *
+   * Утро, а не ночь: это не техническая задача, а сообщение живому человеку.
+   */
+  @Cron("0 10 * * *", { timeZone: env.dispatchTimezone })
+  async issueRenewalInvoices(): Promise<void> {
+    const now = new Date();
+    const soon = new Date(now.getTime() + env.subscriptionExpiryNoticeDays * 24 * 60 * 60 * 1000);
+
+    // Скоро закончится. expiryNoticeAt = null отбирает тех, кому по текущему
+    // периоду ещё не писали: без этого напоминание уходило бы каждый день.
+    const expiring = await this.prisma.supplierSubscription.findMany({
+      where: {
+        status: "ACTIVE",
+        currentPeriodEnd: { gt: now, lte: soon },
+        expiryNoticeAt: null,
+      },
+      include: { supplier: { include: { user: true } } },
+    });
+    for (const sub of expiring) {
+      try {
+        const invoice = await this.issueInvoice(sub.supplierId);
+        await this.prisma.supplierSubscription.update({
+          where: { id: sub.id },
+          data: { expiryNoticeAt: now },
+        });
+        await this.notifications.send({
+          event: "subscription_expiring",
+          payload: {
+            expiresAt: sub.currentPeriodEnd!.toLocaleDateString("ru-RU"),
+            invoiceNumber: invoice.number,
+            payUrl: kaspiPayUrl(invoice.number),
+            kaspiServiceName: env.kaspiServiceName,
+            priceTenge: invoice.amountTenge,
+            periodDays: invoice.periodDays,
+            supportPhone: env.supportPhone,
+          },
+          recipientPhone: sub.supplier.user.phone,
+          supplierId: sub.supplierId,
+        });
+      } catch (err) {
+        this.logger.error(`Не удалось предупредить об окончании подписки ${sub.supplierId}: ${(err as Error).message}`);
+      }
+    }
+
+    // Уже закончилась. Смена статуса на EXPIRED и есть защита от повтора:
+    // на следующий день эта выборка его уже не увидит.
+    const expired = await this.prisma.supplierSubscription.findMany({
+      where: { status: "ACTIVE", currentPeriodEnd: { lte: now } },
+      include: { supplier: { include: { user: true } } },
+    });
+    for (const sub of expired) {
+      try {
+        await this.prisma.supplierSubscription.update({
+          where: { id: sub.id },
+          data: { status: "EXPIRED" },
+        });
+        const invoice = await this.issueInvoice(sub.supplierId);
+        await this.notifications.send({
+          event: "subscription_expired",
+          payload: {
+            freeQuota: env.freeNotificationsPerMonth,
+            invoiceNumber: invoice.number,
+            payUrl: kaspiPayUrl(invoice.number),
+            kaspiServiceName: env.kaspiServiceName,
+            priceTenge: invoice.amountTenge,
+            periodDays: invoice.periodDays,
+            supportPhone: env.supportPhone,
+          },
+          recipientPhone: sub.supplier.user.phone,
+          supplierId: sub.supplierId,
+        });
+      } catch (err) {
+        this.logger.error(`Не удалось сообщить об окончании подписки ${sub.supplierId}: ${(err as Error).message}`);
+      }
+    }
+
+    if (expiring.length || expired.length) {
+      this.logger.log(`Подписки: предупреждено ${expiring.length}, закончилось ${expired.length}`);
+    }
   }
 
   /** 1st of every month — resets everyone's free-tier counter. Active paid subscriptions are untouched (they run on their own 30-day clock). */

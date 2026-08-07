@@ -157,6 +157,11 @@ model SupplierSubscription {
   paymentProvider    String?
   paymentReference   String?         @unique
   autoRenew          Boolean         @default(false)
+  /// Когда отправили «подписка заканчивается» по текущему периоду. Без этой
+  /// отметки ежедневная проверка слала бы напоминание каждый день подряд.
+  /// Сбрасывается при продлении — предупреждение о следующем периоде должно
+  /// уйти заново.
+  expiryNoticeAt     DateTime?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 }
