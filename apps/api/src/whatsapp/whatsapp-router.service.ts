@@ -1222,6 +1222,17 @@ export class WhatsAppRouterService {
     // разбирать «почему человек застрял» без этого нельзя — на сайте и в
     // WhatsApp обрываются на разном.
     const draft = await this.orders.createDraft(undefined, false, { channel: "WHATSAPP" });
+    // Владельца привязываем сразу, не дожидаясь публикации. Анонимность
+    // черновика придумана для сайта, где человек ещё не назвал телефон — в
+    // WhatsApp номер и есть канал, он известен с первого сообщения и
+    // подтверждён самим фактом переписки.
+    //
+    // Без этого недооформленная заявка выглядела в админке как «нет
+    // телефона»: заявка №80 (самосвал, песок, 20 м³) висела с заполненными
+    // полями и без единого способа перезвонить, хотя номер лежал в сессии
+    // рядом. Именно на таких и нужен оператор — доводить брошенное.
+    const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
+    await this.orders.attachClient(draft.id, authUser.profileId);
     await this.sessions.setCurrentOrder(chatId, draft.id);
     return draft.id;
   }

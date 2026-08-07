@@ -71,6 +71,18 @@ export class OrdersService {
 
   // ---------- draft lifecycle ----------
 
+  /**
+   * Закрепить заявку за клиентом, не дожидаясь публикации.
+   *
+   * Нужно для WhatsApp: там номер известен с первого сообщения, и держать
+   * заявку ничьей значит лишить оператора единственного способа связаться с
+   * человеком, бросившим оформление. На сайте всё остаётся как было —
+   * черновик анонимен, пока телефон не подтверждён.
+   */
+  async attachClient(orderId: string, clientProfileId: string): Promise<void> {
+    await this.prisma.order.update({ where: { id: orderId }, data: { clientId: clientProfileId } });
+  }
+
   async createDraft(
     categorySlug?: string,
     urgent = false,

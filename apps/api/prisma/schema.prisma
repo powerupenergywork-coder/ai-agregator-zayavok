@@ -218,6 +218,11 @@ model Order {
   // Nullable until publish: drafts are anonymous per ТЗ п.3.3 ("не должно
   // быть обязательной регистрации") — the order is claimed by a ClientProfile
   // only once the phone is confirmed at publish time.
+  //
+  // Исключение — заявки из WhatsApp: там номер известен с первого сообщения и
+  // подтверждён самим фактом переписки, поэтому владелец проставляется сразу
+  // (см. WhatsAppRouterService.ensureOrder). Иначе брошенный черновик выглядит
+  // в админке как «нет телефона», хотя перезвонить есть куда.
   clientId                    String?
   client                      ClientProfile?     @relation(fields: [clientId], references: [id])
   categoryId                  String?
