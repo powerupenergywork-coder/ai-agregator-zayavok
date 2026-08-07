@@ -14,6 +14,19 @@ import { isSupplierReachableNow } from "./quiet-hours.util";
 import { toLang } from "../common/language.util";
 import { CategoryField, Language, LocalizedText, citiesServing } from "@ai-zayavki/shared";
 
+/**
+ * Чем закончилось согласие поставщика на холодное приглашение.
+ *
+ * Нужен именно исход, а не void: «заявку уже закрыли» и «заявка отправлена» —
+ * это два совершенно разных сообщения для человека, и молчать во втором
+ * случае значит оставить его гадать, сработала кнопка или нет.
+ */
+export interface ColdConfirmResult {
+  outcome: "order_sent" | "order_closed" | "quota_exceeded" | "unknown_supplier" | "no_order";
+  /** Уже соглашался раньше — значит это повторное нажатие той же кнопки. */
+  alreadyConfirmed: boolean;
+}
+
 @Injectable()
 export class MatchingService {
   private readonly logger = new Logger(MatchingService.name);
@@ -181,32 +194,45 @@ export class MatchingService {
    * and all. Quiet hours are deliberately ignored here — they pressed the
    * button themselves, so waiting until morning to answer would be absurd.
    * Quota still applies: from this point on it's a normal lead. */
-  async confirmColdSupplier(supplierId: string, orderId: string): Promise<void> {
+  async confirmColdSupplier(supplierId: string, orderId: string): Promise<ColdConfirmResult> {
     const supplier = await this.prisma.supplierProfile.findUnique({
       where: { id: supplierId },
       include: { user: true },
     });
-    if (!supplier) return;
+    if (!supplier) return { outcome: "unknown_supplier", alreadyConfirmed: false };
 
-    if (!supplier.confirmedAt) {
+    const alreadyConfirmed = !!supplier.confirmedAt;
+    if (!alreadyConfirmed) {
       await this.prisma.supplierProfile.update({
         where: { id: supplierId },
         data: { confirmedAt: new Date() },
       });
     }
 
+    // Согласие без привязки к заявке: человек ответил на приглашение,
+    // пришедшее не из рассылки, а из разговора (см. replyToSupplier в
+    // роутере). Подключить его надо, а рассказывать про несуществующую
+    // заявку — нет.
+    if (!orderId) return { outcome: "no_order", alreadyConfirmed };
+
+    // Раньше эта ветка просто молча выходила, и человек, нажавший «Интересно,
+    // беру», получал общее «будем присылать заявки» — без единого слова о
+    // заявке, которую он только что взял. Он ждал телефон клиента, ничего не
+    // получил и жал кнопку второй раз. Возвращаем причину, чтобы роутер мог
+    // сказать правду.
     const anchor = await this.prisma.order.findUnique({ where: { id: orderId } });
-    if (anchor?.status !== "PUBLISHED") return;
+    if (anchor?.status !== "PUBLISHED") return { outcome: "order_closed", alreadyConfirmed };
 
     const canNotify = await this.billing.checkAndConsumeQuota(supplierId);
     if (!canNotify) {
       await this.billing.maybeSendQuotaReminder(supplierId, supplier.user.phone);
-      return;
+      return { outcome: "quota_exceeded", alreadyConfirmed };
     }
 
     const order = await this.loadOrderForDispatch(orderId);
     await this.sendFullBroadcast(order, supplier, toLang(supplier.user.preferredLanguage));
     this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
+    return { outcome: "order_sent", alreadyConfirmed };
   }
 
   private async loadOrderForDispatch(orderId: string) {

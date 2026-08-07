@@ -222,25 +222,48 @@ export class WhatsAppRouterService {
 
     try {
       if (answer === "yes") {
-        await this.matching.confirmColdSupplier(supplier.id, orderId);
-        // confirmColdSupplier sends the full order itself when it's still
-        // open; this only sets expectations for the case where it isn't.
-        // Tapping "yes" opens the 24h window, so this can be plain text with
-        // no template to approve — and it lands at the one moment the
-        // supplier is certainly looking at the chat. It is the only place the
-        // commands are discoverable: the broadcast's wording is frozen at
-        // template-approval time and can't carry them.
+        const result = await this.matching.confirmColdSupplier(supplier.id, orderId);
+
+        // Повторное нажатие той же кнопки — обычно потому, что в первый раз
+        // человек не понял, сработало ли. Отвечаем так, чтобы было видно: да,
+        // услышали, ничего делать больше не надо.
+        if (result.alreadyConfirmed && result.outcome !== "order_sent") {
+          await this.whatsapp.sendText(
+            phone,
+            lang === "kk"
+              ? "Сіз қосылып қойғансыз. Жаңа өтінім шыққанда бірден жібереміз."
+              : "Вы уже подключены. Как появится подходящая заявка — сразу пришлём.",
+          );
+          return;
+        }
+
+        // Заявку уже закрыли, пока он думал. Промолчать здесь — худшее из
+        // возможного: человек нажал «беру», ждёт телефон клиента и не
+        // понимает, почему ничего нет.
+        if (result.outcome === "order_closed") {
+          await this.whatsapp.sendText(
+            phone,
+            lang === "kk"
+              ? "Өкінішке қарай, бұл өтінімді клиент жауып үлгерді.\n\n" +
+                "Бірақ сіз қосылдыңыз — келесі сәйкес өтінімді бірден жібереміз.\n\n" +
+                this.commandHints(lang)
+              : "К сожалению, эту заявку клиент уже закрыл.\n\n" +
+                "Но вы подключены — следующую подходящую пришлём сразу.\n\n" +
+                this.commandHints(lang),
+          );
+          return;
+        }
+
+        // Заявка ушла отдельным сообщением (полное описание с телефоном
+        // клиента), либо согласие пришло вне рассылки и заявки просто нет —
+        // здесь только подсказки по командам. Это единственное место, где они
+        // вообще упоминаются: текст шаблона рассылки заморожен при утверждении
+        // в Мете и нести их не может.
         await this.whatsapp.sendText(
           phone,
           lang === "kk"
-            ? "Тіркелдіңіз! Сәйкес өтінімдерді жібереміз.\n\n" +
-              "«профиль» — санаттар мен қалалар\n" +
-              "«баланс» — хабарламалар мен жазылым\n" +
-              "«стоп» — рассылканы өшіру"
-            : "Готово! Будем присылать вам подходящие заявки.\n\n" +
-              "«профиль» — ваши категории и города\n" +
-              "«баланс» — уведомления и подписка\n" +
-              "«стоп» — отключить рассылку",
+            ? "Тіркелдіңіз! Сәйкес өтінімдерді жібереміз.\n\n" + this.commandHints(lang)
+            : "Готово! Будем присылать вам подходящие заявки.\n\n" + this.commandHints(lang),
         );
         return;
       }
@@ -435,6 +458,112 @@ export class WhatsAppRouterService {
     return false;
   }
 
+  /** Стикер, голосовое, документ — понимать не умеем, но и молчать нельзя.
+   * Вызывается из контроллера вебхука. */
+  async replyUnsupportedType(phone: string): Promise<void> {
+    const lang = await this.resolveLanguage(phone, undefined);
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Кешіріңіз, әзірге тек мәтінді түсінемін. Жазып жіберіңізші."
+        : "Извините, пока понимаю только текст. Напишите словами, пожалуйста.",
+    );
+  }
+
+  private commandHints(lang: Language): string {
+    return lang === "kk"
+      ? "«профиль» — санаттар мен қалалар\n«баланс» — хабарламалар мен жазылым\n«стоп» — рассылканы өшіру"
+      : "«профиль» — ваши категории и города\n«баланс» — уведомления и подписка\n«стоп» — отключить рассылку";
+  }
+
+  /**
+   * Ответ поставщику, написавшему что-то, чего мы не разобрали.
+   *
+   * Разбит на три случая, потому что раньше был один на всех, и это стоило
+   * реальных людей. Холодному контакту фраза «вы зарегистрированы как
+   * исполнитель» — прямая неправда: он ничего не подтверждал, мы взяли его
+   * номер из справочника и написали первыми. На вопрос «вы кто?» такой ответ
+   * только подтверждает худшие догадки.
+   *
+   * Второе подряд непонятое сообщение получает другой текст: человек уже
+   * показал, что первый ему не помог, и повторить его слово в слово — значит
+   * выглядеть автоответчиком. Начиная с третьего молчим: дальше это уже не
+   * помощь, а навязчивость, за которую жалуются на спам.
+   */
+  private async replyToSupplier(
+    phone: string,
+    supplier: { confirmedAt: Date | null },
+    lang: Language,
+  ): Promise<void> {
+    const misses = await this.countRecentMisses(phone);
+    if (misses >= 3) return;
+
+    if (misses >= 2) {
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? `Сізді түсінбей тұрмын, кешіріңіз. Тірі адамға жазыңыз: ${env.supportPhone}`
+          : `Извините, не могу понять. Напишите живому человеку: ${env.supportPhone}`,
+      );
+      return;
+    }
+
+    if (!supplier.confirmedAt) {
+      // Холодный контакт: он нас не знает. Сначала объясняем, кто пишет и
+      // откуда номер, и только потом что-то предлагаем.
+      await this.whatsapp.sendButtons(
+        phone,
+        lang === "kk"
+          ? "Бұл — KerekTap, Қазақстандағы қызмет көрсету өтінімдерінің сервисі.\n\n" +
+            "Нөміріңізді ашық анықтамалықтан алдық және сіздің бейініңізге сай өтінім шыққанда жазамыз. " +
+            "Комиссия алмаймыз, тапсырысты өзіңіз клиентпен тікелей келісесіз.\n\n" +
+            "Өтінімдерді алғыңыз келе ме?"
+          : "Это KerekTap — сервис заявок на услуги в Казахстане.\n\n" +
+            "Ваш номер мы взяли из открытого справочника и пишем, когда появляется заявка по вашему профилю. " +
+            "Комиссию не берём, с клиентом договариваетесь напрямую.\n\n" +
+            "Присылать вам такие заявки?",
+        [
+          { id: `supconfirm|yes|`, text: lang === "kk" ? "Да, присылайте" : "Да, присылайте" },
+          { id: `supconfirm|no|`, text: lang === "kk" ? "Жазбаңыздар" : "Не писать мне" },
+        ],
+      );
+      return;
+    }
+
+    // Подтверждённому подсказки уместны — он уже согласился и знает, кто мы.
+    // «Новая заявка» тут остаётся: поставщик тоже иногда сам заказывает.
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Сіз орындаушы ретінде қосылғансыз.\n\n" +
+          this.commandHints(lang) +
+          "\n\nӨзіңізге қызмет керек пе? «жаңа өтінім» деп жазыңыз."
+        : "Вы подключены как исполнитель.\n\n" +
+          this.commandHints(lang) +
+          "\n\nНужна услуга для себя? Напишите «новая заявка».",
+    );
+  }
+
+  /** Сколько последних входящих подряд мы не поняли — см. replyToSupplier(). */
+  private async countRecentMisses(phone: string): Promise<number> {
+    try {
+      const recent = await this.prisma.whatsAppMessage.findMany({
+        where: { phone: normalizePhone(phone), direction: "IN" },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { unrecognized: true },
+      });
+      let n = 0;
+      for (const m of recent) {
+        if (!m.unrecognized) break;
+        n++;
+      }
+      return n;
+    } catch {
+      return 1; // диагностика не должна менять поведение ответа
+    }
+  }
+
   private async findSupplier(phone: string) {
     return this.prisma.supplierProfile.findFirst({
       where: { user: { phone: normalizePhone(phone) } },
@@ -573,20 +702,7 @@ export class WhatsAppRouterService {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
         await this.markUnrecognized(phone);
-        await this.whatsapp.sendText(
-          phone,
-          lang === "kk"
-            ? "Сіз орындаушы ретінде тіркелгенсіз.\n\n" +
-              "«профиль» — санаттарыңыз бен қалаларыңыз\n" +
-              "«баланс» — хабарламалар мен жазылым\n" +
-              "«стоп» — рассылканы өшіру\n\n" +
-              "Өзіңізге қызмет керек пе? «жаңа өтінім» деп жазыңыз."
-            : "Вы зарегистрированы как исполнитель.\n\n" +
-              "«профиль» — ваши категории и города\n" +
-              "«баланс» — уведомления и подписка\n" +
-              "«стоп» — отключить рассылку\n\n" +
-              "Нужна услуга для себя? Напишите «новая заявка».",
-        );
+        await this.replyToSupplier(phone, supplier, lang);
         return;
       }
     }

@@ -190,9 +190,11 @@ export class WhatsAppController {
         // downloadMedia() knows to resolve this id via the Graph API instead.
         await this.router.handleIncoming({ chatId, phone, imageUrl: message.image?.id });
       } else {
-        // Молчаливое игнорирование — ровно то, из-за чего предыдущая дыра
-        // прожила до боевого номера незамеченной.
+        // Стикер, голосовое, документ. Молчать нельзя: человек видит, что
+        // сообщение доставлено, и ждёт ответа — в живой переписке это
+        // выглядит как «меня игнорируют». Одной строки достаточно.
         this.logger.warn(`Необработанный тип входящего сообщения: ${message.type}`);
+        await this.router.replyUnsupportedType(phone);
       }
     } catch (err) {
       this.logger.error(`cloud webhook handling failed: ${(err as Error).message}`);
