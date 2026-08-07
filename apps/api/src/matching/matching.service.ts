@@ -397,7 +397,10 @@ export class MatchingService {
   ) {
     if (!order.categoryId) return [];
 
-    return this.prisma.supplierProfile.findMany({
+    // Берём всех подходящих, а не первые limit: очередь строится по давности
+    // контакта, и обрезать список до сортировки значит обрезать не тех.
+    // Кандидатов в одной категории и городе — десятки, не десятки тысяч.
+    const matching = await this.prisma.supplierProfile.findMany({
       where: {
         isBlocked: false,
         activityStatus: "ACTIVE",
@@ -418,9 +421,53 @@ export class MatchingService {
         ...(order.urgent ? { acceptsUrgent: true } : {}),
       },
       include: { user: true },
-      orderBy: [{ rating: "desc" }],
-      take: limit,
     });
+
+    return this.rotateFairly(matching, limit);
+  }
+
+  /**
+   * Очередь по давности контакта, а не по фиксированному порядку.
+   *
+   * Раньше кандидаты сортировались по рейтингу, а рейтинг у всех холодных
+   * поставщиков нулевой — то есть порядок задавала база и он не менялся от
+   * заявки к заявке. Первые в списке получали каждую заявку, остальные не
+   * получали ни одной: при 19 манипуляторщиках и волне на 15 четверо не
+   * увидели ни заявку 76, ни любую следующую. Это не отбор лучших, это
+   * случайное везение, закреплённое навсегда.
+   *
+   * Сортируем по времени последней отправки: кто дольше всех ничего не
+   * получал, идёт первым. Ни разу не получавшие — впереди всех.
+   *
+   * Побочный полезный эффект: те, кому недавно писали, оказываются в конце
+   * очереди — а это ровно те, кого отсеет пауза между приглашениями
+   * (mayInviteAgain). Иначе они занимали бы места в волне и молча съедали
+   * их: сообщение не ушло бы никому.
+   *
+   * Равные позиции перемешиваем. Без этого пятьдесят человек, которым мы
+   * никогда не писали, снова выстроились бы в том порядке, в каком их
+   * вернула база, и «равные шансы» опять достались бы первым.
+   */
+  private async rotateFairly<T extends { id: string }>(candidates: T[], limit: number): Promise<T[]> {
+    if (candidates.length <= limit) return candidates;
+
+    const lastSent = await this.prisma.notificationLog.groupBy({
+      by: ["supplierId"],
+      where: {
+        supplierId: { in: candidates.map((c) => c.id) },
+        templateKey: { in: ["order_broadcast_full", "order_digest", "supplier_cold_invite"] },
+      },
+      _max: { createdAt: true },
+    });
+    const lastBySupplier = new Map(
+      lastSent.map((r) => [r.supplierId as string, r._max.createdAt?.getTime() ?? 0]),
+    );
+
+    return candidates
+      .map((c) => ({ c, last: lastBySupplier.get(c.id) ?? 0, jitter: Math.random() }))
+      .sort((a, b) => a.last - b.last || a.jitter - b.jitter)
+      .slice(0, limit)
+      .map((x) => x.c);
   }
 
   private async getAlreadyNotifiedSupplierIds(orderId: string): Promise<string[]> {
