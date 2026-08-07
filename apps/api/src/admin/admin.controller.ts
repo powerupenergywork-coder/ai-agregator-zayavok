@@ -103,6 +103,24 @@ export class AdminController {
     return this.admin.setSupplierBlocked(id, dto.blocked, admin);
   }
 
+  /** Деньги по одному поставщику: подписка, счета, платежи. */
+  @UseGuards(AdminAuthGuard)
+  @Get("suppliers/:id/billing")
+  supplierBilling(@Param("id") id: string) {
+    return this.admin.supplierBilling(id);
+  }
+
+  /**
+   * Выставить счёт руками. Обычно счёт появляется сам при исчерпании лимита,
+   * но поставщик может попросить его заранее — по телефону, до всякого
+   * лимита, — и оператору нужно чем-то ответить.
+   */
+  @UseGuards(AdminAuthGuard)
+  @Post("suppliers/:id/invoice")
+  issueInvoice(@CurrentAdmin() admin: AdminAuthUser, @Param("id") id: string) {
+    return this.admin.issueInvoice(id, admin);
+  }
+
   @UseGuards(AdminAuthGuard)
   @Patch("suppliers/:id/subscription")
   setSupplierSubscription(

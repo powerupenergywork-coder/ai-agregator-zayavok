@@ -165,6 +165,9 @@ function SuppliersTab({ token }: { token: string }) {
   const [categorySlugs, setCategorySlugs] = useState("");
   const [cities, setCities] = useState("");
   const [allCategories, setAllCategories] = useState<any[]>([]);
+  // Какому поставщику раскрыта детализация по деньгам. Один за раз: две
+  // таблицы рядом всё равно не сравнивают, а список от них разъезжается.
+  const [billingFor, setBillingFor] = useState<string | null>(null);
 
   const load = () => adminApi.listSuppliers(token).then(setSuppliers);
   useEffect(() => {
@@ -226,7 +229,8 @@ function SuppliersTab({ token }: { token: string }) {
       </Card>
       <div className="flex flex-col gap-2">
         {suppliers.map((s) => (
-          <Card key={s.id} className="flex items-center justify-between p-3 text-sm">
+          <div key={s.id} className="flex flex-col gap-1">
+          <Card className="flex items-center justify-between p-3 text-sm">
             <div>
               <p className="font-medium">
                 {s.companyName ?? "—"} · {s.phone}
@@ -268,21 +272,161 @@ function SuppliersTab({ token }: { token: string }) {
                 )}
               </p>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => adminApi.setSupplierSubscription(token, s.id, !s.subscriptionActive).then(load)}
+            <div className="flex shrink-0 flex-col items-end gap-2">
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => adminApi.setSupplierSubscription(token, s.id, !s.subscriptionActive).then(load)}
+                >
+                  {s.subscriptionActive ? "Снять подписку" : "Выдать подписку"}
+                </Button>
+                <Button variant={s.isBlocked ? "secondary" : "danger"} onClick={() => adminApi.setSupplierBlocked(token, s.id, !s.isBlocked).then(load)}>
+                  {s.isBlocked ? "Разблокировать" : "Заблокировать"}
+                </Button>
+              </div>
+              <button
+                className="text-xs text-brand-700 underline"
+                onClick={() => setBillingFor(billingFor === s.id ? null : s.id)}
               >
-                {s.subscriptionActive ? "Снять подписку" : "Выдать подписку"}
-              </Button>
-              <Button variant={s.isBlocked ? "secondary" : "danger"} onClick={() => adminApi.setSupplierBlocked(token, s.id, !s.isBlocked).then(load)}>
-                {s.isBlocked ? "Разблокировать" : "Заблокировать"}
-              </Button>
+                {billingFor === s.id ? "Скрыть счета и оплаты" : "Счета и оплаты"}
+              </button>
             </div>
           </Card>
+          {/* Раскрывается под своей карточкой, а не в отдельном окне:
+              оператор сверяет детализацию с тем, что видит в списке. */}
+          {billingFor === s.id && <SupplierBilling token={token} supplierId={s.id} />}
+          </div>
         ))}
       </div>
     </div>
+  );
+}
+
+const INVOICE_STATUS: Record<string, { label: string; cls: string }> = {
+  PENDING: { label: "ждёт оплаты", cls: "text-amber-700" },
+  PAID: { label: "оплачен", cls: "text-emerald-700" },
+  CANCELLED: { label: "отменён", cls: "text-slate-400" },
+};
+
+/**
+ * Счета, платежи и подписка одного поставщика.
+ *
+ * Три таблицы рядом, потому что ответ на «я оплатил, почему не работает?»
+ * почти всегда в стыке между ними: счёт выставлен и не оплачен, платёж прошёл
+ * по чужому номеру, подписка кончилась вчера. По отдельности каждая выглядит
+ * нормально.
+ */
+function SupplierBilling({ token, supplierId }: { token: string; supplierId: string }) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () =>
+    adminApi.getSupplierBilling(token, supplierId).then(setData).catch((e) => setError(e.message));
+  useEffect(() => {
+    load();
+  }, [token, supplierId]);
+
+  if (error) return <p className="px-3 text-sm text-red-600">{error}</p>;
+  if (!data) return <p className="px-3 text-sm text-slate-400">Загружаю…</p>;
+
+  const d = (v: string | null) => (v ? new Date(v).toLocaleDateString("ru-RU") : "—");
+  const dt = (v: string | null) => (v ? new Date(v).toLocaleString("ru-RU") : "—");
+
+  return (
+    <Card className="ml-4 border-l-4 border-brand-200 p-3 text-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <p>
+          <span className="font-medium">Подписка:</span>{" "}
+          {data.subscription.active ? (
+            <span className="text-emerald-700">активна до {d(data.subscription.currentPeriodEnd)}</span>
+          ) : (
+            <span className="text-slate-400">нет</span>
+          )}
+          {data.subscription.paymentProvider && (
+            <span className="text-slate-400"> · через {data.subscription.paymentProvider}</span>
+          )}
+          <span className="text-slate-500">
+            {" "}
+            · бесплатных за месяц: {data.notificationsUsedThisMonth} из {data.freeQuota}
+          </span>
+        </p>
+        <Button
+          variant="secondary"
+          onClick={() => adminApi.issueSupplierInvoice(token, supplierId).then(load)}
+        >
+          Выставить счёт
+        </Button>
+      </div>
+
+      <p className="mb-1 text-xs font-medium text-slate-500">Счета</p>
+      {data.invoices.length === 0 ? (
+        <p className="mb-3 text-slate-400">Не выставлялись.</p>
+      ) : (
+        <table className="mb-3 w-full text-xs">
+          <thead>
+            <tr className="text-left text-slate-500">
+              <th className="pb-1">Номер</th>
+              <th className="pb-1 text-right">Сумма</th>
+              <th className="pb-1 text-right">Дней</th>
+              <th className="pb-1">Статус</th>
+              <th className="pb-1">Выставлен</th>
+              <th className="pb-1">Оплачен</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.invoices.map((i: any) => {
+              const st = INVOICE_STATUS[i.status] ?? { label: i.status, cls: "" };
+              const expired = i.status === "PENDING" && new Date(i.expiresAt) < new Date();
+              return (
+                <tr key={i.number} className="border-t border-slate-100">
+                  <td className="py-1 font-mono">{i.number}</td>
+                  <td className="py-1 text-right tabular-nums">{i.amountTenge} ₸</td>
+                  <td className="py-1 text-right tabular-nums">{i.periodDays}</td>
+                  <td className={`py-1 ${expired ? "text-slate-400" : st.cls}`}>
+                    {expired ? "просрочен" : st.label}
+                  </td>
+                  <td className="py-1 text-slate-500">{d(i.createdAt)}</td>
+                  <td className="py-1 text-slate-500">{d(i.paidAt)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <p className="mb-1 text-xs font-medium text-slate-500">Платежи Kaspi</p>
+      {data.payments.length === 0 ? (
+        <p className="text-slate-400">Не было.</p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-slate-500">
+              <th className="pb-1">Счёт</th>
+              <th className="pb-1 text-right">Сумма</th>
+              <th className="pb-1 text-right">Дней</th>
+              <th className="pb-1">Дата Kaspi</th>
+              <th className="pb-1">Ответ</th>
+              <th className="pb-1">txn_id</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.payments.map((p: any) => (
+              <tr key={p.txnId} className="border-t border-slate-100">
+                <td className="py-1 font-mono">{p.account}</td>
+                <td className="py-1 text-right tabular-nums">{p.sumTenge ?? "—"} ₸</td>
+                <td className="py-1 text-right tabular-nums">{p.daysGranted ?? "—"}</td>
+                {/* Дата от Kaspi, а не наша: по ней банк ведёт сверку. */}
+                <td className="py-1 text-slate-500">{dt(p.txnDate)}</td>
+                <td className={`py-1 ${p.result === 0 ? "text-emerald-700" : "text-red-600"}`}>
+                  {p.result === 0 ? "зачислен" : `код ${p.result} · ${p.comment ?? ""}`}
+                </td>
+                <td className="py-1 font-mono text-slate-400">{p.txnId}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
   );
 }
 

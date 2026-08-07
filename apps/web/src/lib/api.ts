@@ -189,6 +189,13 @@ export const adminApi = {
     request(`/admin/suppliers/${id}/block`, { method: "PATCH", body: JSON.stringify({ blocked }) }, token),
   setSupplierSubscription: (token: string, id: string, active: boolean) =>
     request(`/admin/suppliers/${id}/subscription`, { method: "PATCH", body: JSON.stringify({ active }) }, token),
+  getSupplierBilling: (token: string, id: string) => request<any>(`/admin/suppliers/${id}/billing`, {}, token),
+  issueSupplierInvoice: (token: string, id: string) =>
+    request<{ number: string; amountTenge: number; periodDays: number }>(
+      `/admin/suppliers/${id}/invoice`,
+      { method: "POST" },
+      token,
+    ),
   listOrders: (token: string, params: { status?: string; queue?: string } = {}) => {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
     return request<any[]>(`/admin/orders${qs ? `?${qs}` : ""}`, {}, token);

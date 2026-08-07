@@ -164,9 +164,10 @@ export const env = {
   // сервере, см. комментарий в kaspi-biller.controller.ts::clientIp().
   // Отсчёт именно от конца: левые записи подделываются клиентом целиком.
   trustedProxyHops: num("TRUSTED_PROXY_HOPS", 0),
-  // Placeholder price — not a real business decision, just what the mock flow
-  // charges so the quota/subscription logic has something to test against.
-  subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 5000),
+  // Цена подписки. Попадает в выставленный счёт и в сообщение поставщику,
+  // поэтому меняется только вместе с уже открытыми счетами: в них сумма
+  // зафиксирована на момент выставления и новой ценой не переписывается.
+  subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 1000),
   subscriptionPeriodDays: num("SUBSCRIPTION_PERIOD_DAYS", 30),
   freeNotificationsPerMonth: num("FREE_NOTIFICATIONS_PER_MONTH", 10),
 

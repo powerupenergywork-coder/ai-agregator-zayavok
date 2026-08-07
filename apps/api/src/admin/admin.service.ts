@@ -280,6 +280,93 @@ export class AdminService {
     });
   }
 
+  /**
+   * Вся денежная сторона одного поставщика в одном ответе: подписка, счета,
+   * платежи.
+   *
+   * Раньше в админке из этого не было видно ничего — ни выставленных счетов,
+   * ни прошедших платежей, — и на вопрос «я оплатил, почему не работает?»
+   * ответить было нечем. Три сущности показываем рядом намеренно: ответ почти
+   * всегда в стыке между ними — счёт выставлен, но не оплачен; платёж прошёл,
+   * но на чужой номер; подписка кончилась вчера.
+   */
+  async supplierBilling(id: string) {
+    const supplier = await this.prisma.supplierProfile.findUnique({
+      where: { id },
+      include: { subscription: true, user: true },
+    });
+    if (!supplier) throw new NotFoundException("Поставщик не найден");
+
+    const [invoices, payments] = await Promise.all([
+      this.prisma.subscriptionInvoice.findMany({
+        where: { supplierId: id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+      // Платежи ищем и по привязке к поставщику, и по номерам его счетов:
+      // платёж, не нашедший счёт, к поставщику не привязан — а это ровно тот
+      // случай, который и приходят разбирать.
+      this.prisma.kaspiPayment.findMany({
+        where: {
+          OR: [
+            { supplierId: id },
+            { invoice: { supplierId: id } },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+    ]);
+
+    return {
+      phone: supplier.user.phone,
+      companyName: supplier.companyName,
+      notificationsUsedThisMonth: supplier.notificationsUsedThisMonth,
+      freeQuota: env.freeNotificationsPerMonth,
+      subscription: {
+        active: this.billing.isSubscriptionActive(supplier.subscription),
+        status: supplier.subscription?.status ?? "NONE",
+        currentPeriodEnd: supplier.subscription?.currentPeriodEnd ?? null,
+        paymentProvider: supplier.subscription?.paymentProvider ?? null,
+      },
+      invoices: invoices.map((i) => ({
+        number: i.number,
+        amountTenge: i.amountTenge,
+        periodDays: i.periodDays,
+        status: i.status,
+        createdAt: i.createdAt,
+        expiresAt: i.expiresAt,
+        paidAt: i.paidAt,
+      })),
+      payments: payments.map((p) => ({
+        txnId: p.txnId,
+        prvTxnId: p.prvTxnId,
+        account: p.account,
+        sumTenge: p.sumTenge,
+        txnDate: p.txnDate,
+        result: p.result,
+        comment: p.comment,
+        daysGranted: p.daysGranted,
+        createdAt: p.createdAt,
+      })),
+    };
+  }
+
+  /** Счёт по просьбе поставщика, до всякого лимита. */
+  async issueInvoice(id: string, admin: AdminAuthUser) {
+    const supplier = await this.prisma.supplierProfile.findUnique({ where: { id } });
+    if (!supplier) throw new NotFoundException("Поставщик не найден");
+    const invoice = await this.billing.issueInvoice(id);
+    await this.audit.log({
+      actorType: admin.role === "ADMIN" ? "admin" : "operator",
+      actorId: admin.sub,
+      action: "issue_invoice",
+      targetType: "SubscriptionInvoice",
+      targetId: invoice.id,
+    });
+    return { number: invoice.number, amountTenge: invoice.amountTenge, periodDays: invoice.periodDays };
+  }
+
   // ---------- orders ----------
 
   async listOrders(filters: { status?: string; queue?: string }) {
