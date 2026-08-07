@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { adminApi, ConversationDto, InsightsDto } from "@/lib/api";
 import { Button, Card, Spinner } from "@/components/ui";
+import { OrderDetails } from "./order-details";
 
 function ago(iso: string): string {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -122,14 +123,31 @@ export function QualityTab({ token }: { token: string }) {
           Не всякая пауза — поломка: человек мог просто отвлечься. Смотреть стоит на повторяющиеся места.
         </p>
         <StuckList
+          token={token}
           title="Бросили на заполнении (больше 30 мин)"
-          rows={data.stuck.clarifying.map((o) => ({ id: o.id, number: o.number, city: o.city, at: o.createdAt }))}
+          rows={data.stuck.clarifying.map((o) => ({
+            id: o.id,
+            number: o.number,
+            city: o.city,
+            at: o.createdAt,
+            lastQuestion: o.lastQuestion,
+            lastAnswer: o.lastAnswer,
+          }))}
         />
         <StuckList
+          token={token}
           title="Не нажали «Подтвердить» (больше часа)"
-          rows={data.stuck.awaitingConfirm.map((o) => ({ id: o.id, number: o.number, city: o.city, at: o.createdAt }))}
+          rows={data.stuck.awaitingConfirm.map((o) => ({
+            id: o.id,
+            number: o.number,
+            city: o.city,
+            at: o.createdAt,
+            lastQuestion: o.lastQuestion,
+            lastAnswer: o.lastAnswer,
+          }))}
         />
         <StuckList
+          token={token}
           title="Разосланы, но ничем не закончились (больше суток)"
           rows={data.stuck.publishedNoResult.map((o) => ({
             id: o.id,
@@ -148,17 +166,7 @@ export function QualityTab({ token }: { token: string }) {
         {data.failedDelivery.length === 0 ? (
           <p className="text-sm text-slate-500">Всё дошло.</p>
         ) : (
-          <ul className="space-y-1 text-sm">
-            {data.failedDelivery.map((n) => (
-              <li key={n.id} className="flex flex-wrap gap-2">
-                <button className="text-brand-600 underline" onClick={() => openConversation(n.recipientPhone ?? "")}>
-                  {n.recipientPhone}
-                </button>
-                <span className="text-slate-500">{n.templateKey}</span>
-                <span className="text-red-600">{n.errorMessage}</span>
-              </li>
-            ))}
-          </ul>
+          <FailureGroups rows={data.failedDelivery} onPhone={openConversation} />
         )}
       </Card>
 
@@ -228,9 +236,26 @@ export function QualityTab({ token }: { token: string }) {
   );
 }
 
-function StuckList({ title, rows }: { title: string; rows: { id: string; number: number; city: string | null; at: string }[] }) {
+function StuckList({
+  token,
+  title,
+  rows,
+}: {
+  token: string;
+  title: string;
+  rows: {
+    id: string;
+    number: number;
+    city: string | null;
+    at: string;
+    lastQuestion?: string | null;
+    lastAnswer?: string | null;
+  }[];
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
   return (
-    <div className="mb-4">
+    <div className="mb-5">
       <h3 className="mb-1 text-sm font-medium">
         {title} — {rows.length}
       </h3>
@@ -239,14 +264,84 @@ function StuckList({ title, rows }: { title: string; rows: { id: string; number:
       ) : (
         <ul className="space-y-1 text-sm">
           {rows.slice(0, 15).map((o) => (
-            <li key={o.id} className="flex gap-3">
-              <span className="font-medium">№{o.number}</span>
-              <span className="text-slate-500">{o.city ?? "город не указан"}</span>
-              <span className="text-slate-400">{ago(o.at)} назад</span>
+            <li key={o.id} className="rounded border border-slate-100 px-2 py-1.5">
+              <button className="w-full text-left" onClick={() => setOpenId(openId === o.id ? null : o.id)}>
+                <span className="mr-1 text-slate-400">{openId === o.id ? "\u25be" : "\u25b8"}</span>
+                <span className="font-medium">№{o.number}</span>
+                <span className="ml-2 text-slate-500">{o.city ?? "город не указан"}</span>
+                <span className="ml-2 text-slate-400">{ago(o.at)} назад</span>
+                {o.lastQuestion && (
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    бот спросил: «{o.lastQuestion.slice(0, 90)}»
+                    {o.lastAnswer ? ` · ответ: «${o.lastAnswer.slice(0, 60)}»` : ""}
+                  </div>
+                )}
+              </button>
+              {openId === o.id && <OrderDetails token={token} orderId={o.id} />}
             </li>
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+const FAILURE_HINTS: Record<string, string> = {
+  "131047": "окно 24 часа закрыто — свободный текст не проходит, нужен утверждённый шаблон",
+  "131026": "на номере нет WhatsApp",
+  "131030": "номера нет в списке разрешённых (тестовый номер)",
+  "132018": "недопустимый параметр шаблона",
+};
+
+/**
+ * Одинаковые отказы схлопываются в одну строку с количеством.
+ *
+ * Тридцать подряд «131047 — Re-engagement message» читать невозможно, а
+ * решение по ним одно на всех. Разворачивается, когда нужны конкретные номера.
+ */
+function FailureGroups({
+  rows,
+  onPhone,
+}: {
+  rows: { id: string; templateKey: string; recipientPhone: string | null; errorMessage: string | null }[];
+  onPhone: (phone: string) => void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+
+  const groups = new Map<string, { phones: string[]; templates: Set<string> }>();
+  for (const r of rows) {
+    // Код ошибки — устойчивый ключ: текст Меты вокруг него меняется.
+    const code = r.errorMessage?.match(/\b1[0-9]{5}\b/)?.[0] ?? (r.errorMessage ?? "без пояснения").slice(0, 40);
+    const g = groups.get(code) ?? { phones: [], templates: new Set<string>() };
+    if (r.recipientPhone) g.phones.push(r.recipientPhone);
+    g.templates.add(r.templateKey);
+    groups.set(code, g);
+  }
+
+  return (
+    <ul className="space-y-2 text-sm">
+      {[...groups.entries()]
+        .sort((a, b) => b[1].phones.length - a[1].phones.length)
+        .map(([code, g]) => (
+          <li key={code} className="rounded border border-slate-100 px-2 py-1.5">
+            <button className="w-full text-left" onClick={() => setOpen(open === code ? null : code)}>
+              <span className="mr-1 text-slate-400">{open === code ? "\u25be" : "\u25b8"}</span>
+              <span className="font-medium text-red-600">{code}</span>
+              <span className="ml-2">— {g.phones.length} шт.</span>
+              <span className="ml-2 text-slate-500">{[...g.templates].join(", ")}</span>
+              {FAILURE_HINTS[code] && <div className="mt-0.5 text-xs text-slate-500">{FAILURE_HINTS[code]}</div>}
+            </button>
+            {open === code && (
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                {g.phones.map((p, i) => (
+                  <button key={`${p}-${i}`} className="text-brand-600 underline" onClick={() => onPhone(p)}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+    </ul>
   );
 }

@@ -546,15 +546,32 @@ export class AdminService {
     // Пороги подобраны так, чтобы не считать «залипшим» того, кто просто
     // сейчас печатает: заполнение занимает минуты, а не полчаса.
     const [stuckClarifying, stuckAwaiting, stuckPublished] = await Promise.all([
+      // Вместе с заявкой тянем хвост переписки: без него список — это столбик
+      // номеров, по которому нельзя понять, на чём человек сорвался. Последний
+      // вопрос бота и последний ответ клиента отвечают на это сразу, без
+      // открытия каждой заявки по очереди.
       this.prisma.order.findMany({
         where: { status: "CLARIFYING", createdAt: { lt: minutesAgo(30) } },
-        select: { id: true, number: true, city: true, createdAt: true, fieldsData: true },
+        select: {
+          id: true,
+          number: true,
+          city: true,
+          createdAt: true,
+          fieldsData: true,
+          chatMessages: { orderBy: { createdAt: "desc" }, take: 4, select: { role: true, content: true } },
+        },
         orderBy: { createdAt: "desc" },
         take: 50,
       }),
       this.prisma.order.findMany({
         where: { status: "AWAITING_PHONE_CONFIRMATION", createdAt: { lt: minutesAgo(60) } },
-        select: { id: true, number: true, city: true, createdAt: true },
+        select: {
+          id: true,
+          number: true,
+          city: true,
+          createdAt: true,
+          chatMessages: { orderBy: { createdAt: "desc" }, take: 4, select: { role: true, content: true } },
+        },
         orderBy: { createdAt: "desc" },
         take: 50,
       }),
@@ -601,10 +618,25 @@ export class AdminService {
       }))
       .sort((a, b) => b.orders - a.orders);
 
+    // Из хвоста переписки достаём именно пару «последний вопрос — последний
+    // ответ»: она и показывает, на каком месте разговор оборвался.
+    const withTail = <T extends { chatMessages: { role: string; content: string }[] }>(o: T) => {
+      const { chatMessages, ...rest } = o;
+      return {
+        ...rest,
+        lastQuestion: chatMessages.find((m) => m.role === "ASSISTANT")?.content ?? null,
+        lastAnswer: chatMessages.find((m) => m.role === "USER")?.content ?? null,
+      };
+    };
+
     return {
       funnel: { total, withCategory, reachedConfirm, published, completed, cancelled, noSuppliers },
       sources,
-      stuck: { clarifying: stuckClarifying, awaitingConfirm: stuckAwaiting, publishedNoResult: stuckPublished },
+      stuck: {
+        clarifying: stuckClarifying.map(withTail),
+        awaitingConfirm: stuckAwaiting.map(withTail),
+        publishedNoResult: stuckPublished,
+      },
       failedDelivery,
       unrecognized,
     };

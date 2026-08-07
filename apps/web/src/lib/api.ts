@@ -225,8 +225,23 @@ export interface InsightsDto {
   };
   sources: { source: string; orders: number; published: number }[];
   stuck: {
-    clarifying: { id: string; number: number; city: string | null; createdAt: string; fieldsData: unknown }[];
-    awaitingConfirm: { id: string; number: number; city: string | null; createdAt: string }[];
+    clarifying: {
+      id: string;
+      number: number;
+      city: string | null;
+      createdAt: string;
+      fieldsData: unknown;
+      lastQuestion: string | null;
+      lastAnswer: string | null;
+    }[];
+    awaitingConfirm: {
+      id: string;
+      number: number;
+      city: string | null;
+      createdAt: string;
+      lastQuestion: string | null;
+      lastAnswer: string | null;
+    }[];
     publishedNoResult: { id: string; number: number; city: string | null; publishedAt: string }[];
   };
   failedDelivery: {
