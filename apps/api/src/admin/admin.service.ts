@@ -14,6 +14,7 @@ import { OrdersService } from "../orders/orders.service";
 import { deriveDenormalizedColumns } from "../orders/order-derive.util";
 import { AuditLogService } from "../common/audit-log.service";
 import { normalizePhone, isValidPhone } from "../common/phone.util";
+import { formatFieldValue } from "../common/field-format.util";
 import { env } from "../config/env";
 import { BillingService } from "../billing/billing.service";
 import { ProspectService } from "../prospect/prospect.service";
@@ -301,6 +302,94 @@ export class AdminService {
       createdAt: o.createdAt,
       publishedAt: o.publishedAt,
     }));
+  }
+
+  /**
+   * Полное содержание заявки для админки.
+   *
+   * Список даёт только шапку — номер, категорию, город, — и по ней нельзя
+   * понять, что человек вообще просил. Здесь поля с человеческими названиями,
+   * переписка и то, кому и с каким исходом ушла рассылка: этого хватает, чтобы
+   * разобрать жалобу, не открывая базу.
+   *
+   * Значения приводятся к строкам тем же форматтером, что и сообщения
+   * поставщикам, — чтобы в админке было ровно то, что увидел исполнитель, а не
+   * сырой JSON с «unknown» и «needs_consultation».
+   */
+  async orderDetails(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        category: true,
+        client: { include: { user: true } },
+        chatMessages: { orderBy: { createdAt: "asc" } },
+        statusHistory: { orderBy: { createdAt: "asc" } },
+        photos: true,
+        dispatchWaves: true,
+      },
+    });
+    if (!order) throw new NotFoundException("Заявка не найдена");
+
+    const categoryFields = ((order.category?.fields as unknown as CategoryField[]) ?? []).filter(
+      (f) => f.type !== "photo",
+    );
+    const data = (order.fieldsData ?? {}) as Record<string, unknown>;
+    const fields = categoryFields
+      .filter((f) => data[f.key] !== undefined)
+      .map((f) => ({ label: f.label.ru, value: formatFieldValue(data[f.key], f, "ru") }));
+
+    // Поля, которые человек назвал, но которых нет в шаблоне категории (или
+    // категория ещё не определена) — иначе они просто пропали бы из виду.
+    const knownKeys = new Set(categoryFields.map((f) => f.key));
+    const extraFields = Object.entries(data)
+      .filter(([key]) => !knownKeys.has(key))
+      .map(([key, value]) => ({ label: key, value: String(value) }));
+
+    const supplierIds = [...new Set(order.dispatchWaves.flatMap((w) => w.supplierIds as string[]))];
+    const notifications = await this.prisma.notificationLog.findMany({
+      where: { orderId },
+      select: {
+        id: true,
+        templateKey: true,
+        recipientPhone: true,
+        status: true,
+        errorMessage: true,
+        deliveredAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return {
+      id: order.id,
+      number: order.number,
+      status: order.status,
+      statusLabel: ORDER_STATUS_LABELS_RU[order.status as OrderStatus],
+      categoryName: order.category ? (order.category.name as unknown as LocalizedText).ru : null,
+      city: order.city,
+      urgent: order.urgent,
+      addressFrom: order.addressFrom,
+      addressTo: order.addressTo,
+      dateNeeded: order.dateNeeded,
+      timeWindow: order.timeWindow,
+      clientPhone: order.client?.user.phone ?? null,
+      source: order.source,
+      landingPath: order.landingPath,
+      createdAt: order.createdAt,
+      publishedAt: order.publishedAt,
+      cancelReason: order.cancelReason,
+      fields: [...fields, ...extraFields],
+      photos: order.photos.map((p) => p.url),
+      chat: order.chatMessages.map((m) => ({ role: m.role, content: m.content, at: m.createdAt })),
+      statusHistory: order.statusHistory.map((e) => ({
+        status: e.toStatus,
+        actor: e.actor,
+        reason: e.note,
+        at: e.createdAt,
+      })),
+      notifiedSuppliersCount: supplierIds.length,
+      notifications,
+    };
   }
 
   async editOrder(orderId: string, dto: AdminEditOrderDto, admin: AdminAuthUser) {

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { adminApi, ProspectContactDto, ProspectFunnelDto } from "@/lib/api";
 import { Button, Card, Spinner, StatusBadge } from "@/components/ui";
 import { QualityTab } from "./quality-tab";
+import { OrderDetails } from "./order-details";
 
 const PROSPECT_STATUS_LABEL: Record<string, string> = {
   sent: "Отправлено",
@@ -95,6 +96,9 @@ function OrdersTab({ token }: { token: string }) {
   const [queue, setQueue] = useState("");
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Раскрыта всегда не больше одной: список длинный, и десяток развёрнутых
+  // карточек читать невозможно.
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -121,16 +125,27 @@ function OrdersTab({ token }: { token: string }) {
       ) : (
         <div className="flex flex-col gap-2">
           {orders.map((o) => (
-            <Card key={o.id} className="flex items-center justify-between p-3 text-sm">
-              <div>
-                <p className="font-medium">№{o.number} · {o.categoryName ?? "—"} · {o.city ?? "—"}</p>
-                <p className="text-slate-500">{o.clientPhone ?? "нет телефона"} · уведомлено поставщиков: {o.notifiedSuppliersCount}</p>
+            <Card key={o.id} className="p-3 text-sm">
+              <div className="flex items-center justify-between">
+                <button
+                  className="flex-1 text-left"
+                  onClick={() => setOpenId(openId === o.id ? null : o.id)}
+                >
+                  <p className="font-medium">
+                    <span className="mr-1 inline-block w-3 text-slate-400">{openId === o.id ? "▾" : "▸"}</span>
+                    №{o.number} · {o.categoryName ?? "—"} · {o.city ?? "—"}
+                  </p>
+                  <p className="pl-4 text-slate-500">
+                    {o.clientPhone ?? "нет телефона"} · уведомлено поставщиков: {o.notifiedSuppliersCount}
+                  </p>
+                </button>
+                <div className="flex items-center gap-2">
+                  <StatusBadge label={o.statusLabel} status={o.status} />
+                  <Button variant="secondary" onClick={() => adminApi.redispatch(token, o.id).then(load)}>Повторить рассылку</Button>
+                  <Button variant="danger" onClick={() => adminApi.adminCancelOrder(token, o.id).then(load)}>Отменить</Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <StatusBadge label={o.statusLabel} status={o.status} />
-                <Button variant="secondary" onClick={() => adminApi.redispatch(token, o.id).then(load)}>Повторить рассылку</Button>
-                <Button variant="danger" onClick={() => adminApi.adminCancelOrder(token, o.id).then(load)}>Отменить</Button>
-              </div>
+              {openId === o.id && <OrderDetails token={token} orderId={o.id} />}
             </Card>
           ))}
           {orders.length === 0 && <p className="text-sm text-slate-400">Пусто</p>}

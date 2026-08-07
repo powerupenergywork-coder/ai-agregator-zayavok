@@ -193,6 +193,7 @@ export const adminApi = {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
     return request<any[]>(`/admin/orders${qs ? `?${qs}` : ""}`, {}, token);
   },
+  getOrderDetails: (token: string, id: string) => request<OrderDetailsDto>(`/admin/orders/${id}`, {}, token),
   redispatch: (token: string, id: string) =>
     request(`/admin/orders/${id}/redispatch`, { method: "POST" }, token),
   adminCancelOrder: (token: string, id: string, reason?: string) =>
@@ -247,6 +248,40 @@ export interface ConversationDto {
     text: string;
     unrecognized: boolean;
     orderId?: string | null;
+  }[];
+}
+
+export interface OrderDetailsDto {
+  id: string;
+  number: number;
+  status: string;
+  statusLabel: string;
+  categoryName: string | null;
+  city: string | null;
+  urgent: boolean;
+  addressFrom: string | null;
+  addressTo: string | null;
+  dateNeeded: string | null;
+  timeWindow: string | null;
+  clientPhone: string | null;
+  source: string | null;
+  landingPath: string | null;
+  createdAt: string;
+  publishedAt: string | null;
+  cancelReason: string | null;
+  fields: { label: string; value: string }[];
+  photos: string[];
+  chat: { role: string; content: string; at: string }[];
+  statusHistory: { status: string; actor: string | null; reason: string | null; at: string }[];
+  notifiedSuppliersCount: number;
+  notifications: {
+    id: string;
+    templateKey: string;
+    recipientPhone: string | null;
+    status: string;
+    errorMessage: string | null;
+    deliveredAt: string | null;
+    createdAt: string;
   }[];
 }
 

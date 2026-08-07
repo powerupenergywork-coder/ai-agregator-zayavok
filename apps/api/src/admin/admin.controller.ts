@@ -172,6 +172,12 @@ export class AdminController {
   }
 
   @UseGuards(AdminAuthGuard)
+  @Get("orders/:id")
+  orderDetails(@Param("id") id: string) {
+    return this.admin.orderDetails(id);
+  }
+
+  @UseGuards(AdminAuthGuard)
   @Get("insights")
   insights() {
     return this.admin.insights();
