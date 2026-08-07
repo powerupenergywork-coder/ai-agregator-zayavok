@@ -87,6 +87,8 @@ export function QualityTab({ token }: { token: string }) {
         </p>
       </Card>
 
+      <SupplierFunnel data={data.supplierFunnel} onOpenConversation={openConversation} />
+
       <Card>
         <h2 className="mb-1 font-semibold">Откуда приходят</h2>
         <p className="mb-3 text-xs text-slate-500">
@@ -233,6 +235,103 @@ export function QualityTab({ token }: { token: string }) {
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * Что стало с холодным приглашением. Воронка по заявкам показывает только
+ * сторону клиента, а половина потерь живёт на стороне исполнителя.
+ *
+ * Проценты считаем от отправленных, а не от базы: интересно, куда делись те,
+ * кому мы написали, а не какую долю справочника успели обработать.
+ */
+function SupplierFunnel({
+  data,
+  onOpenConversation,
+}: {
+  data: {
+    inBase: number;
+    invited: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    confirmed: number;
+    declined: number;
+    silent: number;
+    wroteText: {
+      id: string;
+      phone: string;
+      companyName: string | null;
+      confirmed: boolean;
+      text: string | null;
+      at: string;
+      selfDescription: string | null;
+    }[];
+  };
+  onOpenConversation: (phone: string) => void;
+}) {
+  const steps = [
+    { label: "Отправили приглашение", value: data.invited },
+    { label: "Доставлено", value: data.delivered },
+    { label: "Прочитано", value: data.read },
+    { label: "Согласились получать заявки", value: data.confirmed },
+  ];
+
+  return (
+    <Card>
+      <h2 className="mb-1 font-semibold">Поставщики: что стало с приглашением</h2>
+      <p className="mb-3 text-xs text-slate-500">
+        Проценты — от числа отправленных приглашений. Всего в базе: {data.inBase}.
+      </p>
+      <div className="space-y-2">
+        {steps.map((s) => {
+          const pct = data.invited > 0 ? Math.round((s.value / data.invited) * 100) : 0;
+          return (
+            <div key={s.label} className="flex items-center gap-3 text-sm">
+              <div className="w-52 shrink-0 text-slate-600">{s.label}</div>
+              <div className="h-4 flex-1 overflow-hidden rounded bg-slate-100">
+                <div className="h-full bg-brand-600" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="w-24 shrink-0 text-right tabular-nums">
+                {s.value} <span className="text-slate-400">({pct}%)</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-xs text-slate-500">
+        Отказались («не писать мне»): {data.declined} · Не доставлено: {data.failed} · Молчат после доставки:{" "}
+        {data.silent}
+      </p>
+
+      <h3 className="mb-1 mt-5 text-sm font-medium">Написали текстом, а не кнопкой — {data.wroteText.length}</h3>
+      <p className="mb-2 text-xs text-slate-500">
+        Это не статистика, а список людей, которым нужен живой ответ. Переписка хранится 7 дней, поэтому здесь
+        только последняя неделя.
+      </p>
+      {data.wroteText.length === 0 ? (
+        <p className="text-sm text-slate-500">Пусто.</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {data.wroteText.map((s) => (
+            <li key={s.id} className="rounded border border-slate-100 px-2 py-1.5">
+              <button className="w-full text-left" onClick={() => onOpenConversation(s.phone)}>
+                <span className="font-medium">{s.companyName ?? "без названия"}</span>
+                <span className="ml-2 text-slate-500">{s.phone}</span>
+                <span className={`ml-2 text-xs ${s.confirmed ? "text-emerald-700" : "text-amber-700"}`}>
+                  {s.confirmed ? "согласился" : "не подтвердил"}
+                </span>
+                <span className="ml-2 text-slate-400">{ago(s.at)} назад</span>
+                {s.text && <div className="mt-0.5 text-xs text-slate-600">«{s.text.slice(0, 120)}»</div>}
+                {s.selfDescription && (
+                  <div className="mt-0.5 text-xs text-sky-700">о себе: {s.selfDescription.slice(-120)}</div>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

@@ -625,6 +625,8 @@ export class AdminService {
       }))
       .sort((a, b) => b.orders - a.orders);
 
+    const supplierFunnel = await this.supplierFunnel();
+
     // Из хвоста переписки достаём именно пару «последний вопрос — последний
     // ответ»: она и показывает, на каком месте разговор оборвался.
     const withTail = <T extends { chatMessages: { role: string; content: string }[] }>(o: T) => {
@@ -646,6 +648,135 @@ export class AdminService {
       },
       failedDelivery,
       unrecognized,
+      supplierFunnel,
+    };
+  }
+
+  /**
+   * Воронка по поставщикам: что стало с холодным приглашением на каждом шаге.
+   *
+   * Воронка по заявкам показывает только сторону клиента, а половина потерь
+   * сервиса живёт на стороне исполнителя — приглашение не дошло, дошло и не
+   * прочитано, прочитано и проигнорировано, человек ответил текстом вместо
+   * кнопки. Все четыре случая до сих пор выглядели одинаково: «не подтвердил».
+   *
+   * Отдельно выносим тех, кто написал текстом: это не статистика, а список
+   * людей, которым нужен живой ответ, — с них началась вся эта переделка.
+   */
+  private async supplierFunnel() {
+    const [suppliers, invited, delivered, read, failed, inbound] = await Promise.all([
+      this.prisma.supplierProfile.findMany({
+        select: {
+          id: true,
+          companyName: true,
+          confirmedAt: true,
+          isBlocked: true,
+          selfDescription: true,
+          user: { select: { phone: true } },
+        },
+      }),
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: { templateKey: "supplier_cold_invite", supplierId: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: { templateKey: "supplier_cold_invite", supplierId: { not: null }, deliveredAt: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: { templateKey: "supplier_cold_invite", supplierId: { not: null }, readAt: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: { templateKey: "supplier_cold_invite", supplierId: { not: null }, status: "FAILED" },
+        _count: { _all: true },
+      }),
+      // Стенограмма живёт 7 дней (см. transcript-retention.service.ts), так
+      // что «написал текстом» и «молчит» — это всегда про последнюю неделю.
+      // Подписи в интерфейсе говорят об этом прямо: иначе цифру прочитают
+      // как «за всё время» и сделают неверный вывод.
+      //
+      // distinct по номеру, а не выборка всей переписки в память: нужно ровно
+      // одно последнее текстовое сообщение с каждого номера, и объём ответа
+      // должен зависеть от числа собеседников, а не от их разговорчивости.
+      this.prisma.whatsAppMessage.findMany({
+        where: { direction: "IN", kind: { not: "button_reply" } },
+        distinct: ["phone"],
+        select: { phone: true, text: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    const tappedRows = await this.prisma.whatsAppMessage.groupBy({
+      by: ["phone"],
+      where: { direction: "IN", kind: "button_reply" },
+      _count: { _all: true },
+    });
+
+    const setOf = (rows: { supplierId: string | null }[]) =>
+      new Set(rows.map((r) => r.supplierId).filter((id): id is string => !!id));
+    const invitedIds = setOf(invited);
+    const deliveredIds = setOf(delivered);
+    const readIds = setOf(read);
+    const failedIds = setOf(failed);
+
+    // Последнее текстовое сообщение с номера — именно оно нужно оператору,
+    // чтобы понять, о чём человек спрашивает.
+    const lastText = new Map(inbound.map((m) => [m.phone, { text: m.text, createdAt: m.createdAt }]));
+    const tapped = new Set(tappedRows.map((r) => r.phone));
+
+    let confirmed = 0;
+    let declined = 0;
+    let silent = 0;
+    const wroteText: {
+      id: string;
+      phone: string;
+      companyName: string | null;
+      confirmed: boolean;
+      text: string | null;
+      at: Date;
+      selfDescription: string | null;
+    }[] = [];
+
+    for (const s of suppliers) {
+      const phone = s.user.phone;
+      if (s.confirmedAt) confirmed++;
+      if (s.isBlocked) declined++;
+
+      const wrote = lastText.get(phone);
+      if (wrote) {
+        wroteText.push({
+          id: s.id,
+          phone,
+          companyName: s.companyName,
+          confirmed: !!s.confirmedAt,
+          text: wrote.text,
+          at: wrote.createdAt,
+          selfDescription: s.selfDescription,
+        });
+      }
+      // Молчит — это доставленное приглашение без единого ответа. Недошедшее
+      // сюда не попадает: там виноваты мы, а не человек, и лечится это
+      // другим — разбором ошибки доставки, а не повторной рассылкой.
+      if (deliveredIds.has(s.id) && !tapped.has(phone) && !wrote && !s.confirmedAt) silent++;
+    }
+
+    wroteText.sort((a, b) => b.at.getTime() - a.at.getTime());
+
+    return {
+      inBase: suppliers.length,
+      invited: invitedIds.size,
+      delivered: deliveredIds.size,
+      read: readIds.size,
+      failed: failedIds.size,
+      confirmed,
+      declined,
+      silent,
+      wroteText: wroteText.slice(0, 50),
     };
   }
 

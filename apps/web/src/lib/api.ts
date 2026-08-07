@@ -252,6 +252,25 @@ export interface InsightsDto {
     createdAt: string;
   }[];
   unrecognized: { id: string; phone: string; text: string | null; createdAt: string }[];
+  supplierFunnel: {
+    inBase: number;
+    invited: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    confirmed: number;
+    declined: number;
+    silent: number;
+    wroteText: {
+      id: string;
+      phone: string;
+      companyName: string | null;
+      confirmed: boolean;
+      text: string | null;
+      at: string;
+      selfDescription: string | null;
+    }[];
+  };
 }
 
 export interface ConversationDto {
