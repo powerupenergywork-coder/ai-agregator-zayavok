@@ -627,7 +627,10 @@ export class WhatsAppRouterService {
   private async ensureOrder(chatId: string, phone: string): Promise<string> {
     const session = await this.sessions.findOrCreate(chatId, phone);
     if (session.currentOrderId) return session.currentOrderId;
-    const draft = await this.orders.createDraft();
+    // Заявка из чата: без пометки её потом не отличить от веб-заявки, а
+    // разбирать «почему человек застрял» без этого нельзя — на сайте и в
+    // WhatsApp обрываются на разном.
+    const draft = await this.orders.createDraft(undefined, false, { channel: "WHATSAPP" });
     await this.sessions.setCurrentOrder(chatId, draft.id);
     return draft.id;
   }

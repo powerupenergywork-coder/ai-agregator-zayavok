@@ -274,6 +274,7 @@ export interface OrderDetailsDto {
   categoryName: string | null;
   city: string | null;
   urgent: boolean;
+  channel: string;
   addressFrom: string | null;
   addressTo: string | null;
   dateNeeded: string | null;

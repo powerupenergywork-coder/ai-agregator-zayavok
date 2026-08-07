@@ -38,6 +38,7 @@ export function OrderDetails({ token, orderId }: { token: string; orderId: strin
     <div className="mt-3 space-y-4 border-t border-slate-200 pt-3 text-sm">
       <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
         <Row label="Создана" value={dt(data.createdAt)} />
+        <Row label="Оформлена" value={data.channel === "WHATSAPP" ? "в WhatsApp" : "на сайте"} />
         {data.publishedAt && <Row label="Разослана" value={dt(data.publishedAt)} />}
         {when && <Row label="Когда нужно" value={when} />}
         {data.urgent && <Row label="Срочность" value="срочная" />}

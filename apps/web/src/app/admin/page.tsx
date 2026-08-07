@@ -134,6 +134,9 @@ function OrdersTab({ token }: { token: string }) {
                   <p className="font-medium">
                     <span className="mr-1 inline-block w-3 text-slate-400">{openId === o.id ? "▾" : "▸"}</span>
                     №{o.number} · {o.categoryName ?? "—"} · {o.city ?? "—"}
+                    <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-600">
+                      {o.channel === "WHATSAPP" ? "WhatsApp" : "сайт"}
+                    </span>
                   </p>
                   <p className="pl-4 text-slate-500">
                     {o.clientPhone ?? "нет телефона"} · уведомлено поставщиков: {o.notifiedSuppliersCount}

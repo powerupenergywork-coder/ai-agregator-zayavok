@@ -73,7 +73,7 @@ export class OrdersService {
   async createDraft(
     categorySlug?: string,
     urgent = false,
-    attribution?: { source?: string; sourceParams?: Record<string, string>; landingPath?: string },
+    attribution?: { source?: string; sourceParams?: Record<string, string>; landingPath?: string; channel?: string },
   ) {
     let categoryId: string | undefined;
     if (categorySlug) {
@@ -88,6 +88,7 @@ export class OrdersService {
         categoryId,
         urgent,
         status: categoryId ? "CLARIFYING" : "DRAFT",
+        channel: attribution?.channel ?? "WEB",
         source: attribution?.source,
         sourceParams: (attribution?.sourceParams as object) ?? undefined,
         landingPath: attribution?.landingPath,
