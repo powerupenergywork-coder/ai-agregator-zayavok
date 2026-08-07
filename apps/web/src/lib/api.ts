@@ -216,6 +216,8 @@ export const adminApi = {
   initiateProspect: (token: string, phone: string, orderId: string) =>
     request<ProspectContactDto>("/admin/prospects", { method: "POST", body: JSON.stringify({ phone, orderId }) }, token),
   getInsights: (token: string) => request<InsightsDto>("/admin/insights", {}, token),
+  listConversations: (token: string, filter?: string) =>
+    request<any>(`/admin/conversations${filter ? `?filter=${filter}` : ""}`, {}, token),
   getConversation: (token: string, phone: string) =>
     request<ConversationDto>(`/admin/conversation?phone=${encodeURIComponent(phone)}`, {}, token),
 };

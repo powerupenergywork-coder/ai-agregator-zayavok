@@ -893,6 +893,91 @@ export class AdminService {
    * таблицах намеренно — первая это сырьё, вторая деловая запись с привязкой
    * к заявке, — поэтому сводим их здесь, а не дублируем в базе.
    */
+  /**
+   * Список диалогов — вход в переписку, которого не было.
+   *
+   * Лента по номеру существовала и раньше, но открыть её можно было, только
+   * зная номер наизусть. То есть посмотреть, как бот разговаривает с людьми,
+   * было нельзя: чтобы найти разговор, надо было сначала знать, что он есть.
+   *
+   * Порядок по последнему сообщению, а не по числу: разбирают всегда свежее.
+   * Рядом с каждым — признаки, ради которых сюда и заходят: человек писал
+   * текстом (значит кнопок ему не хватило) и бот чего-то не понял.
+   */
+  async conversations(filter?: string) {
+    const [byDirection, lastMessages, unrecognized, humanText] = await Promise.all([
+      this.prisma.whatsAppMessage.groupBy({ by: ["phone", "direction"], _count: { _all: true } }),
+      this.prisma.whatsAppMessage.findMany({
+        distinct: ["phone"],
+        orderBy: { createdAt: "desc" },
+        select: { phone: true, direction: true, kind: true, text: true, payload: true, createdAt: true },
+      }),
+      this.prisma.whatsAppMessage.groupBy({
+        by: ["phone"],
+        where: { unrecognized: true },
+        _count: { _all: true },
+      }),
+      // Свободный текст от человека, а не нажатие кнопки: именно он означает,
+      // что предложенных вариантов не хватило.
+      this.prisma.whatsAppMessage.groupBy({
+        by: ["phone"],
+        where: { direction: "IN", kind: { notIn: ["button_reply"] } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const phones = [...new Set(byDirection.map((r) => r.phone))];
+    const users = await this.prisma.user.findMany({
+      where: { phone: { in: phones } },
+      select: {
+        phone: true,
+        supplierProfile: { select: { companyName: true, confirmedAt: true, isBlocked: true } },
+        clientProfile: { select: { id: true } },
+      },
+    });
+
+    const userByPhone = new Map(users.map((u) => [u.phone, u]));
+    const inCount = new Map<string, number>();
+    const outCount = new Map<string, number>();
+    for (const r of byDirection) {
+      (r.direction === "IN" ? inCount : outCount).set(r.phone, r._count._all);
+    }
+    const unrecByPhone = new Map(unrecognized.map((r) => [r.phone, r._count._all]));
+    const textByPhone = new Map(humanText.map((r) => [r.phone, r._count._all]));
+    const lastByPhone = new Map(lastMessages.map((m) => [m.phone, m]));
+
+    let rows = phones.map((phone) => {
+      const u = userByPhone.get(phone);
+      const last = lastByPhone.get(phone);
+      const sup = u?.supplierProfile;
+      return {
+        phone,
+        name: sup?.companyName ?? (u?.clientProfile ? "клиент" : null),
+        role: sup ? "supplier" : u?.clientProfile ? "client" : "unknown",
+        confirmed: sup ? !!sup.confirmedAt : null,
+        blocked: sup?.isBlocked ?? null,
+        lastAt: last?.createdAt ?? null,
+        lastFrom: last?.direction === "IN" ? "human" : "bot",
+        lastText: last ? (last.text ?? last.payload ?? `[${last.kind}]`) : "",
+        inCount: inCount.get(phone) ?? 0,
+        outCount: outCount.get(phone) ?? 0,
+        humanTextCount: textByPhone.get(phone) ?? 0,
+        unrecognizedCount: unrecByPhone.get(phone) ?? 0,
+      };
+    });
+
+    if (filter === "text") rows = rows.filter((r) => r.humanTextCount > 0);
+    if (filter === "unrecognized") rows = rows.filter((r) => r.unrecognizedCount > 0);
+    if (filter === "silent") rows = rows.filter((r) => r.inCount === 0);
+
+    rows.sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0));
+    return {
+      retentionDays: env.whatsappTranscriptRetentionDays,
+      total: rows.length,
+      rows: rows.slice(0, 200),
+    };
+  }
+
   async conversation(rawPhone: string) {
     const phone = normalizePhone(rawPhone);
     const [messages, notifications] = await Promise.all([

@@ -204,6 +204,13 @@ export class AdminController {
   /** Переписка — персональные данные, поэтому только под админским токеном
    * и по конкретному номеру: списка «все диалоги подряд» здесь намеренно нет. */
   @UseGuards(AdminAuthGuard)
+  /** Список диалогов. filter: text | unrecognized | silent. */
+  @UseGuards(AdminAuthGuard)
+  @Get("conversations")
+  conversations(@Query("filter") filter?: string) {
+    return this.admin.conversations(filter);
+  }
+
   @Get("conversation")
   conversation(@Query("phone") phone: string) {
     return this.admin.conversation(phone ?? "");
