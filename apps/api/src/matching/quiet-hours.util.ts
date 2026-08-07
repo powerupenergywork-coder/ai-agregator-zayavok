@@ -41,3 +41,16 @@ export function isSupplierReachableNow(supplier: SupplierWindow, globalDefaults:
   const end = supplier.workingHoursEnd ?? globalDefaults.quietHoursEnd ?? env.dispatchQuietHoursEnd;
   return isWithinWindow(start, end, nowInTimezone());
 }
+
+/**
+ * Приличное ли сейчас время, чтобы написать человеку по своей инициативе.
+ *
+ * Тот же оконный расчёт, что и для поставщиков, но без персональных
+ * настроек: у клиента их нет, а будить его напоминанием о брошенной заявке
+ * в три часа ночи — верный способ получить блокировку вместо заказа.
+ */
+export function isDecentHourNow(globalDefaults?: GlobalDefaults): boolean {
+  const start = globalDefaults?.quietHoursStart ?? env.dispatchQuietHoursStart;
+  const end = globalDefaults?.quietHoursEnd ?? env.dispatchQuietHoursEnd;
+  return isWithinWindow(start, end, nowInTimezone());
+}

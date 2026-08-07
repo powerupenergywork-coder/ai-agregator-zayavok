@@ -78,6 +78,12 @@ export const env = {
   dispatchQuietHoursEnd: str("DISPATCH_QUIET_HOURS_END", "21:00"),
   dispatchTimezone: str("DISPATCH_TIMEZONE", "Asia/Almaty"),
 
+  // Через сколько минут простоя напомнить о недооформленной заявке. Час —
+  // человек успел отвлечься, но ещё помнит, о чём шла речь. 0 отключает
+  // напоминания совсем. Напоминание всегда ровно одно: см.
+  // OrdersService.nudgeAbandonedDrafts().
+  draftNudgeAfterMinutes: num("DRAFT_NUDGE_AFTER_MINUTES", 60),
+
   // Since suppliers now contact the client directly (no in-system offer
   // selection), the system has to proactively ask whether the order got
   // resolved instead of waiting for the client to come back and close it.

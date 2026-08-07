@@ -228,6 +228,11 @@ model Order {
   categoryId                  String?
   category                    Category?          @relation(fields: [categoryId], references: [id])
   status                      String             @default("DRAFT")
+  /// Когда отправили единственное напоминание о брошенном черновике
+  /// (см. OrdersService.nudgeAbandonedDrafts). Заполнено = больше не пишем:
+  /// второе напоминание это уже назойливость, а в WhatsApp за неё платят
+  /// рейтингом номера.
+  draftNudgeAt                DateTime?
   /// Откуда пришёл человек: нормализованный канал ("google", "2gis",
   /// "instagram", "direct") и страница, с которой он начал. Без этого после
   /// месяца рекламы нельзя сказать, какой канал принёс заказы, а какой сжёг

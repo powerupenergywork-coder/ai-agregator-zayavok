@@ -3,8 +3,10 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import {
@@ -38,6 +40,7 @@ import { env } from "../config/env";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } from "./order-derive.util";
+import { isDecentHourNow } from "../matching/quiet-hours.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { formatFieldValue } from "../common/field-format.util";
 import { toLang } from "../common/language.util";
@@ -57,6 +60,8 @@ export interface ChatTurnResponse {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly categories: CategoriesService,
@@ -665,6 +670,99 @@ export class OrdersService {
   /** Proactive nudge — fired ORDER_CHECKIN_DELAY_HOURS after publish. No-op if
    * the client already closed the order (or it's stuck in NEEDS_OPERATOR)
    * by the time the delayed job runs. */
+  /**
+   * Одно напоминание о недооформленной заявке.
+   *
+   * Заявка №80 — самосвал, песок, 20 м³, адрес назван — встала на вопросе о
+   * дате и умерла. До рассылки оставался один ответ. Таких на сегодня 27, и
+   * каждая это клиент, который хотел заказать и не смог.
+   *
+   * Три решения определяют, помощь это или спам.
+   *
+   * Повторяем сам вопрос, а не пишем «вы не закончили». Второе требует от
+   * человека вспомнить, на чём он остановился, и вернуться в разговор;
+   * первое — только ответить.
+   *
+   * Напоминание ровно одно. Второе это уже назойливость, а в WhatsApp за неё
+   * платят рейтингом номера: человек не отпишется, он пожалуется.
+   *
+   * И только в приличное время. Напоминание в три часа ночи не вернёт
+   * заказчика, оно вернёт жалобу.
+   */
+  @Cron("*/15 * * * *")
+  async nudgeAbandonedDrafts(): Promise<void> {
+    if (env.draftNudgeAfterMinutes <= 0) return;
+    if (!isDecentHourNow()) return;
+
+    const idleSince = new Date(Date.now() - env.draftNudgeAfterMinutes * 60 * 1000);
+    // Окно 24 часов: свободный текст вне его не проходит, а шаблона под
+    // напоминание нет и заводить его ради этого не стоит.
+    const windowOpenSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const abandoned = await this.prisma.order.findMany({
+      where: {
+        channel: "WHATSAPP",
+        status: { in: ["DRAFT", "CLARIFYING"] },
+        draftNudgeAt: null,
+        updatedAt: { lt: idleSince },
+        clientId: { not: null },
+        client: { user: { lastInboundWhatsAppAt: { gt: windowOpenSince } } },
+      },
+      include: { category: true, client: { include: { user: true } } },
+      take: 50,
+    });
+
+    for (const order of abandoned) {
+      try {
+        await this.sendDraftNudge(order);
+      } catch (err) {
+        this.logger.error(`Не удалось напомнить о заявке ${order.number}: ${(err as Error).message}`);
+      }
+    }
+    if (abandoned.length > 0) this.logger.log(`Напомнили о недооформленных заявках: ${abandoned.length}`);
+  }
+
+  private async sendDraftNudge(order: {
+    id: string;
+    number: number;
+    fieldsData: unknown;
+    category: { fields: unknown } | null;
+    client: { user: { phone: string; preferredLanguage: string } } | null;
+  }): Promise<void> {
+    if (!order.client) return;
+    const lang = toLang(order.client.user.preferredLanguage);
+    const fields = (order.category?.fields as unknown as CategoryField[]) ?? [];
+    const values = (order.fieldsData ?? {}) as Record<string, unknown>;
+    const missing = nextQuestionFields(fields, values);
+    // Нечего спрашивать — значит заявка стоит не на вопросе, а на публикации;
+    // это другой случай и другое сообщение, здесь молчим.
+    if (missing.length === 0) return;
+
+    // Короткая сводка того, что уже сказано: она и напоминает, о чём речь, и
+    // показывает, что сказанное не потерялось.
+    const filled = fields
+      .filter((f) => f.type !== "photo" && values[f.key] !== undefined)
+      .map((f) => formatFieldValue(values[f.key], f, lang))
+      .join(", ");
+
+    const head =
+      lang === "kk"
+        ? `Өтінім аяқталмай қалды${filled ? `: ${filled}` : ""}.`
+        : `Вы остановились на заявке${filled ? `: ${filled}` : ""}.`;
+    const tail = lang === "kk" ? "Аяқтау үшін бір қадам қалды." : "Остался один шаг.";
+
+    await this.notifications.send({
+      event: "draft_nudge",
+      payload: { head, tail, question: buildQuestionText(missing, lang) },
+      recipientPhone: order.client.user.phone,
+      orderId: order.id,
+    });
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: { draftNudgeAt: new Date() },
+    });
+  }
+
   async sendCompletionCheckin(orderId: string) {
     const order = await this.getRawOrThrow(orderId);
     if (order.status !== "PUBLISHED" || !order.clientId) return;

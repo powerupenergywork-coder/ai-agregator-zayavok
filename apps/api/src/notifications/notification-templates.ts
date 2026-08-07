@@ -19,6 +19,7 @@ export type NotificationEvent =
   | "completion_checkin"
   | "complaint_received"
   | "needs_operator"
+  | "draft_nudge"
   | "quota_exceeded"
   | "subscription_activated"
   | "subscription_expiring"
@@ -99,6 +100,11 @@ const templates: Record<NotificationEvent, (p: any, lang: Language) => string> =
   // может: деньги вносятся внутри приложения банка, поэтому вместо ссылки —
   // короткая инструкция, где найти услугу и что вводить. Отправить сюда
   // ссылку было бы удобнее, но её не существует.
+  // Напоминание о недооформленной заявке. Текст собирается на месте
+  // (OrdersService.sendDraftNudge): сводка уже сказанного плюс тот самый
+  // вопрос, на котором человек остановился. Шаблон здесь только склеивает —
+  // формулировать вопрос он не может, тот зависит от категории.
+  draft_nudge: (p) => `${p.head}\n${p.tail}\n\n${p.question}`,
   quota_exceeded: (p, lang) =>
     p.invoiceNumber
       ? lang === "kk"
