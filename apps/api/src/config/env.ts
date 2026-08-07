@@ -97,6 +97,18 @@ export const env = {
   prospectIgnoreTimeoutDays: num("PROSPECT_IGNORE_TIMEOUT_DAYS", 14),
   prospectResendCooldownDays: num("PROSPECT_RESEND_COOLDOWN_DAYS", 7),
 
+  // Сколько раз и как часто можно позвать человека, который нам ничего не
+  // отвечал. Приглашение едет вместе с заявкой, а список «кому уже слали»
+  // ведётся по каждой заявке отдельно — без этих двух ограничений десять
+  // заявок в день на автокран в Астане означали бы десять приглашений в день
+  // одному и тому же человеку. Он не нажмёт «не писать мне», он пожалуется
+  // на спам, а жалобы бьют по рейтингу качества номера.
+  //
+  // Три попытки — та же лестница, что в replyToSupplier(): на третий раз
+  // молчим. Молчание собеседника тоже ответ.
+  supplierInviteCooldownDays: num("SUPPLIER_INVITE_COOLDOWN_DAYS", 3),
+  supplierInviteMaxAttempts: num("SUPPLIER_INVITE_MAX_ATTEMPTS", 3),
+
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   // Куда звать поставщика, пока принимать деньги нечем: см. paymentsEnabled().
   supportPhone: str("SUPPORT_PHONE", "+7 778 709 8251"),

@@ -664,7 +664,7 @@ export class AdminService {
    * людей, которым нужен живой ответ, — с них началась вся эта переделка.
    */
   private async supplierFunnel() {
-    const [suppliers, invited, delivered, read, failed, inbound] = await Promise.all([
+    const [suppliers, invited, delivered, read, failed, sentCounts, inbound] = await Promise.all([
       this.prisma.supplierProfile.findMany({
         select: {
           id: true,
@@ -693,6 +693,14 @@ export class AdminService {
       this.prisma.notificationLog.groupBy({
         by: ["supplierId"],
         where: { templateKey: "supplier_cold_invite", supplierId: { not: null }, status: "FAILED" },
+        _count: { _all: true },
+      }),
+      // Сколько дошедших приглашений у каждого — по этому считаем, кому мы
+      // больше не пишем (см. MatchingService.mayInviteAgain). Без этой строки
+      // человек просто пропадает из рассылки без объяснения.
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: { templateKey: "supplier_cold_invite", supplierId: { not: null }, status: { not: "FAILED" } },
         _count: { _all: true },
       }),
       // Стенограмма живёт 7 дней (см. transcript-retention.service.ts), так
@@ -729,9 +737,14 @@ export class AdminService {
     const lastText = new Map(inbound.map((m) => [m.phone, { text: m.text, createdAt: m.createdAt }]));
     const tapped = new Set(tappedRows.map((r) => r.phone));
 
+    const sentPerSupplier = new Map(
+      sentCounts.map((r) => [r.supplierId as string, r._count._all]),
+    );
+
     let confirmed = 0;
     let declined = 0;
     let silent = 0;
+    let exhausted = 0;
     const wroteText: {
       id: string;
       phone: string;
@@ -763,6 +776,11 @@ export class AdminService {
       // сюда не попадает: там виноваты мы, а не человек, и лечится это
       // другим — разбором ошибки доставки, а не повторной рассылкой.
       if (deliveredIds.has(s.id) && !tapped.has(phone) && !wrote && !s.confirmedAt) silent++;
+      // Исчерпал попытки — больше приглашений не получит, даже если появится
+      // подходящая заявка (MatchingService.mayInviteAgain). Считаем только
+      // среди неподтверждённых: у согласившихся приглашения кончились по
+      // хорошей причине.
+      if (!s.confirmedAt && (sentPerSupplier.get(s.id) ?? 0) >= env.supplierInviteMaxAttempts) exhausted++;
     }
 
     wroteText.sort((a, b) => b.at.getTime() - a.at.getTime());
@@ -776,6 +794,8 @@ export class AdminService {
       confirmed,
       declined,
       silent,
+      exhausted,
+      maxAttempts: env.supplierInviteMaxAttempts,
       wroteText: wroteText.slice(0, 50),
     };
   }

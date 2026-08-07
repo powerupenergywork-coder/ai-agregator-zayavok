@@ -261,6 +261,8 @@ export interface InsightsDto {
     confirmed: number;
     declined: number;
     silent: number;
+    exhausted: number;
+    maxAttempts: number;
     wroteText: {
       id: string;
       phone: string;

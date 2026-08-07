@@ -258,6 +258,8 @@ function SupplierFunnel({
     confirmed: number;
     declined: number;
     silent: number;
+    exhausted: number;
+    maxAttempts: number;
     wroteText: {
       id: string;
       phone: string;
@@ -302,6 +304,11 @@ function SupplierFunnel({
       <p className="mt-3 text-xs text-slate-500">
         Отказались («не писать мне»): {data.declined} · Не доставлено: {data.failed} · Молчат после доставки:{" "}
         {data.silent}
+      </p>
+      {/* Тем, кто исчерпал попытки, приглашения больше не уходят вообще —
+          без этой строки они просто пропадают из рассылки без объяснения. */}
+      <p className="mt-1 text-xs text-slate-500">
+        Больше не пишем ({data.maxAttempts} приглашения без ответа): {data.exhausted}
       </p>
 
       <h3 className="mb-1 mt-5 text-sm font-medium">Написали текстом, а не кнопкой — {data.wroteText.length}</h3>

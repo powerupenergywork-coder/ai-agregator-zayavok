@@ -131,6 +131,7 @@ export class MatchingService {
     // opt-in button instead of the real dispatch, and it costs them none of
     // their free quota: this is our invitation, not a lead they asked for.
     if (!supplier.confirmedAt) {
+      if (!(await this.mayInviteAgain(supplier.id))) return;
       const categoryFields = (order.category?.fields as unknown as CategoryField[]) ?? [];
       await this.notifications.send({
         event: "supplier_cold_invite",
@@ -162,6 +163,31 @@ export class MatchingService {
     }
 
     await this.sendFullBroadcast(order, supplier, lang);
+  }
+
+  /**
+   * Можно ли звать этого человека ещё раз.
+   *
+   * Приглашение едет вместе с заявкой, а «кому уже слали» считается по каждой
+   * заявке отдельно — то есть без этой проверки поток заявок превращается в
+   * поток приглашений одному и тому же молчащему человеку. Он не нажмёт «не
+   * писать мне», он пожалуется на спам, а это стоит рейтинга номера.
+   *
+   * Провалившиеся отправки не считаем: человек их не видел, и тратить на них
+   * попытку — значит наказать его за нашу ошибку. Ровно этот случай уже есть
+   * в базе: 15 приглашений 5 августа не ушли из-за неверного канала.
+   */
+  private async mayInviteAgain(supplierId: string): Promise<boolean> {
+    const sent = await this.prisma.notificationLog.findMany({
+      where: { supplierId, templateKey: "supplier_cold_invite", status: { not: "FAILED" } },
+      select: { createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: env.supplierInviteMaxAttempts,
+    });
+    if (sent.length >= env.supplierInviteMaxAttempts) return false;
+    if (sent.length === 0) return true;
+    const cooldownMs = env.supplierInviteCooldownDays * 24 * 60 * 60 * 1000;
+    return Date.now() - sent[0].createdAt.getTime() >= cooldownMs;
   }
 
   /** The real dispatch: everything the supplier needs to act, including the
