@@ -145,6 +145,14 @@ export const env = {
   // Сколько дней счёт принимается к оплате. Без срока однажды придёт платёж
   // по счёту годичной давности с давно неактуальной ценой.
   invoiceValidDays: num("INVOICE_VALID_DAYS", 30),
+  // Ссылка, открывающая оплату сразу в приложении Kaspi. {invoice}
+  // подставляется номером счёта.
+  //
+  // Пустая по умолчанию намеренно: точный вид ссылки задаёт банк при
+  // регистрации услуги, а выдуманный — это человек, который ткнул и не смог
+  // заплатить, причём мы об этом даже не узнаем. Заполняется, когда формат
+  // придёт от Kaspi; до тех пор в сообщении остаётся только инструкция.
+  kaspiPayUrlTemplate: str("KASPI_PAY_URL_TEMPLATE", ""),
   // Сколько записей X-Forwarded-For принадлежит нашим собственным прокси.
   // Перед контейнером стоит nginx хоста, а перед ним nginx compose — реальный
   // адрес клиента лежит левее их обоих. Значение проверяется опытом, а не
@@ -177,7 +185,20 @@ export function paymentsEnabled(): boolean {
   return env.kaspiBillerEnabled || env.paymentProvider !== "mock";
 }
 
-/** Оплата идёт внутри Kaspi: ссылки нет, вместо неё инструкция. */
+/** Оплата идёт внутри Kaspi: платёж создаёт банк, а не мы. */
 export function kaspiBillerActive(): boolean {
   return env.kaspiBillerEnabled;
+}
+
+/**
+ * Прямая ссылка на оплату счёта в Kaspi — или undefined, если формат ссылки
+ * ещё не получен от банка.
+ *
+ * Ссылка не заменяет инструкцию, а дополняет её: она открывает приложение, а
+ * платят и с компьютера, и с телефона без Kaspi, и по пересланному кому-то
+ * номеру. Убрать текстовые шаги значило бы отрезать всех троих.
+ */
+export function kaspiPayUrl(invoiceNumber: string): string | undefined {
+  if (!env.kaspiPayUrlTemplate) return undefined;
+  return env.kaspiPayUrlTemplate.replace("{invoice}", encodeURIComponent(invoiceNumber));
 }

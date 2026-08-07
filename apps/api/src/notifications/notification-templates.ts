@@ -100,8 +100,12 @@ const templates: Record<NotificationEvent, (p: any, lang: Language) => string> =
   quota_exceeded: (p, lang) =>
     p.invoiceNumber
       ? lang === "kk"
-        ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды.\n\nШот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.\nТөлеу: Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірін енгізіңіз: ${p.invoiceNumber}\n\nШотты кез келген адам төлей алады — нөмірін жіберсеңіз болғаны.\nСұрақтар: ${p.supportPhone}`
-        : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан.\n\nСчёт №${p.invoiceNumber} — ${p.priceTenge} ₸ за ${p.periodDays} дней.\nОплата: Kaspi.kz → Платежи → «${p.kaspiServiceName}» → введите номер счёта: ${p.invoiceNumber}\n\nСчёт может оплатить кто угодно — достаточно переслать ему этот номер.\nВопросы: ${p.supportPhone}`
+        ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды.\n\nШот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.\n` +
+          (p.payUrl ? `Төлеу: ${p.payUrl}\n\nНемесе қолмен: ` : "Төлеу: ") +
+          `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірін енгізіңіз: ${p.invoiceNumber}\n\nШотты кез келген адам төлей алады — нөмірін жіберсеңіз болғаны.\nСұрақтар: ${p.supportPhone}`
+        : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан.\n\nСчёт №${p.invoiceNumber} — ${p.priceTenge} ₸ за ${p.periodDays} дней.\n` +
+          (p.payUrl ? `Оплатить: ${p.payUrl}\n\nИли вручную: ` : "Оплата: ") +
+          `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → введите номер счёта: ${p.invoiceNumber}\n\nСчёт может оплатить кто угодно — достаточно переслать ему этот номер.\nВопросы: ${p.supportPhone}`
       : p.paymentUrl
         ? lang === "kk"
           ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды. Өтінімдерді алуды жалғастыру үшін жазылым рәсімдеңіз: ${p.paymentUrl}`

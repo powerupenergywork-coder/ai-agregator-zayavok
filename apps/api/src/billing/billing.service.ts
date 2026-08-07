@@ -3,7 +3,7 @@ import { Cron } from "@nestjs/schedule";
 import { randomInt, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { env, kaspiBillerActive, paymentsEnabled } from "../config/env";
+import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { PAYMENT_PROVIDER, PaymentProvider } from "./payment-provider.interface";
 
 interface SubscriptionLike {
@@ -210,6 +210,7 @@ export class BillingService {
         payload: {
           freeQuota: env.freeNotificationsPerMonth,
           invoiceNumber: invoice.number,
+          payUrl: kaspiPayUrl(invoice.number),
           kaspiServiceName: env.kaspiServiceName,
           priceTenge: invoice.amountTenge,
           periodDays: invoice.periodDays,

@@ -10,7 +10,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
-import { env, kaspiBillerActive, paymentsEnabled } from "../config/env";
+import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
@@ -342,14 +342,25 @@ export class WhatsAppRouterService {
     // У Kaspi кнопка бессмысленна: нажимать не на что, платёж делается в
     // приложении банка. Вместо неё — номер счёта прямо здесь, чтобы человеку
     // не приходилось искать старое сообщение о лимите.
-    if (kaspiBillerActive() && !status.subscriptionActive) {
+    //
+    // Счёт выдаём и действующему подписчику: он может захотеть продлиться
+    // заранее, а дни при оплате прибавляются к остатку, а не съедают его
+    // (см. extendSubscription). Раньше здесь стояла проверка на активную
+    // подписку, и человек, решивший заплатить за неделю до конца, просто не
+    // мог получить номер счёта.
+    if (kaspiBillerActive()) {
       const invoice = await this.billing.issueInvoice(authUser.profileId);
+      const url = kaspiPayUrl(invoice.number);
       await this.whatsapp.sendText(
         phone,
         `${body}\n\n` +
           (lang === "kk"
-            ? `Шот №${invoice.number} — ${invoice.amountTenge} ₸.\nKaspi.kz → Төлемдер → «${env.kaspiServiceName}» → шот нөмірі: ${invoice.number}\nШотты кез келген адам төлей алады.`
-            : `Счёт №${invoice.number} — ${invoice.amountTenge} ₸.\nKaspi.kz → Платежи → «${env.kaspiServiceName}» → номер счёта: ${invoice.number}\nСчёт может оплатить кто угодно.`),
+            ? `Шот №${invoice.number} — ${invoice.amountTenge} ₸.\n` +
+              (url ? `Төлеу: ${url}\nНемесе қолмен: ` : "") +
+              `Kaspi.kz → Төлемдер → «${env.kaspiServiceName}» → шот нөмірі: ${invoice.number}\nШотты кез келген адам төлей алады.`
+            : `Счёт №${invoice.number} — ${invoice.amountTenge} ₸.\n` +
+              (url ? `Оплатить: ${url}\nИли вручную: ` : "") +
+              `Kaspi.kz → Платежи → «${env.kaspiServiceName}» → номер счёта: ${invoice.number}\nСчёт может оплатить кто угодно.`),
       );
       return;
     }
