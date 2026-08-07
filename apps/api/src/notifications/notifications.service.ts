@@ -44,16 +44,22 @@ export class NotificationsService {
 
   async send(opts: SendOptions): Promise<void> {
     const { channel: resolvedChannel, lang, lastInboundWhatsAppAt } = await this.resolveRecipient(opts.recipientPhone);
-    // A message whose whole point is its buttons cannot be delivered over SMS:
-    // the buttons are dropped, the recipient has nothing to tap, and replies to
-    // an SMS never reach the webhook — the flow dead-ends silently. Suppliers
-    // bulk-imported by an operator carry the schema's SMS default, so this is
-    // not hypothetical; it silently broke every cold invite.
-    // Safe to override because nothing ever *writes* preferredChannel=SMS:
-    // it only ever means "this phone has never told us anything", not "we
-    // checked and there is no WhatsApp here" (the OTP path in
-    // auth-otp.service.ts decides that per-send and doesn't persist it).
-    const channel = opts.channel ?? (opts.buttons?.length && resolvedChannel === "SMS" ? "WHATSAPP" : resolvedChannel);
+
+    // Две ситуации, где SMS недопустима в принципе — это правило, а не
+    // свойство данных: полагаться на preferredChannel здесь нельзя, потому
+    // что человек мог попасть в базу сначала клиентом (канал SMS по умолчанию
+    // схемы), а поставщиком стать позже — импорт канал существующим не меняет.
+    const mustUseWhatsApp =
+      // Поставщик живёт в WhatsApp целиком: согласие на заявку, «стоп»,
+      // «профиль», «баланс» — это ответы в чат, которых у SMS нет. Плюс в
+      // полной заявке едет телефон клиента, и отправлять его SMS-кой туда,
+      // где на него нельзя ответить, — худший из вариантов.
+      !!opts.supplierId ||
+      // Сообщение, весь смысл которого в кнопках, по SMS доедет пустым:
+      // кнопки теряются, отвечать некуда, ответ на SMS до вебхука не доходит.
+      !!opts.buttons?.length;
+
+    const channel = opts.channel ?? (mustUseWhatsApp && resolvedChannel === "SMS" ? "WHATSAPP" : resolvedChannel);
     const text = renderTemplate(opts.event, opts.payload, lang);
 
     let status: "SENT" | "FAILED" = "SENT";
