@@ -108,8 +108,67 @@ export class CloudApiProvider implements WhatsAppProvider {
         ...(components.length > 0 ? { components } : {}),
       },
     });
-    await this.record(phone, "template", bodyParams.join(" | "), templateName);
+    await this.record(phone, "template", await this.renderForTranscript(templateName, bodyParams), templateName);
     return messageIdOf(res);
+  }
+
+  /**
+   * Текст шаблона в том виде, в котором его увидел человек.
+   *
+   * Раньше в стенограмму шёл `bodyParams.join(" | ")` — то есть «Манипулятор |
+   * Астана | 1 т, 10 августа | 50» вместо сообщения. Первое касание с
+   * поставщиком всегда идёт шаблоном, поэтому самая важная реплика всей
+   * воронки была единственной нечитаемой: понять, что именно человеку
+   * написали и почему он ответил именно так, было нельзя.
+   *
+   * Тексты берём у Меты, а не держим копию в коде: копия разошлась бы с тем,
+   * что реально утверждено, и стенограмма врала бы тем убедительнее, чем
+   * дольше живёт. Тело шаблона после одобрения не меняется, поэтому кэша на
+   * полсуток достаточно.
+   */
+  private async renderForTranscript(templateName: string, params: string[]): Promise<string> {
+    const tpl = await this.templateBody(templateName);
+    if (!tpl) return params.join(" | ");
+    const body = tpl.body.replace(/\{\{(\d+)\}\}/g, (_, n) => params[Number(n) - 1] ?? "");
+    return tpl.buttons.length > 0 ? `${body}\n\n[ ${tpl.buttons.join(" ] [ ")} ]` : body;
+  }
+
+  private templates: Map<string, { body: string; buttons: string[] }> | null = null;
+  private templatesLoadedAt = 0;
+
+  private async templateBody(name: string) {
+    const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+    if (!this.templates || Date.now() - this.templatesLoadedAt > TWELVE_HOURS) {
+      await this.loadTemplates();
+    }
+    return this.templates?.get(name) ?? null;
+  }
+
+  /** Одним запросом на все шаблоны. Ошибка не критична: без текстов
+   * стенограмма просто вернётся к списку подстановок, как было. */
+  private async loadTemplates(): Promise<void> {
+    this.templatesLoadedAt = Date.now();
+    if (!env.whatsappCloudWabaId) return;
+    try {
+      const url =
+        `https://graph.facebook.com/${env.whatsappCloudApiVersion}/${env.whatsappCloudWabaId}` +
+        `/message_templates?limit=100&fields=name,components`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsappCloudAccessToken}` } });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const json: any = await res.json();
+      const map = new Map<string, { body: string; buttons: string[] }>();
+      for (const t of json?.data ?? []) {
+        const body = (t.components ?? []).find((c: any) => c.type === "BODY")?.text;
+        const buttons = ((t.components ?? []).find((c: any) => c.type === "BUTTONS")?.buttons ?? []).map(
+          (b: any) => b.text,
+        );
+        if (body) map.set(t.name, { body, buttons });
+      }
+      this.templates = map;
+      this.logger.log(`Загружено текстов шаблонов для стенограммы: ${map.size}`);
+    } catch (err) {
+      this.logger.warn(`Не удалось загрузить тексты шаблонов: ${(err as Error).message}`);
+    }
   }
 
   /**

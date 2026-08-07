@@ -96,6 +96,10 @@ export const env = {
   whatsappCloudPhoneNumberId: str("WHATSAPP_CLOUD_PHONE_NUMBER_ID", ""),
   whatsappCloudAccessToken: str("WHATSAPP_CLOUD_ACCESS_TOKEN", ""),
   whatsappCloudWebhookVerifyToken: str("WHATSAPP_CLOUD_WEBHOOK_VERIFY_TOKEN", "dev-verify-token-change-me"),
+  // Идентификатор WABA. Нужен, чтобы вытащить у Меты тексты утверждённых
+  // шаблонов и показывать в стенограмме то, что человек реально увидел, а не
+  // список подстановок. Пусто = стенограмма покажет подстановки, как раньше.
+  whatsappCloudWabaId: str("WHATSAPP_CLOUD_WABA_ID", ""),
   // TEST-ONLY: works around one broken Meta sandbox test-recipient entry —
   // see the comment in cloud-api.provider.ts. Leave both blank in production.
   whatsappCloudSandboxPhone: str("WHATSAPP_CLOUD_SANDBOX_PHONE", ""),
