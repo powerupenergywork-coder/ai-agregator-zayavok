@@ -57,6 +57,22 @@ const NEW_ORDER_PHRASES = /нов(ая|ый)\s*(заявк|заказ)|жаңа\
 /** Через сколько часов простоя черновик перестаёт считаться «текущим
  * разговором» и отцепляется от чата — см. releaseStaleOrder(). */
 const STALE_DRAFT_HOURS = 6;
+/** Взял заявку. «Вроде договорились… озвонится» — тоже сюда. */
+const AGREED_RE =
+  /договорил|догов[оа]рюсь|созвон|беру|взял|возьму|еду|выехал|выезжа|работаю|сделаю|принял|согласовал|буду делать|келісті|аламын/i;
+/** Не берётся. Отдельный исход, а не молчание: заявку можно предложить дальше. */
+const DECLINED_RE =
+  /не\s*(смогу|получится|буду|беру|возьму|подход|могу)|отказ|занят|далеко|нет\s*(машины|техники|времени)|бос емес|алмаймын/i;
+/** «Есть ещё заказы?» — просьба о работе, а не рассказ о себе. */
+const MORE_ORDERS_RE = /есть\s*(ещ[её]|еще)?\s*(заказ|заявк|работ)|нужн[ыа]\s*заказ|дайте\s*(заказ|заявк)|тапсырыс бар ма/i;
+// Подтверждение прочтения: ответа не требует. Держим отдельно от вежливости —
+// на «спасибо» после разговора уместно промолчать так же, но причина другая.
+const ACK_RE = /^[\s\p{Extended_Pictographic}‍️]+$/u;
+function isAcknowledgement(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (ACK_RE.test(text)) return true;
+  return ["спасибо", "спс", "рахмет", "ок", "окей", "хорошо", "принял", "понял", "жарайды"].includes(t);
+}
 // «Спасибо», «ок», «здравствуйте» — не рассказ о себе, и записывать это в
 // профиль как характеристику техники было бы враньём.
 const PLEASANTRIES = new Set([
@@ -592,6 +608,103 @@ export class WhatsAppRouterService {
   }
 
   /**
+   * Ответ поставщика по заявке, которую ему прислали.
+   *
+   * Возвращает true, если сообщение разобрано как относящееся к заявке — тогда
+   * дальше по цепочке оно не идёт.
+   *
+   * Заявку ищем по журналу отправок: кому ушёл order_broadcast_full и чья
+   * заявка ещё не закрыта. Окно в трое суток — дольше человек про конкретный
+   * заказ не пишет, а привязать вчерашнюю реплику к позавчерашней заявке
+   * значит соврать в отчёте.
+   *
+   * Вопрос не считаем ответом: «а когда клиент перезвонит?» — это не «взял».
+   */
+  private async recordOrderReply(
+    phone: string,
+    supplier: { id: string },
+    text: string,
+    lang: Language,
+  ): Promise<boolean> {
+    if (looksLikeQuestion(text) && !AGREED_RE.test(text) && !DECLINED_RE.test(text)) return false;
+
+    const order = await this.openOrderFor(supplier.id);
+    if (!order) return false;
+
+    const agreed = AGREED_RE.test(text);
+    const declined = !agreed && DECLINED_RE.test(text);
+    const outcome = agreed ? "agreed" : declined ? "declined" : "comment";
+
+    await this.prisma.supplierOrderReply.create({
+      data: { orderId: order.id, supplierId: supplier.id, text: text.trim(), outcome },
+    });
+
+    const n = order.number;
+    const reply = agreed
+      ? lang === "kk"
+        ? `Жақсы, №${n} өтінім бойынша белгіледім. Бірдеңе өзгерсе — жазыңыз.`
+        : `Отлично, отметил по заявке №${n}. Если что-то изменится — напишите.`
+      : declined
+        ? lang === "kk"
+          ? `Түсіндім, №${n} өтінімді алмайсыз. Хабарлағаныңызға рахмет — басқаларға ұсынамыз.`
+          : `Понял, заявку №${n} вы не берёте. Спасибо, что сообщили — предложим другим.`
+        : lang === "kk"
+          ? `№${n} өтінім бойынша жазып алдым. Сұрақ болса: ${env.supportPhone}`
+          : `Записал по заявке №${n}. Если нужен живой человек: ${env.supportPhone}`;
+    await this.whatsapp.sendText(phone, reply);
+    return true;
+  }
+
+  /**
+   * Ответ на «есть ещё заказы?» — по существу, а не меню команд.
+   *
+   * Сначала смотрим, нет ли у него уже открытой заявки: сказать «заявок нет»
+   * человеку, которому её прислали час назад, — прямая неправда, и он решит,
+   * что мы её отозвали.
+   */
+  private async replyAboutOpenOrders(phone: string, supplier: { id: string }, lang: Language): Promise<void> {
+    const open = await this.openOrderFor(supplier.id);
+    if (open) {
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? `Соңғы жіберілген №${open.number} өтінімі әлі ашық. Басқа өтінім жоқ — пайда болғанда бірден жібереміз.`
+          : `Последняя отправленная вам заявка №${open.number} ещё открыта. Других сейчас нет — как появятся, пришлём сразу.`,
+      );
+      return;
+    }
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Қазір сіздің бейініңізге сай ашық өтінім жоқ. Пайда болған сәтте бірден жібереміз — іздеудің қажеті жоқ.\n«профиль» — санаттар мен қалаларды кеңейту, сонда өтінім көбірек болады."
+        : "Сейчас открытых заявок по вашему профилю нет. Как появится — пришлём сразу, искать не нужно.\n«профиль» — расширить категории и города, тогда заявок будет больше.",
+    );
+  }
+
+  /** Последняя присланная этому поставщику заявка, которая ещё не закрыта. */
+  private async openOrderFor(supplierId: string) {
+    const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const logs = await this.prisma.notificationLog.findMany({
+      where: {
+        supplierId,
+        templateKey: "order_broadcast_full",
+        createdAt: { gt: since },
+        orderId: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { orderId: true },
+      take: 20,
+    });
+    const ids = [...new Set(logs.map((l) => l.orderId!))];
+    if (ids.length === 0) return null;
+    return this.prisma.order.findFirst({
+      where: { id: { in: ids }, status: "PUBLISHED" },
+      orderBy: { publishedAt: "desc" },
+      select: { id: true, number: true },
+    });
+  }
+
+  /**
    * Похоже ли сообщение на рассказ о себе. Порог намеренно осторожный: в
    * профиль попадает только то, за что не стыдно перед оператором, поэтому
    * сомнительное уходит в обычный ответ с подсказками, а не в заметку.
@@ -866,12 +979,32 @@ export class WhatsAppRouterService {
     if (!currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
-        // Не вопрос и не вежливость — значит человек рассказывает о себе, и
-        // это самое ценное, что он может написать. Раньше такой текст уходил
-        // в тот же тупик, что и «спасибо», хотя в нём был готовый профиль.
-        if (supplier.confirmedAt && this.looksLikeSelfInfo(text)) {
-          await this.captureSupplierInfo(phone, supplier, text, lang);
-          return;
+        // Молчим на «спасибо» и «👍». Это не вопрос и не сообщение — человек
+        // подтвердил, что прочитал. Меню команд в ответ на лайк выглядит так,
+        // будто с ним говорит автомат, и засоряет метрику «бот не понял»,
+        // по которой мы ищем настоящие проблемы.
+        if (isAcknowledgement(text)) return;
+
+        if (supplier.confirmedAt) {
+          // Заявка важнее профиля. Человек, которому только что прислали
+          // заявку с телефоном клиента, следующим сообщением пишет про неё —
+          // и это самое ценное, что сервис может услышать: взял или нет.
+          // Раньше «Вроде договорились, клиент озвонится» оседало в описании
+          // техники, а заявка так и висела опубликованной.
+          // Просьба о работе проверяется ПЕРВОЙ. «Есть ещё заказы» у человека
+          // с открытой заявкой иначе попало бы в исход по ней и получило бы
+          // «записал по заявке №76» — при том что спрашивают про другое.
+          if (MORE_ORDERS_RE.test(text)) {
+            await this.replyAboutOpenOrders(phone, supplier, lang);
+            return;
+          }
+
+          if (await this.recordOrderReply(phone, supplier, text, lang)) return;
+
+          if (this.looksLikeSelfInfo(text)) {
+            await this.captureSupplierInfo(phone, supplier, text, lang);
+            return;
+          }
         }
         await this.markUnrecognized(phone);
         await this.replyToSupplier(phone, supplier, lang);

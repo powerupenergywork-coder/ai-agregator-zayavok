@@ -297,6 +297,13 @@ export interface ConversationDto {
 }
 
 export interface OrderDetailsDto {
+  supplierReplies?: {
+    phone: string;
+    companyName: string | null;
+    text: string;
+    outcome: string;
+    createdAt: string;
+  }[];
   id: string;
   number: number;
   status: string;

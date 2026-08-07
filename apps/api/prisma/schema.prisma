@@ -143,6 +143,7 @@ model SupplierProfile {
   notifications              NotificationLog[]
   subscription               SupplierSubscription?
   kaspiPayments              KaspiPayment[]
+  orderReplies               SupplierOrderReply[]
   invoices                   SubscriptionInvoice[]
   pendingNotifications       PendingSupplierNotification[]
 }
@@ -260,6 +261,7 @@ model Order {
   photos                      Photo[]
   chatMessages                ChatMessage[]
   statusHistory               OrderStatusEvent[]
+  supplierReplies             SupplierOrderReply[]
   dispatchWaves               DispatchWave[]
   pendingNotifications        PendingSupplierNotification[]
   prospectContacts             ProspectContact[]
@@ -545,4 +547,26 @@ model SubscriptionInvoice {
   payments    KaspiPayment[]
 
   @@index([supplierId, status])
+}
+
+/// Что поставщик написал про конкретную заявку после того, как получил её.
+///
+/// Человек, которому только что прислали заявку с телефоном клиента,
+/// следующим сообщением пишет про неё, а не про свою технику. Раньше такой
+/// текст уходил в описание профиля: «Вроде договорились, клиент озвонится» —
+/// самое ценное сообщение, какое сервис может получить, — оседало как
+/// характеристика крана и терялось.
+model SupplierOrderReply {
+  id         String          @id @default(uuid())
+  orderId    String
+  order      Order           @relation(fields: [orderId], references: [id])
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id])
+  text       String
+  /// agreed | declined | comment
+  outcome    String
+  createdAt  DateTime        @default(now())
+
+  @@index([orderId])
+  @@index([supplierId])
 }

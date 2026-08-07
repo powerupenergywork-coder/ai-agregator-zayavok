@@ -419,6 +419,13 @@ export class AdminService {
         statusHistory: { orderBy: { createdAt: "asc" } },
         photos: true,
         dispatchWaves: true,
+        // Что поставщики написали про эту заявку. Раньше «Вроде договорились,
+        // клиент озвонится» уходило в описание профиля и к заявке отношения
+        // не имело — то есть исход сделки нигде не был виден.
+        supplierReplies: {
+          orderBy: { createdAt: "asc" },
+          include: { supplier: { include: { user: true } } },
+        },
       },
     });
     if (!order) throw new NotFoundException("Заявка не найдена");
@@ -467,6 +474,13 @@ export class AdminService {
       dateNeeded: order.dateNeeded,
       timeWindow: order.timeWindow,
       clientPhone: order.client?.user.phone ?? null,
+      supplierReplies: order.supplierReplies.map((r) => ({
+        phone: r.supplier.user.phone,
+        companyName: r.supplier.companyName,
+        text: r.text,
+        outcome: r.outcome,
+        createdAt: r.createdAt,
+      })),
       source: order.source,
       landingPath: order.landingPath,
       createdAt: order.createdAt,

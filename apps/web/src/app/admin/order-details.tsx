@@ -91,6 +91,33 @@ export function OrderDetails({ token, orderId }: { token: string; orderId: strin
         )}
       </Section>
 
+      {/* Выше уведомлений намеренно: исход сделки важнее журнала отправок.
+          Это единственное место, где видно, взял кто-то заявку или нет. */}
+      {(data.supplierReplies?.length ?? 0) > 0 && (
+        <Section title="Что ответили исполнители">
+          <ul className="space-y-1">
+            {data.supplierReplies!.map((r: any, i: number) => (
+              <li key={i} className="rounded-lg bg-slate-50 px-2 py-1">
+                <span
+                  className={
+                    r.outcome === "agreed"
+                      ? "font-medium text-emerald-700"
+                      : r.outcome === "declined"
+                        ? "font-medium text-red-600"
+                        : "font-medium text-slate-600"
+                  }
+                >
+                  {r.outcome === "agreed" ? "взял" : r.outcome === "declined" ? "не берётся" : "написал"}
+                </span>
+                <span className="ml-2">{r.companyName ?? r.phone}</span>
+                <span className="ml-2 text-xs text-slate-400">{dt(r.createdAt)}</span>
+                <div className="whitespace-pre-wrap text-slate-700">«{r.text}»</div>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {data.notifications.length > 0 && (
         <Section title="Что ушло">
           <ul className="space-y-0.5">
