@@ -135,7 +135,24 @@ export class WhatsAppOnboardingService {
       const existingIdx = state.collected.categorySlugs.indexOf(slug);
       if (accepted && existingIdx < 0) state.collected.categorySlugs.push(slug);
       if (!accepted && existingIdx >= 0) state.collected.categorySlugs.splice(existingIdx, 1);
-      state.categoryIndex = (state.categoryIndex ?? 0) + 1;
+
+      // Кнопки в WhatsApp остаются живыми навсегда: человек может пролистать
+      // вверх и нажать на старом вопросе. Так и вышло у реального поставщика —
+      // под вопросом «Грузчики» он нажал кнопку из вопроса про Газель,
+      // заданного минутой раньше. Мы засчитали это как ответ на текущий вопрос
+      // и шагнули дальше: грузчики остались неспрошенными и молча пропали, а
+      // газель, которую он до этого отклонил, включилась.
+      //
+      // Поэтому ответ применяем к той категории, что зашита в кнопке (человек
+      // ответил именно про неё, и это надо уважить), а счётчик двигаем только
+      // если нажали под текущим вопросом. Иначе текущий вопрос задаётся снова.
+      const allCategories = await this.categories.findAllActive();
+      const current = allCategories[state.categoryIndex ?? 0];
+      if (current && slug === current.slug) {
+        state.categoryIndex = (state.categoryIndex ?? 0) + 1;
+      } else {
+        this.logger.log(`Нажата кнопка старого вопроса (${slug}), текущий — ${current?.slug ?? "—"}; спрашиваю заново`);
+      }
       await this.saveState(chatId, state);
       await this.askNextCategory(chatId, phone, state, lang);
       return;
