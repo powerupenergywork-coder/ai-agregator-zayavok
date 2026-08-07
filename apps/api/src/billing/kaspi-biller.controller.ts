@@ -1,7 +1,8 @@
-import { Controller, Get, Headers, Logger, Query, Req } from "@nestjs/common";
-import type { Request } from "express";
+import { Controller, Get, Headers, Logger, Query, Req, Res } from "@nestjs/common";
+import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { KaspiBillerService, KaspiResponse, KaspiResult } from "./kaspi-biller.service";
+import { toKaspiXml } from "./kaspi-response.util";
 
 /**
  * Endpoint, который дёргает Kaspi. Адрес отдаётся банку при подключении
@@ -64,45 +65,67 @@ export class KaspiBillerController {
     };
   }
 
+  /**
+   * XML или JSON. Протокол разрешает оба и ведёт с XML, а что читает их
+   * парсер на самом деле, снаружи не видно — поэтому формат выбирается, а не
+   * зашит: явным параметром, заголовком Accept или настройкой по умолчанию.
+   * Это ровно тот класс расхождений, из-за которых интеграцию потом
+   * «подкручивают» на тестах.
+   */
+  private wantsXml(format: string | undefined, accept: string | undefined): boolean {
+    if (format === "xml") return true;
+    if (format === "json") return false;
+    if (accept?.includes("xml")) return true;
+    return env.kaspiResponseFormat === "xml";
+  }
+
   @Get("pay")
   async handle(
     @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
     @Headers("x-forwarded-for") xff: string | undefined,
+    @Headers("accept") accept: string | undefined,
     @Query("command") command: string | undefined,
     @Query("txn_id") txnId: string | undefined,
     @Query("account") account: string | undefined,
     @Query("sum") sum: string | undefined,
     @Query("txn_date") txnDate: string | undefined,
     @Query("data1") data1: string | undefined,
-  ): Promise<KaspiResponse> {
+    @Query("format") format: string | undefined,
+  ): Promise<KaspiResponse | string> {
     const ip = this.clientIp(req, xff);
     const id = txnId ?? "";
+    const reply = (r: KaspiResponse): KaspiResponse | string => {
+      if (!this.wantsXml(format, accept)) return r;
+      res.type("application/xml; charset=utf-8");
+      return toKaspiXml(r);
+    };
 
     // В протоколе нет ни подписи, ни ключа — список адресов это вся защита,
     // какая есть. Без неё любой GET-запрос выдаёт себе платную подписку.
     if (!this.allowed(ip)) {
       this.logger.warn(`Запрос с чужого адреса ${ip} (${command ?? "?"} ${id}) — отклонён`);
-      return { txn_id: id, result: KaspiResult.ERROR, comment: "Доступ запрещён" };
+      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Доступ запрещён" });
     }
     // Секрет проверяем, только если он задан: банк передаёт постоянное
     // значение в data1, если согласился его настроить. Защита сверх адресов.
     if (env.kaspiSharedSecret && data1 !== env.kaspiSharedSecret) {
       this.logger.warn(`Неверный data1 в запросе ${id} с ${ip} — отклонён`);
-      return { txn_id: id, result: KaspiResult.ERROR, comment: "Доступ запрещён" };
+      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Доступ запрещён" });
     }
     if (!id || !account) {
-      return { txn_id: id, result: KaspiResult.ERROR, comment: "Не переданы txn_id или account" };
+      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Не переданы txn_id или account" });
     }
 
     try {
-      if (command === "check") return await this.biller.check(id, account);
-      if (command === "pay") return await this.biller.pay(id, account, sum ?? "0", txnDate);
-      return { txn_id: id, result: KaspiResult.ERROR, comment: "Неизвестная команда" };
+      if (command === "check") return reply(await this.biller.check(id, account));
+      if (command === "pay") return reply(await this.biller.pay(id, account, sum ?? "0", txnDate));
+      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Неизвестная команда" });
     } catch (err) {
       // Наружу — код 5 и 200: исключение, ушедшее в HTTP 500, банк считает
       // обрывом и повторит запрос, а повтор упадёт ровно так же.
       this.logger.error(`Ошибка обработки ${command} ${id}: ${(err as Error).message}`);
-      return { txn_id: id, result: KaspiResult.ERROR, comment: "Внутренняя ошибка" };
+      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Внутренняя ошибка" });
     }
   }
 }

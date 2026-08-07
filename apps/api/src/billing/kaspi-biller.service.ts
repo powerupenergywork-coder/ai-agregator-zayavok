@@ -23,6 +23,13 @@ export interface KaspiResponse {
   txn_id: string;
   result: number;
   sum?: string;
+  /**
+   * Наш номер оплаты. Отдаём под двумя именами намеренно: в протоколе
+   * XML-пример называет это поле prv_txn, а JSON-пример — prv_txn_id, и какое
+   * из двух читает их парсер, снаружи не видно. Лишнее поле безвредно,
+   * отсутствующее — провал платежа на тестах.
+   */
+  prv_txn?: string;
   prv_txn_id?: string;
   comment?: string;
   fields?: Record<string, { "@name": string; "#text": string }>;
@@ -214,6 +221,7 @@ export class KaspiBillerService {
   }): KaspiResponse {
     return {
       txn_id: p.txnId,
+      prv_txn: String(p.prvTxnId),
       prv_txn_id: String(p.prvTxnId),
       result: p.result,
       ...(p.sumTenge !== null ? { sum: this.money(p.sumTenge) } : {}),
