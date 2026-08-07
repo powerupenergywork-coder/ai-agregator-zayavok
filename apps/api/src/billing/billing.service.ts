@@ -3,7 +3,7 @@ import { Cron } from "@nestjs/schedule";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { env, paymentsEnabled } from "../config/env";
+import { env, kaspiBillerActive, paymentsEnabled } from "../config/env";
 import { PAYMENT_PROVIDER, PaymentProvider } from "./payment-provider.interface";
 
 interface SubscriptionLike {
@@ -86,6 +86,50 @@ export class BillingService {
     });
   }
 
+  /**
+   * Продлить подписку на N дней. Точка входа для Kaspi, где платёж приходит
+   * сам, без нашего createPayment() и без reference.
+   *
+   * Считаем от конца текущего периода, а не от «сейчас»: поставщик, оплативший
+   * за неделю до окончания, иначе терял бы эту неделю — и совершенно
+   * справедливо считал бы, что его обсчитали. От «сейчас» отсчитываем только
+   * если подписка уже истекла.
+   */
+  async extendSubscription(supplierId: string, days: number, provider: string): Promise<void> {
+    const supplier = await this.prisma.supplierProfile.findUniqueOrThrow({
+      where: { id: supplierId },
+      include: { subscription: true, user: true },
+    });
+    const now = new Date();
+    const current = supplier.subscription?.currentPeriodEnd;
+    const base = current && current > now ? current : now;
+    const periodEnd = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+
+    await this.prisma.supplierSubscription.upsert({
+      where: { supplierId },
+      create: {
+        supplierId,
+        status: "ACTIVE",
+        currentPeriodStart: now,
+        currentPeriodEnd: periodEnd,
+        paymentProvider: provider,
+      },
+      update: {
+        status: "ACTIVE",
+        currentPeriodStart: supplier.subscription?.currentPeriodStart ?? now,
+        currentPeriodEnd: periodEnd,
+        paymentProvider: provider,
+      },
+    });
+
+    await this.notifications.send({
+      event: "subscription_activated",
+      payload: { periodDays: days, expiresAt: periodEnd.toLocaleDateString("ru-RU") },
+      recipientPhone: supplier.user.phone,
+      supplierId,
+    });
+  }
+
   /** True = go ahead and send the notification (and, if this was a free-quota send, count it). */
   /** Two orders dispatching to the same supplier at nearly the same moment
    * must not both slip through on the last free slot — the quota check and
@@ -113,9 +157,31 @@ export class BillingService {
 
     await this.prisma.supplierProfile.update({ where: { id: supplierId }, data: { lastQuotaReminderAt: new Date() } });
 
-    // Пока оплаты нет — ни ссылки, ни кнопки: и то и другое ведёт в
-    // requestSubscription(), то есть к мок-ссылке, дающей платную подписку
-    // даром. Поставщик пишет нам, подписку ставит оператор из админки.
+    // Три ветки, потому что способов заплатить три и они не сводятся друг к
+    // другу. У Kaspi ссылки нет вовсе — деньги вносятся внутри приложения
+    // банка, поэтому шлём инструкцию и не создаём никакого платежа заранее:
+    // мы даже не узнаем, что человек собрался платить, пока он не заплатит.
+    // Ссылка остаётся для провайдеров со шлюзом. А пока оплаты нет совсем,
+    // не шлём ни того ни другого: единственная существующая ссылка ведёт на
+    // /billing/mock-confirm, то есть раздаёт платную подписку даром.
+    if (kaspiBillerActive()) {
+      await this.notifications.send({
+        event: "quota_exceeded",
+        payload: {
+          freeQuota: env.freeNotificationsPerMonth,
+          kaspiInstructions: true,
+          kaspiServiceName: env.kaspiServiceName,
+          phone,
+          priceTenge: env.subscriptionPriceTenge,
+          periodDays: env.subscriptionPeriodDays,
+          supportPhone: env.supportPhone,
+        },
+        recipientPhone: phone,
+        supplierId,
+      });
+      return;
+    }
+
     const paymentUrl = paymentsEnabled() ? (await this.requestSubscription(supplierId)).paymentUrl : undefined;
     await this.notifications.send({
       event: "quota_exceeded",

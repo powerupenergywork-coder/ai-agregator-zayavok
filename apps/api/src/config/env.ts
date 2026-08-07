@@ -19,6 +19,14 @@ function bool(key: string, fallback: boolean): boolean {
   return v === "true" || v === "1";
 }
 
+/** Список через запятую. Пустая строка — это осознанно пустой список, а не
+ * «взять умолчание»: иначе нельзя было бы отключить перечисление вовсе. */
+function list(key: string, fallback: string[]): string[] {
+  const v = process.env[key];
+  if (v === undefined) return fallback;
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 export const env = {
   nodeEnv: str("NODE_ENV", "development"),
   apiPort: num("API_PORT", 3001),
@@ -112,12 +120,33 @@ export const env = {
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   // Куда звать поставщика, пока принимать деньги нечем: см. paymentsEnabled().
   supportPhone: str("SUPPORT_PHONE", "+7 778 709 8251"),
-  kaspiMerchantId: str("KASPI_MERCHANT_ID", ""),
-  kaspiApiKey: str("KASPI_API_KEY", ""),
-  // Shared secret Kaspi echoes back on the payment callback. Without it the
-  // webhook activates a subscription for anyone who knows a reference — and
-  // the supplier who requested the payment knows their own.
-  kaspiWebhookSecret: str("KASPI_WEBHOOK_SECRET", ""),
+  // Приём платежей по протоколу биллера Kaspi: не мы создаём платёж, а Kaspi
+  // дёргает наш GET /kaspi/pay запросами check и pay. Пока false — endpoint
+  // отвечает «ошибка провайдера» на всё, чтобы недонастроенная интеграция не
+  // раздавала подписки.
+  kaspiBillerEnabled: bool("KASPI_BILLER_ENABLED", false),
+  // Единственная защита, которую даёт протокол: никакой подписи в нём нет.
+  // Адреса из «Протокола взаимодействия (онлайн)». Третий в документе указан
+  // как 197.187.244.108 — почти наверняка опечатка (194), поэтому держим оба
+  // до подтверждения от банка.
+  kaspiAllowedIps: list("KASPI_ALLOWED_IPS", [
+    "194.187.247.152",
+    "194.187.245.108",
+    "197.187.244.108",
+    "194.187.244.108",
+  ]),
+  // Необязательный общий секрет: если банк согласится передавать постоянное
+  // значение в data1, проверим и его. Защита сверх IP, а не вместо — пустая
+  // строка отключает проверку.
+  kaspiSharedSecret: str("KASPI_SHARED_SECRET", ""),
+  // Как услуга называется в списке платежей Kaspi. Поставщик ищет её по
+  // этому названию, поэтому в инструкции должно стоять ровно оно.
+  kaspiServiceName: str("KASPI_SERVICE_NAME", "KerekTap"),
+  // Сколько записей X-Forwarded-For принадлежит нашим собственным прокси.
+  // Перед контейнером стоит nginx хоста, а перед ним nginx compose — реальный
+  // адрес клиента лежит левее их обоих. Значение проверяется опытом, а не
+  // догадкой: см. GET /kaspi/whoami.
+  trustedProxyHops: num("TRUSTED_PROXY_HOPS", 2),
   // Placeholder price — not a real business decision, just what the mock flow
   // charges so the quota/subscription logic has something to test against.
   subscriptionPriceTenge: num("SUBSCRIPTION_PRICE_TENGE", 5000),
@@ -132,11 +161,20 @@ export const env = {
 };
 
 /**
- * Умеем ли мы вообще принять деньги. PAYMENT_PROVIDER=mock выдаёт ссылку на
- * наш же /billing/mock-confirm/:reference, которая включает платную подписку
- * бесплатно в один тап — отправить такую ссылку поставщику значит раздать
- * подписки даром. Пока провайдер мок, зовём написать человеку.
+ * Умеем ли мы вообще принять деньги.
+ *
+ * Два разных способа. Kaspi по протоколу биллера — деньги вносятся в самом
+ * приложении банка, ссылки нет и быть не может, поэтому проверяется отдельным
+ * флагом. Остальные провайдеры работают через createPayment() и ссылку;
+ * PAYMENT_PROVIDER=mock выдаёт ссылку на наш же /billing/mock-confirm/:ref,
+ * которая включает платную подписку бесплатно в один тап — отправить такую
+ * поставщику значит раздать подписки даром.
  */
 export function paymentsEnabled(): boolean {
-  return env.paymentProvider !== "mock";
+  return env.kaspiBillerEnabled || env.paymentProvider !== "mock";
+}
+
+/** Оплата идёт внутри Kaspi: ссылки нет, вместо неё инструкция. */
+export function kaspiBillerActive(): boolean {
+  return env.kaspiBillerEnabled;
 }

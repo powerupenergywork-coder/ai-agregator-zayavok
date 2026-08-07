@@ -142,6 +142,7 @@ model SupplierProfile {
   serviceAreas               ServiceArea[]
   notifications              NotificationLog[]
   subscription               SupplierSubscription?
+  kaspiPayments              KaspiPayment[]
   pendingNotifications       PendingSupplierNotification[]
 }
 
@@ -473,4 +474,38 @@ model DispatchSettings {
   quietHoursStart  String?
   quietHoursEnd    String?
   updatedAt        DateTime @updatedAt
+}
+
+/// Одна транзакция Kaspi по протоколу биллера (см. billing/kaspi-biller.service.ts).
+///
+/// Существует ради идемпотентности: протокол прямо требует, чтобы повторный
+/// запрос с уже известным txn_id вернул результат предыдущей обработки, а не
+/// провёл платёж второй раз. Kaspi повторяет запрос при любом обрыве связи,
+/// так что «второй раз» — не гипотеза, а штатное поведение.
+///
+/// Заодно это журнал для сверки: банк ведёт учёт по txnDate, а не по времени
+/// получения запроса, поэтому храним именно её.
+model KaspiPayment {
+  id          String           @id @default(uuid())
+  /// Номер платежа в Kaspi. Ключ идемпотентности.
+  txnId       String           @unique
+  /// Наш номер оплаты, который возвращается в prv_txn. Протокол требует целое
+  /// число, уникальное в нашей базе.
+  prvTxnId    Int              @unique @default(autoincrement())
+  /// Идентификатор абонента как его ввёл плательщик, до нормализации.
+  account     String
+  supplierId  String?
+  supplier    SupplierProfile? @relation(fields: [supplierId], references: [id])
+  /// Тенге. Целое: Kaspi шлёт дробное, но копеек в подписке нет.
+  sumTenge    Int?
+  /// Дата учёта платежа на стороне Kaspi — по ней идёт сверка взаиморасчётов.
+  txnDate     DateTime?
+  /// Код ответа, который мы вернули: 0 успех, 1 не найден, 5 прочая ошибка.
+  result      Int
+  comment     String?
+  daysGranted Int?
+  createdAt   DateTime         @default(now())
+
+  @@index([account])
+  @@index([createdAt])
 }
