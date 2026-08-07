@@ -249,6 +249,14 @@ function SuppliersTab({ token }: { token: string }) {
                 {" · "}
                 {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}
               </p>
+              {/* Слова самого поставщика о своей технике. Категория из
+                  справочника не отличает 25-тонник от 10-тонника, а заявки
+                  приходят именно на тоннаж и длину стрелы. */}
+              {s.selfDescription && (
+                <p className="mt-1 whitespace-pre-line rounded-lg bg-sky-50 px-2 py-1 text-sky-900">
+                  <span className="text-sky-600">С его слов:</span> {s.selfDescription}
+                </p>
+              )}
               <p className="text-slate-500">
                 Бесплатных заявок в этом месяце: {s.notificationsUsedThisMonth} ·{" "}
                 {s.subscriptionActive ? (

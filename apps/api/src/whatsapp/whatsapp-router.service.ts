@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { detectLanguage, Language, LocalizedText } from "@ai-zayavki/shared";
+import { CITIES, detectLanguage, findCitiesInText, Language, LocalizedText } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
@@ -50,6 +50,30 @@ const NEW_ORDER_PHRASES = /нов(ая|ый)\s*(заявк|заказ)|жаңа\
 /** Через сколько часов простоя черновик перестаёт считаться «текущим
  * разговором» и отцепляется от чата — см. releaseStaleOrder(). */
 const STALE_DRAFT_HOURS = 6;
+// Отличает вопрос от рассказа о себе — см. captureSupplierInfo(). На вопрос
+// «а сколько это стоит?» отвечать «записал» абсурдно, а на «у меня автокран
+// 25тн» абсурдно отвечать меню команд.
+//
+// Вопросительное слово ищем целым словом в любом месте, но только в коротких
+// сообщениях: «вы кто люди» — вопрос, хотя начинается с «вы», а в длинном
+// рассказе про технику «что» почти всегда часть повествования. Обе ошибки
+// дёшевы: непонятый вопрос уйдёт в подсказки, непонятое утверждение — в
+// заметку оператору.
+const QUESTION_WORD_RE =
+  /(?:^|\s)(что|чего|кто|кого|кому|как|какой|какая|какие|каком|какую|где|куда|когда|почему|зачем|сколько|можно ли|есть ли|кім|қалай|қайда|қашан|неге|қанша|қандай)(?:$|[\s,.!])/i;
+const SHORT_MESSAGE_WORDS = 7;
+function looksLikeQuestion(text: string): boolean {
+  if (text.includes("?")) return true;
+  const words = text.trim().split(/\s+/).length;
+  return words <= SHORT_MESSAGE_WORDS && QUESTION_WORD_RE.test(text);
+}
+// «Спасибо», «ок», «здравствуйте» — не рассказ о себе, и записывать это в
+// профиль как характеристику техники было бы враньём.
+const PLEASANTRIES = new Set([
+  "спасибо", "спс", "благодарю", "ок", "окей", "хорошо", "понятно", "принял", "ясно", "да", "нет",
+  "здравствуйте", "привет", "добрый день", "добрый вечер", "доброе утро", "салам", "салем", "ассалаумагалейкум",
+  "рахмет", "жарайды", "түсінікті", "сәлем", "сәлеметсіз бе", "иә", "жоқ",
+]);
 // Explicit language-override phrases — same exact-match idiom as the
 // supplier-onboarding trigger phrases below, checked before auto-detection.
 const RU_TRIGGER_PHRASES = new Set(["по-русски", "на русском", "русский"]);
@@ -86,6 +110,13 @@ export class WhatsAppRouterService {
       // drafting session of its own.
       if (msg.buttonReplyId?.startsWith("supconfirm|")) {
         await this.handleColdInviteReply(msg.phone, msg.buttonReplyId, lang);
+        return;
+      }
+
+      // Ответ на «вы работаете и в Караганде?» — приходит без сессии, как и
+      // остальные ответы поставщика.
+      if (msg.buttonReplyId?.startsWith("supcity|")) {
+        await this.handleCityOffer(msg.phone, msg.buttonReplyId, lang);
         return;
       }
 
@@ -544,6 +575,115 @@ export class WhatsAppRouterService {
     );
   }
 
+  /**
+   * Похоже ли сообщение на рассказ о себе. Порог намеренно осторожный: в
+   * профиль попадает только то, за что не стыдно перед оператором, поэтому
+   * сомнительное уходит в обычный ответ с подсказками, а не в заметку.
+   * Название города считается достаточным сигналом само по себе — Нурбек
+   * прислал ровно «Астана» отдельным сообщением.
+   */
+  private looksLikeSelfInfo(text: string): boolean {
+    const t = text.trim();
+    if (PLEASANTRIES.has(t.toLowerCase().replace(/[.!]+$/, ""))) return false;
+    if (looksLikeQuestion(t)) return false;
+    return findCitiesInText(t).length > 0 || t.length >= 12;
+  }
+
+  /**
+   * Поставщик написал о себе — «У меня автокран 25тн, стрела 42 метра»,
+   * «Астана». Такие сообщения приходили в ответ на приглашение и молча
+   * пропадали: категория из импортированного справочника у человека уже
+   * заполнена, поэтому ни один сценарий «дособери профиль» не включался, а
+   * роутер считал текст непонятым.
+   *
+   * Три вещи, по убыванию важности: сохранить сказанное (иначе оно потеряно
+   * навсегда), показать человеку, что его услышали (иначе он больше не
+   * напишет), и подобрать из текста то, что можно применить сразу — город.
+   *
+   * Город не добавляем молча: в «а по Караганде заявки бывают?» название
+   * тоже есть, а зона работы от этого не меняется. Спрашиваем кнопкой.
+   */
+  private async captureSupplierInfo(
+    phone: string,
+    supplier: { id: string; selfDescription: string | null; serviceAreas: { city: string }[] },
+    text: string,
+    lang: Language,
+  ): Promise<void> {
+    const clean = text.trim();
+    // Накапливаем: люди пишут о себе в несколько сообщений подряд, и второе
+    // не должно затирать первое. Ограничение — чтобы одна залипшая клавиатура
+    // не превратила поле в мегабайт текста.
+    const merged = [supplier.selfDescription, clean].filter(Boolean).join("\n").slice(-4000);
+    await this.prisma.supplierProfile.update({
+      where: { id: supplier.id },
+      data: { selfDescription: merged, selfDescriptionAt: new Date() },
+    });
+
+    const known = new Set(supplier.serviceAreas.map((a) => a.city.toLowerCase()));
+    const fresh = findCitiesInText(clean).filter((c) => !known.has(c.name.ru.toLowerCase()));
+
+    const echo = clean.length > 140 ? `${clean.slice(0, 140)}…` : clean;
+    const head = lang === "kk" ? `Жазып алдым: «${echo}»` : `Записал: «${echo}»`;
+
+    if (fresh.length > 0) {
+      const names = fresh.map((c) => c.name[lang]).join(", ");
+      await this.whatsapp.sendButtons(
+        phone,
+        lang === "kk"
+          ? `${head}\n\nСіз ${names} қаласында да жұмыс істейсіз бе? Солай болса, өтінімдерді сол жақтан да жібереміз.`
+          : `${head}\n\nВы работаете и в городе ${names}? Тогда будем присылать заявки и оттуда.`,
+        [
+          { id: `supcity|add|${fresh.map((c) => c.slug).join(",")}`, text: lang === "kk" ? "Иә, қосыңыз" : "Да, добавьте" },
+          { id: "supcity|skip|", text: lang === "kk" ? "Жоқ, керегі жоқ" : "Нет, не надо" },
+        ],
+      );
+      return;
+    }
+
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? `${head}\n\nПрофиліңізге қостық — қолайлы өтінімдерді таңдағанда ескереміз.\nӨзгерту үшін «профиль» деп жазыңыз.`
+        : `${head}\n\nДобавил к вашему профилю — учтём при подборе заявок.\nЧтобы изменить профиль, напишите «профиль».`,
+    );
+  }
+
+  /** Ответ на предложение добавить город из captureSupplierInfo(). */
+  private async handleCityOffer(phone: string, token: string, lang: Language): Promise<void> {
+    const slugs = token.split("|")[2]?.split(",").filter(Boolean) ?? [];
+    if (slugs.length === 0) {
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk" ? "Жарайды, қалаларды өзгертпедік." : "Хорошо, города оставил как были.",
+      );
+      return;
+    }
+    const supplier = await this.findSupplier(phone);
+    if (!supplier) return;
+
+    const known = new Set(supplier.serviceAreas.map((a) => a.city.toLowerCase()));
+    const added: string[] = [];
+    for (const slug of slugs) {
+      const city = CITIES.find((c) => c.slug === slug);
+      if (!city || known.has(city.name.ru.toLowerCase())) continue;
+      // Храним каноническое русское имя — на него смотрит citiesServing() при
+      // подборе, и разнобой здесь означал бы поставщика, которого не находит
+      // ни одна заявка.
+      await this.prisma.serviceArea.create({ data: { supplierId: supplier.id, city: city.name.ru } });
+      added.push(city.name[lang]);
+    }
+    await this.whatsapp.sendText(
+      phone,
+      added.length > 0
+        ? lang === "kk"
+          ? `Қостық: ${added.join(", ")}. Сол қалалардың өтінімдері де келеді.`
+          : `Добавил: ${added.join(", ")}. Заявки оттуда тоже будут приходить.`
+        : lang === "kk"
+          ? "Бұл қалалар профиліңізде бұрыннан бар."
+          : "Эти города уже были в вашем профиле.",
+    );
+  }
+
   /** Сколько последних входящих подряд мы не поняли — см. replyToSupplier(). */
   private async countRecentMisses(phone: string): Promise<number> {
     try {
@@ -621,11 +761,19 @@ export class WhatsAppRouterService {
     const used = supplier.notificationsUsedThisMonth;
     const free = env.freeNotificationsPerMonth;
 
+    // Показываем и то, что человек рассказал о себе сам: без этой строки он
+    // не видит, что его слова вообще сохранились, и пишет их заново.
+    const about = supplier.selfDescription?.trim();
+    const aboutLine = about
+      ? `\n${lang === "kk" ? "Өзіңіз туралы" : "С ваших слов"}: ${about.length > 200 ? `${about.slice(-200)}…` : about}\n`
+      : "";
+
     const body =
       lang === "kk"
         ? `${supplier.companyName ?? "Орындаушы"}\n` +
           `Санаттар: ${cats || "жоқ"}\n` +
           `Қалалар: ${cities || "жоқ"}\n` +
+          aboutLine +
           `Айдағы хабарламалар: ${used} / ${free}\n` +
           `Рассылка: ${paused ? "өшірілген" : "қосулы"}\n\n` +
           `«жеткізуші» — санаттар мен қалаларды өзгерту\n` +
@@ -634,6 +782,7 @@ export class WhatsAppRouterService {
         : `${supplier.companyName ?? "Исполнитель"}\n` +
           `Категории: ${cats || "не выбраны"}\n` +
           `Города: ${cities || "не указаны"}\n` +
+          aboutLine +
           `Уведомлений за месяц: ${used} из ${free} бесплатных\n` +
           `Рассылка: ${paused ? "отключена" : "включена"}\n\n` +
           `«поставщик» — изменить категории и города\n` +
@@ -701,6 +850,13 @@ export class WhatsAppRouterService {
     if (!currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
+        // Не вопрос и не вежливость — значит человек рассказывает о себе, и
+        // это самое ценное, что он может написать. Раньше такой текст уходил
+        // в тот же тупик, что и «спасибо», хотя в нём был готовый профиль.
+        if (supplier.confirmedAt && this.looksLikeSelfInfo(text)) {
+          await this.captureSupplierInfo(phone, supplier, text, lang);
+          return;
+        }
         await this.markUnrecognized(phone);
         await this.replyToSupplier(phone, supplier, lang);
         return;

@@ -130,6 +130,13 @@ model SupplierProfile {
   notificationsUsedThisMonth Int                    @default(0)
   quotaResetAt               DateTime               @default(now())
   lastQuotaReminderAt        DateTime?
+  /// Что поставщик написал о себе своими словами: «У меня автокран 25тн,
+  /// стрела 42 метра». Такой текст приходит в ответ на приглашение и раньше
+  /// просто терялся — категория из справочника («Автокран») не заменяет его,
+  /// по ней нельзя понять, подойдёт ли человек под конкретную заявку.
+  /// Накапливается: люди пишут это в несколько сообщений подряд.
+  selfDescription            String?
+  selfDescriptionAt          DateTime?
   createdAt                  DateTime               @default(now())
   categories                 SupplierCategory[]
   serviceAreas               ServiceArea[]

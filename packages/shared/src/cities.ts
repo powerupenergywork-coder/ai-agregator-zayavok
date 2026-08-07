@@ -165,6 +165,54 @@ export function resolveCityList(raw: string): CityListResolution {
   return { cities, unresolved };
 }
 
+/** Cities mentioned somewhere inside a free-form sentence — «работаю по
+ * Караганде тоже», not the comma-separated answer resolveCityList() expects.
+ *
+ * Much stricter than resolveCity(): its fuzzy pass is safe when we asked "в
+ * каких городах?" and the whole reply is meant to be a city, but scanning an
+ * arbitrary sentence two edits is enough to reach a short city name from an
+ * ordinary noun. A missed city here costs a follow-up question; an invented
+ * one silently routes orders to the wrong person.
+ *
+ * The one concession is case endings — "работаю по Караганде" is how people
+ * actually write, and demanding the nominative would miss most real mentions.
+ * One edit is allowed only when the first four letters already match and the
+ * word is long enough that a shared four-letter prefix is not a coincidence,
+ * which admits Караганде/Караганды/Караганду and nothing else.
+ *
+ * Two-word window included so "Усть Каменогорск"/"Нур Султан" typed without
+ * the hyphen still resolve. */
+export function findCitiesInText(raw: string): CityEntry[] {
+  const words = normalizeCityInput(raw).split(" ").filter(Boolean);
+  const found: CityEntry[] = [];
+  const seen = new Set<string>();
+
+  const exact = (q: string): CityEntry | null => {
+    let inflected: CityEntry | null = null;
+    for (const c of CITIES) {
+      const forms = [c.name.ru, c.name.kk, ...c.aliases].map(normalizeCityInput);
+      if (forms.includes(q)) return c;
+      if (
+        !inflected &&
+        q.length >= 6 &&
+        forms.some((f) => f.length >= 6 && f.slice(0, 4) === q.slice(0, 4) && levenshtein(f, q) === 1)
+      ) {
+        inflected = c;
+      }
+    }
+    return inflected;
+  };
+
+  for (let i = 0; i < words.length; i++) {
+    const hit = (i + 1 < words.length ? exact(`${words[i]} ${words[i + 1]}`) : null) ?? exact(words[i]);
+    if (hit && !seen.has(hit.slug)) {
+      seen.add(hit.slug);
+      found.push(hit);
+    }
+  }
+  return found;
+}
+
 /** Canonical names of every city whose suppliers should see an order placed
  * in `cityName` — the city itself plus anyone listing it as a satellite.
  * Feeds the `city IN (...)` filter in supplier matching. */

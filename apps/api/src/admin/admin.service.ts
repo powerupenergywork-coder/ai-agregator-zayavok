@@ -79,6 +79,11 @@ export class AdminService {
         name: (c.category.name as unknown as LocalizedText).ru,
       })),
       cities: s.serviceAreas.map((a) => a.city),
+      // Слова самого поставщика о своей технике — единственное, что отличает
+      // «Автокран 25 т, стрела 42 м» от соседа с 10-тонником, а по категории
+      // из справочника они неразличимы.
+      selfDescription: s.selfDescription,
+      selfDescriptionAt: s.selfDescriptionAt,
       notificationsUsedThisMonth: s.notificationsUsedThisMonth,
       subscriptionActive: this.billing.isSubscriptionActive(s.subscription),
       subscriptionExpiresAt: s.subscription?.currentPeriodEnd ?? null,
