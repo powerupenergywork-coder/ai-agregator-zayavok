@@ -124,13 +124,24 @@ export class KaspiBillerController {
       this.logger.warn(`Неверный data1 в запросе ${id} с ${ip} — отклонён`);
       return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Доступ запрещён" });
     }
-    if (!id || !account) {
-      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Не переданы txn_id или account" });
+    if (!account) {
+      return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Не передан account" });
     }
 
     try {
+      // txn_id для check не обязателен. По протоколу банк присылает его
+      // всегда, но проверяют этот адрес и руками из браузера — а отказ на
+      // такой запрос читается как «сервис не работает», хотя дело в одном
+      // недостающем параметре. check ничего не меняет, поэтому терять на нём
+      // нечего. Для pay он остаётся обязательным: это ключ идемпотентности,
+      // без него повторный платёж нечем отличить от нового.
       if (command === "check") return reply(await this.biller.check(id, account));
-      if (command === "pay") return reply(await this.biller.pay(id, account, sum ?? "0", txnDate));
+      if (command === "pay") {
+        if (!id) {
+          return reply({ txn_id: "", result: KaspiResult.ERROR, comment: "Не передан txn_id" });
+        }
+        return reply(await this.biller.pay(id, account, sum ?? "0", txnDate));
+      }
       return reply({ txn_id: id, result: KaspiResult.ERROR, comment: "Неизвестная команда" });
     } catch (err) {
       // Наружу — код 5 и 200: исключение, ушедшее в HTTP 500, банк считает

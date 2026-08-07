@@ -145,13 +145,16 @@ export const env = {
   // Сколько дней счёт принимается к оплате. Без срока однажды придёт платёж
   // по счёту годичной давности с давно неактуальной ценой.
   invoiceValidDays: num("INVOICE_VALID_DAYS", 30),
-  // Ссылка, открывающая оплату сразу в приложении Kaspi. {invoice}
-  // подставляется номером счёта.
+  // Ссылка, открывающая оплату сразу в приложении Kaspi. Подстановки:
+  // {invoice} — номер счёта, {sum} — сумма в тенге.
   //
-  // Пустая по умолчанию намеренно: точный вид ссылки задаёт банк при
-  // регистрации услуги, а выдуманный — это человек, который ткнул и не смог
-  // заплатить, причём мы об этом даже не узнаем. Заполняется, когда формат
-  // придёт от Kaspi; до тех пор в сообщении остаётся только инструкция.
+  // Kaspi именует параметры числовыми идентификаторами полей услуги, которые
+  // назначает при регистрации, поэтому вид примерно такой:
+  //   https://kaspi.kz/pay/KerekTap?service_id=00000&15988={invoice}&15989={sum}
+  // Сами номера полей приходят от банка вместе с готовой ссылкой.
+  //
+  // Пустая по умолчанию намеренно: выдуманная ссылка — это человек, который
+  // ткнул и не смог заплатить, причём мы об этом даже не узнаем.
   kaspiPayUrlTemplate: str("KASPI_PAY_URL_TEMPLATE", ""),
   // Формат ответа по умолчанию: xml или json. Протокол разрешает оба и ведёт
   // с XML; какой читает их парсер, выясняется на тестах, поэтому это
@@ -209,7 +212,9 @@ export function kaspiBillerActive(): boolean {
  * платят и с компьютера, и с телефона без Kaspi, и по пересланному кому-то
  * номеру. Убрать текстовые шаги значило бы отрезать всех троих.
  */
-export function kaspiPayUrl(invoiceNumber: string): string | undefined {
+export function kaspiPayUrl(invoiceNumber: string, sumTenge?: number): string | undefined {
   if (!env.kaspiPayUrlTemplate) return undefined;
-  return env.kaspiPayUrlTemplate.replace("{invoice}", encodeURIComponent(invoiceNumber));
+  return env.kaspiPayUrlTemplate
+    .replace("{invoice}", encodeURIComponent(invoiceNumber))
+    .replace("{sum}", String(sumTenge ?? env.subscriptionPriceTenge));
 }

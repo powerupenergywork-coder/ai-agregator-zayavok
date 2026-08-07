@@ -350,7 +350,7 @@ export class WhatsAppRouterService {
     // мог получить номер счёта.
     if (kaspiBillerActive()) {
       const invoice = await this.billing.issueInvoice(authUser.profileId);
-      const url = kaspiPayUrl(invoice.number);
+      const url = kaspiPayUrl(invoice.number, invoice.amountTenge);
       await this.whatsapp.sendText(
         phone,
         `${body}\n\n` +

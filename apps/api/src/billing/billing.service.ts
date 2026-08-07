@@ -213,7 +213,7 @@ export class BillingService {
         payload: {
           freeQuota: env.freeNotificationsPerMonth,
           invoiceNumber: invoice.number,
-          payUrl: kaspiPayUrl(invoice.number),
+          payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
           kaspiServiceName: env.kaspiServiceName,
           priceTenge: invoice.amountTenge,
           periodDays: invoice.periodDays,
@@ -278,7 +278,7 @@ export class BillingService {
           payload: {
             expiresAt: sub.currentPeriodEnd!.toLocaleDateString("ru-RU"),
             invoiceNumber: invoice.number,
-            payUrl: kaspiPayUrl(invoice.number),
+            payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
             kaspiServiceName: env.kaspiServiceName,
             priceTenge: invoice.amountTenge,
             periodDays: invoice.periodDays,
@@ -310,7 +310,7 @@ export class BillingService {
           payload: {
             freeQuota: env.freeNotificationsPerMonth,
             invoiceNumber: invoice.number,
-            payUrl: kaspiPayUrl(invoice.number),
+            payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
             kaspiServiceName: env.kaspiServiceName,
             priceTenge: invoice.amountTenge,
             periodDays: invoice.periodDays,
