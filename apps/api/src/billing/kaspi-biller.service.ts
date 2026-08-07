@@ -1,18 +1,17 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { normalizePhone } from "../common/phone.util";
 import { env } from "../config/env";
 import { BillingService } from "./billing.service";
 
 /**
- * Коды ответа из «Протокола взаимодействия (онлайн)». Возвращаются и на
- * check, и на pay; словами их банк не читает, только числами.
+ * Коды ответа из «Протокола взаимодействия (онлайн)». Банк читает только
+ * число; comment существует для человека, разбирающего спорный платёж.
  */
 export const KaspiResult = {
   OK: 0,
-  /** Абонента с таким идентификатором у нас нет. */
+  /** Счёта с таким номером нет. */
   NOT_FOUND: 1,
-  /** Заказ отменён — у нас это заблокированный поставщик. */
+  /** Счёт отменён или просрочен. */
   CANCELLED: 2,
   ALREADY_PAID: 3,
   IN_PROGRESS: 4,
@@ -33,24 +32,21 @@ export interface KaspiResponse {
  * Приём платежей по протоколу биллера Kaspi.
  *
  * Направление обратное привычному шлюзу: мы не создаём платёж и не отдаём
- * ссылку. Поставщик открывает Kaspi, находит нашу услугу, вводит свой номер
- * телефона и платит — а банк дёргает наш endpoint дважды, сначала check
- * («такой абонент есть? сколько с него?»), потом pay («зачисли»).
+ * ссылку. Поставщик получает от нас номер счёта, кто-то открывает Kaspi,
+ * находит нашу услугу, вводит этот номер и платит — а банк дёргает наш
+ * endpoint дважды: сначала check («такой счёт есть? сколько по нему?»), потом
+ * pay («деньги внесены»).
  *
- * Из этого следует всё остальное устройство:
+ * Идентификатор — номер счёта, а не телефон. Платит не обязательно сам
+ * поставщик: за исполнителя платят бухгалтер, жена, сын с другого телефона, и
+ * поиск по номеру плательщика нашёл бы не того человека или никого. Протокол
+ * прямо разрешает «номер заказа» наравне с лицевым счётом.
  *
- * — Идентификатор абонента это телефон. Ничего другого поставщик о себе не
- *   знает наизусть, а вводить он будет с телефона, стоя у крана.
- *
- * — Идемпотентность обязательна и не опциональна. Протокол прямо требует:
- *   повторный txn_id должен вернуть результат предыдущей обработки. Kaspi
- *   повторяет запрос при любом обрыве, так что второй раз приходит штатно, а
- *   не в аварии. Реализовано уникальным индексом на KaspiPayment.txnId —
- *   гонку выигрывает база, а не наша проверка «а нет ли уже такого».
- *
- * — Ошибку на pay возвращаем только если действительно не можем зачислить.
- *   Деньги в этот момент уже списаны с человека; ответ «ошибка провайдера»
- *   после списания это разбирательство в поддержке, а не техническая деталь.
+ * Идемпотентность обязательна и не опциональна: протокол требует, чтобы
+ * повторный txn_id вернул результат предыдущей обработки. Kaspi повторяет
+ * запрос при любом обрыве, так что второй раз приходит штатно, а не в аварии.
+ * Реализована уникальным индексом на KaspiPayment.txnId — гонку разрешает
+ * база, а не наша проверка «а нет ли уже такого».
  */
 @Injectable()
 export class KaspiBillerService {
@@ -61,25 +57,19 @@ export class KaspiBillerService {
     private readonly billing: BillingService,
   ) {}
 
-  /**
-   * Телефон, как его введёт плательщик, к нашему каноническому виду.
-   *
-   * Люди наберут «7071234567», «87071234567» или «+7 707 123 45 67» — все три
-   * должны найти одного и того же человека. normalizePhone() уже умеет это,
-   * здесь только отсекаем заведомо не-телефон, чтобы не искать в базе мусор.
-   */
-  private toPhone(account: string): string | null {
+  /** Плательщик может набрать номер с пробелами или дефисами — цифры и есть
+   * номер. Всё остальное отсекаем до похода в базу. */
+  private toNumber(account: string): string | null {
     const digits = account.replace(/\D/g, "");
-    if (digits.length < 10 || digits.length > 11) return null;
-    return normalizePhone(digits);
+    return /^\d{8}$/.test(digits) ? digits : null;
   }
 
-  private async findSupplier(account: string) {
-    const phone = this.toPhone(account);
-    if (!phone) return null;
-    return this.prisma.supplierProfile.findFirst({
-      where: { user: { phone } },
-      include: { user: true, subscription: true },
+  private async findInvoice(account: string) {
+    const number = this.toNumber(account);
+    if (!number) return null;
+    return this.prisma.subscriptionInvoice.findUnique({
+      where: { number },
+      include: { supplier: { include: { user: true } } },
     });
   }
 
@@ -88,34 +78,44 @@ export class KaspiBillerService {
   }
 
   /**
-   * «Есть такой абонент и можно ли ему платить».
+   * «Есть такой счёт и можно ли по нему платить».
    *
-   * Ничего не меняет и не записывает: check приходит и просто так, когда
-   * человек листает форму оплаты. Сумму из запроса игнорируем — протокол
-   * говорит прямо, что в check она фиктивная.
+   * Ничего не меняет: check приходит и просто так, когда человек листает
+   * форму оплаты. Сумму из запроса игнорируем — протокол говорит прямо, что
+   * в check она фиктивная, а нужную сумму называем мы сами.
    *
-   * В fields отдаём название компании: плательщик увидит его в приложении и
-   * поймёт, что не ошибся номером. Стоит одной строки, а ошибка «оплатил не
-   * тому» стоит возврата.
+   * В fields отдаём, за кого счёт: плательщик увидит это в приложении и
+   * поймёт, что не ошибся номером. Стоит одной строки, а «оплатил не тот
+   * счёт» стоит возврата.
    */
   async check(txnId: string, account: string): Promise<KaspiResponse> {
     if (!env.kaspiBillerEnabled) {
       return { txn_id: txnId, result: KaspiResult.ERROR, comment: "Приём платежей не настроен" };
     }
-    const supplier = await this.findSupplier(account);
-    if (!supplier) {
-      return { txn_id: txnId, result: KaspiResult.NOT_FOUND, comment: "Исполнитель с таким номером не найден" };
+    const invoice = await this.findInvoice(account);
+    if (!invoice) {
+      return { txn_id: txnId, result: KaspiResult.NOT_FOUND, comment: "Счёт не найден" };
     }
-    if (supplier.isBlocked) {
-      return { txn_id: txnId, result: KaspiResult.CANCELLED, comment: "Профиль заблокирован" };
+    if (invoice.status === "PAID") {
+      return { txn_id: txnId, result: KaspiResult.ALREADY_PAID, comment: "Счёт уже оплачен" };
+    }
+    if (invoice.status !== "PENDING") {
+      return { txn_id: txnId, result: KaspiResult.CANCELLED, comment: "Счёт отменён" };
+    }
+    if (invoice.expiresAt <= new Date()) {
+      return { txn_id: txnId, result: KaspiResult.CANCELLED, comment: "Срок оплаты счёта истёк" };
     }
     return {
       txn_id: txnId,
       result: KaspiResult.OK,
-      sum: this.money(env.subscriptionPriceTenge),
+      sum: this.money(invoice.amountTenge),
       comment: "OK",
       fields: {
-        field1: { "@name": "Исполнитель", "#text": supplier.companyName ?? supplier.user.phone },
+        field1: {
+          "@name": "Исполнитель",
+          "#text": invoice.supplier.companyName ?? invoice.supplier.user.phone,
+        },
+        field2: { "@name": "Услуга", "#text": `Подписка на ${invoice.periodDays} дней` },
       },
     };
   }
@@ -123,10 +123,14 @@ export class KaspiBillerService {
   /**
    * «Деньги внесены — зачисляй».
    *
-   * Порядок намеренно такой: сначала пытаемся записать транзакцию, и только
-   * если запись прошла — продлеваем подписку. Уникальный индекс на txnId
-   * означает, что при повторе вставка упадёт, мы прочитаем прошлый ответ и
-   * вернём его дословно, ничего не начислив второй раз.
+   * Сначала записываем транзакцию, и только если запись прошла — закрываем
+   * счёт и продлеваем подписку. Уникальный индекс на txnId означает, что при
+   * повторе вставка упадёт, мы прочитаем прошлый ответ и вернём его дословно,
+   * ничего не начислив второй раз.
+   *
+   * Ошибку возвращаем только если действительно не можем зачислить: деньги в
+   * этот момент уже списаны, и «ошибка провайдера» после списания — это
+   * разбирательство в поддержке, а не техническая деталь.
    */
   async pay(txnId: string, account: string, sumRaw: string, txnDateRaw?: string): Promise<KaspiResponse> {
     const existing = await this.prisma.kaspiPayment.findUnique({ where: { txnId } });
@@ -139,21 +143,35 @@ export class KaspiBillerService {
       return { txn_id: txnId, result: KaspiResult.ERROR, comment: "Приём платежей не настроен" };
     }
 
-    const supplier = await this.findSupplier(account);
+    const invoice = await this.findInvoice(account);
     const sumTenge = Math.floor(Number(sumRaw));
     if (!Number.isFinite(sumTenge) || sumTenge <= 0) {
-      return this.record(txnId, account, null, null, txnDateRaw, KaspiResult.ERROR, "Некорректная сумма");
+      return this.record(txnId, account, null, null, null, txnDateRaw, KaspiResult.ERROR, "Некорректная сумма");
     }
-    if (!supplier) {
-      return this.record(txnId, account, null, sumTenge, txnDateRaw, KaspiResult.NOT_FOUND, "Исполнитель не найден");
+    if (!invoice) {
+      return this.record(txnId, account, null, null, sumTenge, txnDateRaw, KaspiResult.NOT_FOUND, "Счёт не найден");
+    }
+    if (invoice.status === "PAID") {
+      // Не ошибка и не повод для возврата: одновременно платить один счёт
+      // дважды никто не станет, а вот повторить оплату по невнимательности —
+      // запросто. Код 3 банк показывает плательщику как «уже оплачено».
+      return this.record(
+        txnId,
+        account,
+        invoice.id,
+        invoice.supplierId,
+        sumTenge,
+        txnDateRaw,
+        KaspiResult.ALREADY_PAID,
+        "Счёт уже оплачен",
+      );
     }
 
-    // Дней столько, за сколько заплатили. Kaspi позволяет плательщику
-    // ввести произвольную сумму, и оба простых варианта плохи: отказать
-    // после списания — разбирательство в поддержке, а выдать полный период
-    // за половину денег — подарок. Пропорция понятна поставщику и не требует
-    // от него попадать в копейку.
-    const perDay = env.subscriptionPriceTenge / env.subscriptionPeriodDays;
+    // Дней столько, за сколько заплатили. Сумму называем мы, но если банк
+    // всё-таки пропустит другую, оба простых варианта плохи: отказать после
+    // списания — разбирательство в поддержке, выдать полный период за
+    // половину денег — подарок.
+    const perDay = invoice.amountTenge / invoice.periodDays;
     // Не меньше дня за любой дошедший платёж: округление вниз при мелкой
     // сумме дало бы ноль дней за реальные деньги.
     const days = Math.max(1, Math.floor(sumTenge / perDay));
@@ -162,14 +180,19 @@ export class KaspiBillerService {
       const paid = await this.record(
         txnId,
         account,
-        supplier.id,
+        invoice.id,
+        invoice.supplierId,
         sumTenge,
         txnDateRaw,
         KaspiResult.OK,
         "OK",
         days,
       );
-      await this.billing.extendSubscription(supplier.id, days, "kaspi");
+      await this.prisma.subscriptionInvoice.update({
+        where: { id: invoice.id },
+        data: { status: "PAID", paidAt: new Date() },
+      });
+      await this.billing.extendSubscription(invoice.supplierId, days, "kaspi");
       return paid;
     } catch (err) {
       // Гонка: два одинаковых txn_id пришли одновременно и уникальный индекс
@@ -182,7 +205,13 @@ export class KaspiBillerService {
     }
   }
 
-  private replay(p: { txnId: string; prvTxnId: number; result: number; sumTenge: number | null; comment: string | null }): KaspiResponse {
+  private replay(p: {
+    txnId: string;
+    prvTxnId: number;
+    result: number;
+    sumTenge: number | null;
+    comment: string | null;
+  }): KaspiResponse {
     return {
       txn_id: p.txnId,
       prv_txn_id: String(p.prvTxnId),
@@ -195,6 +224,7 @@ export class KaspiBillerService {
   private async record(
     txnId: string,
     account: string,
+    invoiceId: string | null,
     supplierId: string | null,
     sumTenge: number | null,
     txnDateRaw: string | undefined,
@@ -206,6 +236,7 @@ export class KaspiBillerService {
       data: {
         txnId,
         account,
+        invoiceId,
         supplierId,
         sumTenge,
         txnDate: parseKaspiDate(txnDateRaw),

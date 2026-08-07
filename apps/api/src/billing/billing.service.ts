@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
-import { randomUUID } from "crypto";
+import { randomInt, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { env, kaspiBillerActive, paymentsEnabled } from "../config/env";
@@ -87,6 +87,45 @@ export class BillingService {
   }
 
   /**
+   * Счёт, который поставщик назовёт в Kaspi. Один и тот же, пока не оплачен и
+   * не протух: напоминание о лимите приходит не раз, и новый номер на каждое
+   * означал бы, что человек, вернувшийся к вчерашнему сообщению, платит по
+   * счёту, о котором мы уже забыли.
+   */
+  async issueInvoice(supplierId: string) {
+    const now = new Date();
+    const open = await this.prisma.subscriptionInvoice.findFirst({
+      where: { supplierId, status: "PENDING", expiresAt: { gt: now } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (open) return open;
+
+    return this.prisma.subscriptionInvoice.create({
+      data: {
+        number: await this.freeInvoiceNumber(),
+        supplierId,
+        amountTenge: env.subscriptionPriceTenge,
+        periodDays: env.subscriptionPeriodDays,
+        expiresAt: new Date(now.getTime() + env.invoiceValidDays * 24 * 60 * 60 * 1000),
+      },
+    });
+  }
+
+  /**
+   * Восемь цифр, случайных. По порядку нельзя: соседний номер — чужой счёт,
+   * и «оплатить не свой» превратилось бы в опечатку в последней цифре.
+   * Коллизия маловероятна, но проверяется, а не принимается на веру.
+   */
+  private async freeInvoiceNumber(): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const n = String(randomInt(10_000_000, 100_000_000));
+      const taken = await this.prisma.subscriptionInvoice.findUnique({ where: { number: n } });
+      if (!taken) return n;
+    }
+    throw new Error("Не удалось подобрать свободный номер счёта");
+  }
+
+  /**
    * Продлить подписку на N дней. Точка входа для Kaspi, где платёж приходит
    * сам, без нашего createPayment() и без reference.
    *
@@ -165,15 +204,15 @@ export class BillingService {
     // не шлём ни того ни другого: единственная существующая ссылка ведёт на
     // /billing/mock-confirm, то есть раздаёт платную подписку даром.
     if (kaspiBillerActive()) {
+      const invoice = await this.issueInvoice(supplierId);
       await this.notifications.send({
         event: "quota_exceeded",
         payload: {
           freeQuota: env.freeNotificationsPerMonth,
-          kaspiInstructions: true,
+          invoiceNumber: invoice.number,
           kaspiServiceName: env.kaspiServiceName,
-          phone,
-          priceTenge: env.subscriptionPriceTenge,
-          periodDays: env.subscriptionPeriodDays,
+          priceTenge: invoice.amountTenge,
+          periodDays: invoice.periodDays,
           supportPhone: env.supportPhone,
         },
         recipientPhone: phone,

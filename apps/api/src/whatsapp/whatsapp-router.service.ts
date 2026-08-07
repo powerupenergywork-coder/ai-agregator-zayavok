@@ -10,7 +10,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
-import { env, paymentsEnabled } from "../config/env";
+import { env, kaspiBillerActive, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
@@ -338,6 +338,21 @@ export class WhatsAppRouterService {
         : `Бесплатных заявок в этом месяце: ${status.remainingFree} из ${status.freeQuota}`,
       secondLine,
     ].join("\n");
+
+    // У Kaspi кнопка бессмысленна: нажимать не на что, платёж делается в
+    // приложении банка. Вместо неё — номер счёта прямо здесь, чтобы человеку
+    // не приходилось искать старое сообщение о лимите.
+    if (kaspiBillerActive() && !status.subscriptionActive) {
+      const invoice = await this.billing.issueInvoice(authUser.profileId);
+      await this.whatsapp.sendText(
+        phone,
+        `${body}\n\n` +
+          (lang === "kk"
+            ? `Шот №${invoice.number} — ${invoice.amountTenge} ₸.\nKaspi.kz → Төлемдер → «${env.kaspiServiceName}» → шот нөмірі: ${invoice.number}\nШотты кез келген адам төлей алады.`
+            : `Счёт №${invoice.number} — ${invoice.amountTenge} ₸.\nKaspi.kz → Платежи → «${env.kaspiServiceName}» → номер счёта: ${invoice.number}\nСчёт может оплатить кто угодно.`),
+      );
+      return;
+    }
 
     if (status.subscriptionActive || !canPay) {
       await this.whatsapp.sendText(phone, body);

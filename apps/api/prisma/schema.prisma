@@ -143,6 +143,7 @@ model SupplierProfile {
   notifications              NotificationLog[]
   subscription               SupplierSubscription?
   kaspiPayments              KaspiPayment[]
+  invoices                   SubscriptionInvoice[]
   pendingNotifications       PendingSupplierNotification[]
 }
 
@@ -492,8 +493,10 @@ model KaspiPayment {
   /// Наш номер оплаты, который возвращается в prv_txn. Протокол требует целое
   /// число, уникальное в нашей базе.
   prvTxnId    Int              @unique @default(autoincrement())
-  /// Идентификатор абонента как его ввёл плательщик, до нормализации.
+  /// Что плательщик ввёл в поле «номер счёта», до всякой обработки.
   account     String
+  invoiceId   String?
+  invoice     SubscriptionInvoice? @relation(fields: [invoiceId], references: [id])
   supplierId  String?
   supplier    SupplierProfile? @relation(fields: [supplierId], references: [id])
   /// Тенге. Целое: Kaspi шлёт дробное, но копеек в подписке нет.
@@ -508,4 +511,33 @@ model KaspiPayment {
 
   @@index([account])
   @@index([createdAt])
+}
+
+/// Счёт на оплату подписки.
+///
+/// Существует потому, что платит не обязательно сам поставщик: за исполнителя
+/// платят бухгалтер, жена, сын с другого телефона. Привязка к номеру
+/// плательщика в этой ситуации находит не того человека или никого, поэтому
+/// идентификатором в Kaspi служит номер счёта — протокол прямо разрешает
+/// «номер заказа» наравне с лицевым счётом.
+model SubscriptionInvoice {
+  id          String          @id @default(uuid())
+  /// Восьмизначное число, которое плательщик набирает в приложении банка.
+  /// Случайное, а не по порядку: соседний номер по возрастанию — это чужой
+  /// счёт, и подобрать его было бы тривиально.
+  number      String          @unique
+  supplierId  String
+  supplier    SupplierProfile @relation(fields: [supplierId], references: [id])
+  amountTenge Int
+  periodDays  Int
+  /// PENDING | PAID | CANCELLED
+  status      String          @default("PENDING")
+  /// После этой даты счёт не принимается к оплате: иначе однажды придёт
+  /// платёж по счёту годичной давности с давно неактуальной ценой.
+  expiresAt   DateTime
+  paidAt      DateTime?
+  createdAt   DateTime        @default(now())
+  payments    KaspiPayment[]
+
+  @@index([supplierId, status])
 }
