@@ -984,10 +984,23 @@ export class OrdersService {
       where: { id: { in: Array.from(supplierIds) } },
       include: { user: true },
     });
+
+    // Категория и город нужны утверждённому шаблону order_cancelled: одного
+    // номера мало, чтобы человек понял, о какой из полученных заявок речь.
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { category: true },
+    });
+
     for (const supplier of suppliers) {
+      const lang = toLang(supplier.user.preferredLanguage);
       await this.notifications.send({
         event,
-        payload: { orderNumber },
+        payload: {
+          orderNumber,
+          categoryName: order?.category ? (order.category.name as unknown as LocalizedText)[lang] : "",
+          city: order?.city ?? "",
+        },
         recipientPhone: supplier.user.phone,
         supplierId: supplier.id,
         orderId,

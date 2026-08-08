@@ -25,6 +25,10 @@ export const WHATSAPP_TEMPLATE_EVENTS = [
   // is shut by definition — free text can't reach them at all, which is what
   // made the whole web flow depend on SMS.
   "order_confirm_request",
+  // Отмена приходит поставщику через часы или сутки после рассылки, когда
+  // окно давно закрыто. Без шаблона это сообщение просто не доходило, и
+  // человек ехал на заявку, которую клиент уже закрыл.
+  "order_cancelled",
 ] as const;
 export type WhatsAppTemplateEvent = (typeof WHATSAPP_TEMPLATE_EVENTS)[number];
 
@@ -46,8 +50,14 @@ const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = 
   // an order was a yes/no question. It now has three outcomes, and sending
   // three button payloads against a two-button template is rejected by Meta.
   completion_checkin: { ru: "completion_checkin_v2_ru", kk: "completion_checkin_v2_kk" },
-  supplier_cold_invite: { ru: "supplier_cold_invite_ru", kk: "supplier_cold_invite_kk" },
+  // v2 — добавлена третья кнопка «Что это такое?». Холодное приглашение от
+  // незнакомого номера читается как спам, и человеку негде спросить, что это,
+  // не соглашаясь и не отказываясь: обе прежние кнопки были необратимыми.
+  // ВАЖНО: кнопок теперь три, и MatchingService обязан прислать три payload —
+  // Мета отклоняет сообщение, если их число не совпадает с шаблоном.
+  supplier_cold_invite: { ru: "supplier_cold_invite_v2_ru", kk: "supplier_cold_invite_v2_kk" },
   order_confirm_request: { ru: "order_confirm_request_ru", kk: "order_confirm_request_kk" },
+  order_cancelled: { ru: "order_cancelled_ru", kk: "order_cancelled_kk" },
   // One combined bilingual template (not split ru/kk) — see ТЗ_прогрев_поставщиков_v2
   // раздел 5: the recipient's language isn't known yet, so both language
   // blocks ship in one message and the tapped quick-reply button picks it.
@@ -128,5 +138,10 @@ export function buildWhatsAppTemplateParams(event: WhatsAppTemplateEvent, payloa
         String(payload.whenText),
         String(payload.fullDescription),
       ];
+    // Утверждённый текст: «Заявка №{{1}} отменена.\n{{2}}, {{3}}» — категория
+    // и город нужны, чтобы человек понял, о какой из полученных заявок речь:
+    // одного номера для этого мало, их у активного поставщика десятки.
+    case "order_cancelled":
+      return [String(payload.orderNumber), String(payload.categoryName), String(payload.city)];
   }
 }
