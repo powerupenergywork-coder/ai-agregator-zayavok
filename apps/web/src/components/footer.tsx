@@ -31,6 +31,12 @@ export function Footer() {
           <Link href="/terms" className="underline decoration-dotted hover:text-slate-700">
             {t.footer.terms}
           </Link>
+          {/* Единственный вход для исполнителя на всём сайте: раньше страниц
+              для него не было вовсе, и человек, получивший наше приглашение,
+              не находил о нас ничего. */}
+          <Link href="/dlya-ispolniteley" className="underline decoration-dotted hover:text-slate-700">
+            {t.footer.forSuppliers}
+          </Link>
         </div>
         <p className="text-slate-400">{t.footer.disclaimer}</p>
       </div>

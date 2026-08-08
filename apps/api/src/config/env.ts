@@ -134,6 +134,12 @@ export const env = {
   paymentProvider: str("PAYMENT_PROVIDER", "mock"),
   // Куда звать поставщика, пока принимать деньги нечем: см. paymentsEnabled().
   supportPhone: str("SUPPORT_PHONE", "+7 778 709 8251"),
+  // Номер бота в WhatsApp — на него ведёт кнопка «Начать в WhatsApp» со
+  // страницы для исполнителей. Только цифры: из них собирается ссылка wa.me.
+  whatsappBotPhone: str("WHATSAPP_BOT_PHONE", "77089526570"),
+  // Ниже этого числа блок «заявок за неделю» на публичной странице не
+  // показывается: маленькая цифра убеждает исполнителя, что работы нет.
+  publicStatsMinOrders: num("PUBLIC_STATS_MIN_ORDERS", 10),
   // Приём платежей по протоколу биллера Kaspi: не мы создаём платёж, а Kaspi
   // дёргает наш GET /kaspi/pay запросами check и pay. Пока false — endpoint
   // отвечает «ошибка провайдера» на всё, чтобы недонастроенная интеграция не

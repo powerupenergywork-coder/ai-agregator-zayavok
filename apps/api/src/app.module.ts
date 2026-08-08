@@ -10,6 +10,7 @@ import { CategoriesModule } from "./categories/categories.module";
 import { OrdersModule } from "./orders/orders.module";
 import { MatchingModule } from "./matching/matching.module";
 import { AnalyticsModule } from "./analytics/analytics.module";
+import { PublicModule } from "./public/public.module";
 import { AdminModule } from "./admin/admin.module";
 import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { BillingModule } from "./billing/billing.module";
@@ -36,6 +37,7 @@ const redisUrl = new URL(env.redisUrl);
     MatchingModule,
     AnalyticsModule,
     AdminModule,
+    PublicModule,
     WhatsAppModule,
     BillingModule,
     ProspectModule,

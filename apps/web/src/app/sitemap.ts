@@ -22,6 +22,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
     ...landings,
+    // Страница для исполнителей ищется отдельно от заказчиков: «работа
+    // манипулятором Астана» — это другой запрос, чем «заказать манипулятор».
+    { url: `${SITE_URL}/dlya-ispolniteley`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
     { url: `${SITE_URL}/privacy`, lastModified: now, changeFrequency: "yearly", priority: 0.2 },
     { url: `${SITE_URL}/terms`, lastModified: now, changeFrequency: "yearly", priority: 0.2 },
   ];

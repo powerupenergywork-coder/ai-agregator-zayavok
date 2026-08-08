@@ -169,6 +169,22 @@ export const categoriesApi = {
   listActive: () => request<CategoryTemplateDto[]>("/categories"),
 };
 
+export interface SupplierStatsDto {
+  suppliers: number;
+  categories: { slug: string; name: LocalizedText }[];
+  cities: string[];
+  /** null = заявок пока слишком мало, блок спроса не показываем. */
+  ordersLastWeek: number | null;
+  freeQuota: number;
+  priceTenge: number;
+  periodDays: number;
+  botPhone: string;
+}
+
+export const publicApi = {
+  supplierStats: () => request<SupplierStatsDto>("/public/supplier-stats"),
+};
+
 // ---------- admin ----------
 
 export const adminApi = {
