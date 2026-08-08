@@ -138,6 +138,19 @@ export class WhatsAppRouterService {
 
   async handleIncoming(msg: IncomingWhatsAppMessage): Promise<void> {
     const lang = await this.resolveLanguage(msg.phone, msg.text);
+
+    // Источник запоминаем до разбора сообщения: любая ветка ниже может
+    // ответить и выйти, а клик по рекламе Meta пришлёт ровно один раз.
+    if (msg.referral) {
+      try {
+        await this.sessions.findOrCreate(msg.chatId, msg.phone);
+        await this.sessions.recordAdReferral(msg.chatId, msg.referral);
+      } catch (err) {
+        // Атрибуция не стоит потерянного разговора.
+        this.logger.warn(`Не удалось записать источник рекламы: ${(err as Error).message}`);
+      }
+    }
+
     try {
       // Reply to a completion check-in — may arrive long after the drafting
       // conversation ended, so handle it standalone regardless of session.flow.
@@ -1232,7 +1245,10 @@ export class WhatsAppRouterService {
     // Заявка из чата: без пометки её потом не отличить от веб-заявки, а
     // разбирать «почему человек застрял» без этого нельзя — на сайте и в
     // WhatsApp обрываются на разном.
-    const draft = await this.orders.createDraft(undefined, false, { channel: "WHATSAPP" });
+    const draft = await this.orders.createDraft(undefined, false, {
+      channel: "WHATSAPP",
+      ...this.sessions.adAttribution(session),
+    });
     // Владельца привязываем сразу, не дожидаясь публикации. Анонимность
     // черновика придумана для сайта, где человек ещё не назвал телефон — в
     // WhatsApp номер и есть канал, он известен с первого сообщения и

@@ -46,6 +46,19 @@ model WhatsAppSession {
   flow           String   @default("client_order") // "client_order" today; "supplier_onboarding" etc. later
   currentOrderId String?
   stateData      Json     @default("{}")
+  /// Клик по рекламе Click-to-WhatsApp. Meta присылает объект `referral`
+  /// только в ПЕРВОМ сообщении после клика, а заявка заводится позже — иногда
+  /// через несколько реплик, — поэтому источник приходится запоминать здесь.
+  ///
+  /// Отдельными колонками, а не в stateData: тот обнуляется при clearOrder(),
+  /// setPendingOptions() и выходе из онбординга, и атрибуция терялась бы на
+  /// ровном месте.
+  adSource       String?
+  /// Полный referral: id объявления, ctwa_clid, заголовок, source_url.
+  adParams       Json?
+  /// Когда был клик — чтобы не приписать рекламе заявку, которую тот же
+  /// человек оставил спустя месяцы (см. AD_ATTRIBUTION_WINDOW_DAYS).
+  adAt           DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

@@ -167,13 +167,49 @@ export class WhatsAppController {
     const message = value?.messages?.[0];
     if (!message) return { ok: true };
 
+    // Юзернеймы WhatsApp. Если человек включил себе юзернейм, пишет нам впервые
+    // и мы не контактировали с ним 30 дней, Meta не присылает ни `from`, ни
+    // `wa_id` — только BSUID в `from_user_id`. Обработать такое сообщение нам
+    // сейчас нечем: и роутер, и сессии, и главное — передача номера заказчика
+    // исполнителю построены на телефоне.
+    //
+    // Но упасть здесь нельзя. Строка ниже до апреля 2026 гарантированно
+    // получала строку, а теперь может получить undefined — и TypeError вылетел
+    // бы ВНЕ try/catch ниже: вебхук ответил бы 500, Meta ушла бы в ретраи, и
+    // сообщение потерялось бы вместе со всеми последующими в этой доставке.
+    if (!message.from) {
+      const bsuid = message.from_user_id ?? value?.contacts?.[0]?.user_id ?? "неизвестен";
+      this.logger.error(
+        `Входящее без номера телефона: BSUID ${bsuid}, тип ${message.type}. ` +
+          `Ответить нечем — нужен шаблон с кнопкой REQUEST_CONTACT_INFO.`,
+      );
+      return { ok: true };
+    }
+
     const phone = chatIdToPhone(message.from);
     const chatId = `${message.from}@c.us`;
     await this.recordInbound(phone, message);
 
+    // Реклама Click-to-WhatsApp. Приходит ровно один раз — в первом сообщении
+    // после клика; дальше человек пишет как обычно, и связь с объявлением
+    // теряется. Дальше по цепочке referral кладётся на сессию (см.
+    // WhatsAppRouterService), потому что заявка заводится позже.
+    const referral = message.referral
+      ? {
+          sourceType: message.referral.source_type,
+          sourceId: message.referral.source_id,
+          sourceUrl: message.referral.source_url,
+          headline: message.referral.headline,
+          ctwaClid: message.referral.ctwa_clid,
+        }
+      : undefined;
+    if (referral) {
+      this.logger.log(`Переход из рекламы: ${referral.sourceType ?? "?"} ${referral.sourceId ?? "?"} — ${phone}`);
+    }
+
     try {
       if (message.type === "text") {
-        await this.router.handleIncoming({ chatId, phone, text: message.text?.body });
+        await this.router.handleIncoming({ chatId, phone, referral, text: message.text?.body });
       } else if (message.type === "button") {
         // Нажатие quick-reply в ШАБЛОНЕ приходит именно так: type "button" и
         // payload, а не interactive.button_reply — тот бывает только у
@@ -182,13 +218,18 @@ export class WhatsAppController {
         // шаблоном, поэтому без этой ветки были мертвы все кнопки: и
         // «Подтвердить» под заявкой, и «Интересно, беру» в приглашении.
         // Нажатие доходило до вебхука и молча выбрасывалось.
-        await this.router.handleIncoming({ chatId, phone, buttonReplyId: message.button?.payload });
+        await this.router.handleIncoming({ chatId, phone, referral, buttonReplyId: message.button?.payload });
       } else if (message.type === "interactive" && message.interactive?.type === "button_reply") {
-        await this.router.handleIncoming({ chatId, phone, buttonReplyId: message.interactive.button_reply?.id });
+        await this.router.handleIncoming({
+          chatId,
+          phone,
+          referral,
+          buttonReplyId: message.interactive.button_reply?.id,
+        });
       } else if (message.type === "image") {
         // Cloud API gives an opaque media id, not a URL — CloudApiProvider's
         // downloadMedia() knows to resolve this id via the Graph API instead.
-        await this.router.handleIncoming({ chatId, phone, imageUrl: message.image?.id });
+        await this.router.handleIncoming({ chatId, phone, referral, imageUrl: message.image?.id });
       } else {
         // Стикер, голосовое, документ. Молчать нельзя: человек видит, что
         // сообщение доставлено, и ждёт ответа — в живой переписке это
