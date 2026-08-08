@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { categoriesApi, CategoryTemplateDto, ordersApi, analyticsApi } from "@/lib/api";
 import { captureAttribution, getAttribution } from "@/lib/attribution";
+import Link from "next/link";
 import { useLocale } from "@/lib/i18n/context";
 import { Button, Chip, Spinner } from "@/components/ui";
 
@@ -127,7 +128,16 @@ export default function LandingPage() {
         </div>
       )}
 
-      <p className="mt-10 text-center text-xs text-slate-400">{t.landing.disclaimer}</p>
+      {/* Единственная заметная дверь для исполнителя на клиентской странице.
+          В подвале он её не найдёт: туда не смотрят, а половина исполнителей
+          попадает на главную по прямой ссылке из нашего же сообщения. */}
+      <p className="mt-10 text-center text-sm">
+        <Link href="/dlya-ispolniteley" className="text-brand-700 underline decoration-dotted">
+          {t.landing.forSuppliers}
+        </Link>
+      </p>
+
+      <p className="mt-4 text-center text-xs text-slate-400">{t.landing.disclaimer}</p>
     </main>
   );
 }
