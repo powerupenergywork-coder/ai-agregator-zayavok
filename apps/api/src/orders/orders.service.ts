@@ -763,6 +763,107 @@ export class OrdersService {
     });
   }
 
+  /**
+   * Заявки, застрявшие на подтверждении: напомнить один раз, потом закрыть.
+   *
+   * Клиент заполнил всё на сайте, получил в WhatsApp карточку с кнопкой
+   * «Подтвердить» — и не нажал. Проверки на этот статус не было никакой: ни
+   * напоминания, ни закрытия, поэтому такая заявка живёт вечно. Самая старая
+   * висит с 19 июля и будет висеть, пока её не заметят руками.
+   *
+   * Напомнить можно только тем же утверждённым шаблоном: клиент нам не писал,
+   * значит 24-часовое окно закрыто и свободный текст не пройдёт. Повторная
+   * отправка одобренного шаблона разрешена и ничего не ждёт.
+   */
+  @Cron("0 * * * *")
+  async chaseUnconfirmedOrders(): Promise<void> {
+    const now = Date.now();
+    const nudgeBefore = new Date(now - env.orderConfirmNudgeAfterHours * 60 * 60 * 1000);
+    const expireBefore = new Date(now - env.orderConfirmExpireDays * 24 * 60 * 60 * 1000);
+
+    // Сначала закрываем просроченные — иначе заявке, которой третий день,
+    // сперва ушло бы напоминание, а следом извинение за закрытие.
+    const expired = await this.prisma.order.findMany({
+      // По дате создания, а не updatedAt: тот сдвигается от любой правки —
+      // достаточно оператору поправить поле, и заявка становится бессмертной.
+      where: { status: "AWAITING_PHONE_CONFIRMATION", createdAt: { lt: expireBefore } },
+      select: { id: true, number: true },
+    });
+    for (const order of expired) {
+      try {
+        await this.closeOrderAsCancelled(
+          order.id,
+          order.number,
+          "system",
+          "Заявка не подтверждена — закрыта автоматически",
+        );
+      } catch (err) {
+        this.logger.error(`Не удалось закрыть неподтверждённую ${order.number}: ${(err as Error).message}`);
+      }
+    }
+
+    if (!isDecentHourNow()) return;
+
+    const pending = await this.prisma.order.findMany({
+      where: {
+        status: "AWAITING_PHONE_CONFIRMATION",
+        confirmNudgeAt: null,
+        // Просроченные уже закрыты выше и сюда не попадут — статус изменился.
+        updatedAt: { lt: nudgeBefore },
+      },
+      include: { category: true, client: { include: { user: true } } },
+      take: 50,
+    });
+    for (const order of pending) {
+      try {
+        await this.resendConfirmRequest(order);
+      } catch (err) {
+        this.logger.error(`Не удалось напомнить о подтверждении ${order.number}: ${(err as Error).message}`);
+      }
+    }
+
+    if (expired.length || pending.length) {
+      this.logger.log(`Неподтверждённые заявки: напомнили ${pending.length}, закрыли ${expired.length}`);
+    }
+  }
+
+  /** Тот же шаблон и та же кнопка, что и в первый раз: другого способа
+   *  достучаться до клиента, который нам не писал, не существует. */
+  private async resendConfirmRequest(order: {
+    id: string;
+    number: number;
+    publicToken: string;
+    city: string | null;
+    fieldsData: unknown;
+    dateNeeded: Date | null;
+    timeWindow: string | null;
+    category: { name: unknown; fields: unknown } | null;
+    client: { user: { phone: string; preferredLanguage: string } } | null;
+  }): Promise<void> {
+    if (!order.client || !order.category) return;
+    const lang = toLang(order.client.user.preferredLanguage);
+    const fields = order.category.fields as unknown as CategoryField[];
+
+    await this.notifications.send({
+      event: "order_confirm_request",
+      payload: {
+        orderNumber: order.number,
+        categoryName: (order.category.name as unknown as LocalizedText)[lang],
+        city: order.city ?? "",
+        whenText: formatWhen(order as never, lang),
+        fullDescription: fullDescription(order.fieldsData, fields, lang),
+        confirmUrl: `${env.webUrl}/confirm/${order.publicToken}`,
+      },
+      recipientPhone: order.client.user.phone,
+      orderId: order.id,
+      buttons: [{ id: `confirm_publish|${order.id}`, text: lang === "kk" ? "Растау" : "Подтвердить" }],
+    });
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: { confirmNudgeAt: new Date() },
+    });
+  }
+
   async sendCompletionCheckin(orderId: string) {
     const order = await this.getRawOrThrow(orderId);
     if (order.status !== "PUBLISHED" || !order.clientId) return;

@@ -84,6 +84,15 @@ export const env = {
   // OrdersService.nudgeAbandonedDrafts().
   draftNudgeAfterMinutes: num("DRAFT_NUDGE_AFTER_MINUTES", 60),
 
+  // Заявка ждёт подтверждения по кнопке в WhatsApp. Клиент нам не писал, а
+  // значит окно 24 часов закрыто и свободный текст не пройдёт — напомнить
+  // можно только тем же утверждённым шаблоном, повторной отправкой.
+  // Через сколько часов напомнить и через сколько дней закрыть, если так и
+  // не подтвердил: неподтверждённая заявка это не заявка, а строка в отчёте,
+  // которая иначе живёт вечно (самая старая висит с 19 июля).
+  orderConfirmNudgeAfterHours: num("ORDER_CONFIRM_NUDGE_AFTER_HOURS", 3),
+  orderConfirmExpireDays: num("ORDER_CONFIRM_EXPIRE_DAYS", 3),
+
   // Since suppliers now contact the client directly (no in-system offer
   // selection), the system has to proactively ask whether the order got
   // resolved instead of waiting for the client to come back and close it.
