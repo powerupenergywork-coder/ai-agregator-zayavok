@@ -17,3 +17,6 @@ packages/shared/dist/
 apps/api/uploads/*
 !apps/api/uploads/.gitkeep
 .DS_Store
+
+# Артефакт инкрементальной сборки tsc — появляется от tsc --noEmit
+*.tsbuildinfo

@@ -19,28 +19,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
     ],
     fields: [
       {
-        key: "addressFrom",
-        label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
-        type: "address",
-        required: true,
-        question: {
-          ru: "Укажите адрес загрузки и адрес выгрузки.",
-          kk: "Тиеу мекенжайы мен түсіру мекенжайын көрсетіңіз.",
-        },
-        combineGroup: "addresses",
-      },
-      {
-        key: "addressTo",
-        label: { ru: "Адрес выгрузки", kk: "Түсіру мекенжайы" },
-        type: "address",
-        required: true,
-        question: {
-          ru: "Укажите адрес загрузки и адрес выгрузки.",
-          kk: "Тиеу мекенжайы мен түсіру мекенжайын көрсетіңіз.",
-        },
-        combineGroup: "addresses",
-      },
-      {
         key: "city",
         label: { ru: "Город", kk: "Қала" },
         type: "text",
@@ -90,6 +68,28 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         question: { ru: "Нужны ли грузчики для погрузки/разгрузки?", kk: "Тиеу/түсіру үшін тиеушілер керек пе?" },
       },
       {
+        key: "addressFrom",
+        label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
+        type: "address",
+        required: true,
+        question: {
+          ru: "Укажите адрес загрузки и адрес выгрузки.",
+          kk: "Тиеу мекенжайы мен түсіру мекенжайын көрсетіңіз.",
+        },
+        combineGroup: "addresses",
+      },
+      {
+        key: "addressTo",
+        label: { ru: "Адрес выгрузки", kk: "Түсіру мекенжайы" },
+        type: "address",
+        required: true,
+        question: {
+          ru: "Укажите адрес загрузки и адрес выгрузки.",
+          kk: "Тиеу мекенжайы мен түсіру мекенжайын көрсетіңіз.",
+        },
+        combineGroup: "addresses",
+      },
+      {
         key: "photos",
         label: { ru: "Фотографии", kk: "Фотосуреттер" },
         type: "photo",
@@ -110,13 +110,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       { ru: "Требуется самосвал", kk: "Самосвал қажет" },
     ],
     fields: [
-      {
-        key: "address",
-        label: { ru: "Адрес", kk: "Мекенжай" },
-        type: "address",
-        required: true,
-        question: { ru: "Укажите адрес, куда подать самосвал.", kk: "Самосвалды қай жерге беру керектігін көрсетіңіз." },
-      },
       {
         key: "city",
         label: { ru: "Город", kk: "Қала" },
@@ -170,6 +163,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         combineGroup: "when",
       },
       {
+        key: "address",
+        label: { ru: "Адрес", kk: "Мекенжай" },
+        type: "address",
+        required: true,
+        question: { ru: "Укажите адрес, куда подать самосвал.", kk: "Самосвалды қай жерге беру керектігін көрсетіңіз." },
+      },
+      {
         key: "photos",
         label: { ru: "Фотографии", kk: "Фотосуреттер" },
         type: "photo",
@@ -190,31 +190,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
     ],
     fields: [
-      {
-        key: "addressFrom",
-        label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
-        type: "address",
-        required: true,
-        // Both fields in a combineGroup share one question on purpose:
-        // buildQuestionText de-duplicates, so the client reads a single
-        // sentence instead of two commands stitched together.
-        question: {
-          ru: "Укажите адрес загрузки и адрес доставки.",
-          kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
-        },
-        combineGroup: "addresses",
-      },
-      {
-        key: "addressTo",
-        label: { ru: "Адрес назначения", kk: "Межелі мекенжай" },
-        type: "address",
-        required: true,
-        question: {
-          ru: "Укажите адрес загрузки и адрес доставки.",
-          kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
-        },
-        combineGroup: "addresses",
-      },
       {
         key: "city",
         label: { ru: "Город", kk: "Қала" },
@@ -259,6 +234,31 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         combineGroup: "when",
       },
       {
+        key: "addressFrom",
+        label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
+        type: "address",
+        required: true,
+        // Both fields in a combineGroup share one question on purpose:
+        // buildQuestionText de-duplicates, so the client reads a single
+        // sentence instead of two commands stitched together.
+        question: {
+          ru: "Укажите адрес загрузки и адрес доставки.",
+          kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
+        },
+        combineGroup: "addresses",
+      },
+      {
+        key: "addressTo",
+        label: { ru: "Адрес назначения", kk: "Межелі мекенжай" },
+        type: "address",
+        required: true,
+        question: {
+          ru: "Укажите адрес загрузки и адрес доставки.",
+          kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
+        },
+        combineGroup: "addresses",
+      },
+      {
         key: "photos",
         label: { ru: "Фотографии", kk: "Фотосуреттер" },
         type: "photo",
@@ -276,13 +276,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       { ru: "Нужен автокран для монтажа", kk: "Монтаж үшін автокран керек" },
     ],
     fields: [
-      {
-        key: "address",
-        label: { ru: "Адрес объекта", kk: "Нысан мекенжайы" },
-        type: "address",
-        required: true,
-        question: { ru: "Укажите адрес объекта, куда подать кран.", kk: "Кранды беру керек нысанның мекенжайын көрсетіңіз." },
-      },
       {
         key: "city",
         label: { ru: "Город", kk: "Қала" },
@@ -347,6 +340,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         combineGroup: "when",
       },
       {
+        key: "address",
+        label: { ru: "Адрес объекта", kk: "Нысан мекенжайы" },
+        type: "address",
+        required: true,
+        question: { ru: "Укажите адрес объекта, куда подать кран.", kk: "Кранды беру керек нысанның мекенжайын көрсетіңіз." },
+      },
+      {
         key: "photos",
         label: { ru: "Фотографии", kk: "Фотосуреттер" },
         type: "photo",
@@ -364,13 +364,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
     icon: "trash",
     examples: [{ ru: "Нужно вывезти строительный мусор", kk: "Құрылыс қоқысын шығару керек" }],
     fields: [
-      {
-        key: "address",
-        label: { ru: "Адрес", kk: "Мекенжай" },
-        type: "address",
-        required: true,
-        question: { ru: "Укажите адрес, откуда вывозить мусор.", kk: "Қоқысты шығару керек мекенжайды көрсетіңіз." },
-      },
       {
         key: "city",
         label: { ru: "Город", kk: "Қала" },
@@ -424,6 +417,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         combineGroup: "when",
       },
       {
+        key: "address",
+        label: { ru: "Адрес", kk: "Мекенжай" },
+        type: "address",
+        required: true,
+        question: { ru: "Укажите адрес, откуда вывозить мусор.", kk: "Қоқысты шығару керек мекенжайды көрсетіңіз." },
+      },
+      {
         key: "photos",
         label: { ru: "Фотографии", kk: "Фотосуреттер" },
         type: "photo",
@@ -438,13 +438,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
     icon: "people",
     examples: [{ ru: "Нужны грузчики", kk: "Тиеушілер керек" }],
     fields: [
-      {
-        key: "address",
-        label: { ru: "Адрес", kk: "Мекенжай" },
-        type: "address",
-        required: true,
-        question: { ru: "Укажите адрес.", kk: "Мекенжайды көрсетіңіз." },
-      },
       {
         key: "city",
         label: { ru: "Город", kk: "Қала" },
@@ -508,6 +501,13 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         required: true,
         question: { ru: "К какому времени?", kk: "Қай уақытқа дейін?" },
         combineGroup: "when",
+      },
+      {
+        key: "address",
+        label: { ru: "Адрес", kk: "Мекенжай" },
+        type: "address",
+        required: true,
+        question: { ru: "Укажите адрес.", kk: "Мекенжайды көрсетіңіз." },
       },
     ],
   },

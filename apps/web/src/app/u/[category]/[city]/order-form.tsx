@@ -14,7 +14,15 @@ import { Button } from "@/components/ui";
  * месте. Поэтому черновик сразу создаётся нужного типа, и диалог начинается с
  * деталей, а не с выбора категории.
  */
-export function LandingOrderForm({ categorySlug, examples }: { categorySlug: string; examples: string[] }) {
+export function LandingOrderForm({
+  categorySlug,
+  cityName,
+  examples,
+}: {
+  categorySlug: string;
+  cityName: string;
+  examples: string[];
+}) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -30,6 +38,17 @@ export function LandingOrderForm({ categorySlug, examples }: { categorySlug: str
     setError(null);
     try {
       const draft = await ordersApi.createDraft(categorySlug, false, getAttribution());
+      // Город известен из адреса страницы — человек пришёл на «грузчики в
+      // Астане». Переспрашивать его значит задать вопрос, ответ на который
+      // мы уже знаем, а на платном трафике каждый лишний вопрос стоит денег.
+      //
+      // Молча: если проставить не вышло, бот просто спросит город сам, как
+      // раньше. Терять из-за этого заявку нельзя.
+      try {
+        await ordersApi.setField(draft.id, "city", cityName);
+      } catch {
+        // не критично — вопрос про город останется в диалоге
+      }
       await ordersApi.chat(draft.id, message.trim());
       router.push(`/orders/${draft.id}`);
     } catch (e: any) {

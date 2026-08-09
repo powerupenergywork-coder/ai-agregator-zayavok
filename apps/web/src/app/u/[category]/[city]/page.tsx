@@ -53,7 +53,7 @@ export default async function LandingCityPage({
       <h1 className="mb-3 text-2xl font-semibold text-slate-900">{category.h1(city)}</h1>
       <p className="mb-6 text-slate-600">{category.intro(city)}</p>
 
-      <LandingOrderForm categorySlug={category.categorySlug} examples={category.examples} />
+      <LandingOrderForm categorySlug={category.categorySlug} cityName={city.name} examples={category.examples} />
 
       <section className="mt-10 text-sm text-slate-600">
         <h2 className="mb-2 text-base font-medium text-slate-900">Как это работает</h2>
