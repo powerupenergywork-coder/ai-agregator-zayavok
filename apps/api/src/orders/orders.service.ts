@@ -351,6 +351,25 @@ export class OrdersService {
       : lang === "kk"
         ? `«${unknownCity}» қаласын танымадым. Біз жұмыс істейтін қалалар: ${citySuggestions("kk")} және басқалары.\n\n`
         : `Не узнал город «${unknownCity}». Мы работаем в городах: ${citySuggestions("ru")} и другие.\n\n`;
+    // Город назван, но исполнителей там нет ни одного. Молчать об этом —
+    // значит провести человека через четыре вопроса к сообщению «не нашли
+    // подходящих исполнителей»; узнаёт он последним и больше не вернётся.
+    //
+    // Реальный случай: заявка из Костаная, где у нас ноль исполнителей при
+    // 114 в Астане. Говорим сразу и не мешаем оформить — вдруг появятся, а
+    // список таких городов заодно показывает, куда расширяться.
+    let coverageNotice = "";
+    const cityValue = validatedFields.city;
+    if (!unknownCity && typeof cityValue === "string" && cityValue && previousValues.city !== cityValue) {
+      const covered = await this.prisma.serviceArea.count({ where: { city: cityValue } });
+      if (covered === 0) {
+        coverageNotice =
+          lang === "kk"
+            ? `${cityValue} қаласында бізде әзірге орындаушылар жоқ. Өтінімді рәсімдей аламын және олар пайда болғанда хабарлаймын.\n\n`
+            : `В городе ${cityValue} у нас пока нет исполнителей. Заявку оформлю и напишу вам, как только они появятся.\n\n`;
+      }
+    }
+
     // Отброшенный вопрос нельзя проглотить молча: тот же вопрос, заданный
     // заново без единого слова объяснения, выглядит так, будто бот не читает
     // собеседника — а человек и так уже написал, что не понимает происходящего.
@@ -385,8 +404,8 @@ export class OrdersService {
 
     const assistantMessage =
       missing.length === 0
-        ? inferredNotice + readyForReviewMessage(lang)
-        : inferredNotice + questionNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
+        ? inferredNotice + coverageNotice + readyForReviewMessage(lang)
+        : inferredNotice + coverageNotice + questionNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {
