@@ -109,6 +109,11 @@ export function isFieldFilled(field: CategoryField, knownFields: Record<string, 
   const v = knownFields[field.key];
   if (v === undefined || v === null) return false;
   if (typeof v === "string" && v.trim() === "") return false;
+  // «Не знаю» считается ответом только там, где мы сами это разрешили
+  // (allowUnknown). Для остальных полей — адреса, вида работ, города — такое
+  // значение означает, что мы не спросили, а сдались: заявка выглядит
+  // заполненной, а исполнителю с ней делать нечего.
+  if (typeof v === "string" && UNKNOWN_VALUES.has(v) && !field.allowUnknown) return false;
   return true;
 }
 

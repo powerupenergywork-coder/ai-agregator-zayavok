@@ -33,7 +33,7 @@ const DRAFT_STATUSES = ["DRAFT", "CLARIFYING"];
 // Nothing further will happen to an order in one of these — including
 // NEEDS_OPERATOR, which now only means "no supplier matched" and has no
 // operator queue behind it. See handleText().
-const FINISHED_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "NEEDS_OPERATOR"];
+const FINISHED_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE", "NEEDS_OPERATOR"];
 const BALANCE_TRIGGER_PHRASES = new Set(["баланс", "мой баланс", "подписка"]);
 // A supplier who can't stop the messages reports them as spam instead, and
 // spam reports cost the number's quality rating — so opting out has to work
@@ -114,15 +114,29 @@ function looksLikeSupplierDeclaration(text: string): boolean {
  * работу исполнителям. Ловим только формулировки, где человек ищет работу
  * себе.
  */
+/** Речь о заявке: цена, созвон, клиент. Не про себя — см. looksLikeSelfInfo. */
+const ORDER_TALK_RE =
+  /цен[аеуы]|ценом|стоимост|тенге|тг\b|договор|созвон|перезвон|клиент|заказчик|заявк|баға|келіс|хабарлас/i;
 const WORK_SEEKER_RE =
   /(ищу|найти|найд[ёе]м|хочу|где)\s+работ|работ[ауы]\s+(найти|ищу|есть\s*ли)|подработк|трудоустрой|ваканси|жұмыс\s+(іздеп|табу|бар\s*ма)/i;
 // Подтверждение прочтения: ответа не требует. Держим отдельно от вежливости —
 // на «спасибо» после разговора уместно промолчать так же, но причина другая.
 const ACK_RE = /^[\s\p{Extended_Pictographic}‍️]+$/u;
+const ACK_WORDS = new Set([
+  "спасибо", "спс", "рахмет", "рақмет", "ок", "окей", "ok", "хорошо", "принял", "понял", "жарайды", "жақсы", "да",
+]);
 function isAcknowledgement(text: string): boolean {
-  const t = text.trim().toLowerCase();
   if (ACK_RE.test(text)) return true;
-  return ["спасибо", "спс", "рахмет", "ок", "окей", "хорошо", "принял", "понял", "жарайды"].includes(t);
+  // По словам, а не целой строкой. «Ок рахмет» — два подтверждения подряд —
+  // не совпадало ни с одним элементом списка и уходило в «бот не понял»:
+  // человек попрощался, а получил меню команд. Реальный случай, заявка №76.
+  const words = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?…]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.length > 0 && words.length <= 3 && words.every((w) => ACK_WORDS.has(w));
 }
 // «Спасибо», «ок», «здравствуйте» — не рассказ о себе, и записывать это в
 // профиль как характеристику техники было бы враньём.
@@ -926,6 +940,12 @@ export class WhatsAppRouterService {
     const t = text.trim();
     if (PLEASANTRIES.has(t.toLowerCase().replace(/[.!]+$/, ""))) return false;
     if (looksLikeQuestion(t)) return false;
+    // Разговор про заявку — не рассказ о себе. «По ценом сами да» после
+    // получения заявки №76 осело в профиле как описание техники, и человеку
+    // ответили «добавил к вашему профилю — учтём при подборе заявок»: обещание
+    // ложное, свободный текст в подборе не участвует, а он говорил о цене
+    // конкретного заказа.
+    if (ORDER_TALK_RE.test(t)) return false;
     return findCitiesInText(t).length > 0 || t.length >= 12;
   }
 

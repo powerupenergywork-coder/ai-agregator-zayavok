@@ -563,11 +563,31 @@ export class OrdersService {
    * order needs its own fresh check-in window, not the original one (which
    * may have already fired a no-op against the since-changed status). */
   async scheduleCompletionCheckins(orderId: string) {
-    await this.matchingQueue.add("checkin", { orderId }, { delay: env.orderCheckinDelayHours * 3600 * 1000 });
+    // Отсчёт от ДАТЫ РАБОТЫ, а не от публикации.
+    //
+    // Заявка №76: опубликована 7 августа, работа назначена на 10-е, 15:00.
+    // Через 48 часов после публикации, то есть 9-го, система закрыла её как
+    // «клиент не ответил на проверку статуса» и написала исполнителю
+    // «звонить по ней не нужно» — за день до выезда, при том что он уже
+    // договорился с клиентом о цене.
+    //
+    // Спрашивать «услугу оказали?» раньше, чем она должна была состояться,
+    // бессмысленно, а закрывать по молчанию на такой вопрос — вредно.
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { dateNeeded: true },
+    });
+    const now = Date.now();
+    // Дата в прошлом (заявка «на сегодня, сейчас») или её нет — считаем от
+    // публикации, как раньше.
+    const from = Math.max(order?.dateNeeded?.getTime() ?? now, now);
+
+    const checkinAt = from + env.orderCheckinDelayHours * 3600 * 1000;
+    await this.matchingQueue.add("checkin", { orderId }, { delay: checkinAt - now });
     await this.matchingQueue.add(
       "checkin-escalate",
       { orderId },
-      { delay: (env.orderCheckinDelayHours + env.orderCheckinAutoCloseHours) * 3600 * 1000 },
+      { delay: checkinAt - now + env.orderCheckinAutoCloseHours * 3600 * 1000 },
     );
   }
 
@@ -902,14 +922,35 @@ export class OrdersService {
     const order = await this.getRawOrThrow(orderId);
     if (order.status !== "PUBLISHED") return;
 
-    await this.closeOrderAsCancelled(orderId, order.number, "system", "Клиент не ответил на проверку статуса — заявка закрыта автоматически");
+    // Исполнителям НЕ сообщаем. Утверждённый шаблон говорит «Клиент закрыл
+    // заявку — звонить по ней не нужно», а здесь клиент ничего не закрывал:
+    // он всего лишь не нажал кнопку в проверке статуса. Для человека, уже
+    // договорившегося о работе, это указание отменить живой заказ — именно
+    // так мы едва не сорвали заявку №76.
+    //
+    // Мы соединяем людей и не гарантируем сделку: молчание клиента означает
+    // лишь то, что заявку пора убрать из активных у нас, а не то, что
+    // работы не будет.
+    await this.closeOrderAsCancelled(
+      orderId,
+      order.number,
+      "system",
+      "Клиент не ответил на проверку статуса — заявка закрыта автоматически",
+      { notifySuppliers: false, status: "CLOSED_NO_RESPONSE" },
+    );
     this.realtime.emitOrderUpdated(orderId, await this.toDto(orderId));
   }
 
-  private async closeOrderAsCancelled(orderId: string, orderNumber: number, actor: string, reason: string): Promise<void> {
-    await this.transitionStatus(orderId, "CANCELLED_BY_CLIENT", actor, reason);
+  private async closeOrderAsCancelled(
+    orderId: string,
+    orderNumber: number,
+    actor: string,
+    reason: string,
+    opts: { notifySuppliers: boolean; status?: OrderStatus } = { notifySuppliers: true },
+  ): Promise<void> {
+    await this.transitionStatus(orderId, opts.status ?? "CANCELLED_BY_CLIENT", actor, reason);
     await this.prisma.order.update({ where: { id: orderId }, data: { cancelledAt: new Date(), cancelReason: reason } });
-    await this.notifyDispatchedSuppliers(orderId, orderNumber, "order_cancelled");
+    if (opts.notifySuppliers) await this.notifyDispatchedSuppliers(orderId, orderNumber, "order_cancelled");
   }
 
   async repeat(orderId: string, user: AuthUser) {

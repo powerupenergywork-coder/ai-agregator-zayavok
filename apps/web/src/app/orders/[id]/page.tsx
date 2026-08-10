@@ -34,7 +34,6 @@ export default function OrderPage() {
   const [nextFields, setNextFields] = useState<CategoryField[]>([]);
   const [isReadyForReview, setIsReadyForReview] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [showPhoneConfirm, setShowPhoneConfirm] = useState(false);
   const [phone, setPhone] = useState("");
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [showCancel, setShowCancel] = useState(false);
@@ -133,7 +132,6 @@ export default function OrderPage() {
     try {
       const updated = await ordersApi.requestConfirmation(orderId, phone.trim());
       setOrder(updated);
-      setShowPhoneConfirm(false);
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -265,7 +263,14 @@ export default function OrderPage() {
         </Card>
       )}
 
-      {isDraftPhase && isReadyForReview && !showPhoneConfirm && (
+      {/* Карточка и телефон — один экран, а не два.
+       *
+       * Было три шага: «проверьте карточку» → «отправить» → «введите номер».
+       * Шесть заявок (№30, 31, 44, 47, 51, 56) собраны полностью и стоят
+       * ровно здесь: человек ответил на все вопросы и не нажал последнюю
+       * кнопку. Это пятая часть всех застрявших — люди уже сделали работу,
+       * и мы теряли их на финише. */}
+      {isDraftPhase && isReadyForReview && (
         <Card className="p-4">
           <h2 className="mb-3 text-base font-medium">{t.order.reviewTitle}</h2>
           <dl className="flex flex-col gap-2 text-sm">
@@ -294,39 +299,24 @@ export default function OrderPage() {
               ))}
             </div>
           )}
-          <div className="mt-4 flex gap-2">
-            <Button variant="ghost" onClick={() => setIsReadyForReview(false)}>
-              {t.order.editInChat}
-            </Button>
-            <Button className="flex-1" onClick={() => setShowPhoneConfirm(true)}>
-              {t.order.submitOrder}
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {isDraftPhase && isReadyForReview && showPhoneConfirm && (
-        <Card className="p-4">
-          <h2 className="mb-1 text-base font-medium">{t.order.phoneTitle}</h2>
-          <p className="mb-3 text-sm text-slate-500">{t.order.phoneHint}</p>
           <form
-            className="flex flex-col gap-3"
+            className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4"
             onSubmit={(e) => {
               e.preventDefault();
               requestConfirmation();
             }}
           >
+            <p className="text-sm text-slate-500">{t.order.phoneHint}</p>
             <input
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               type="tel"
-              autoFocus
               placeholder="+7 7XX XXX XX XX"
               className="rounded-full border border-slate-300 px-4 py-2 text-sm outline-none focus:border-brand-500"
             />
             <div className="flex gap-2">
-              <Button variant="ghost" type="button" onClick={() => setShowPhoneConfirm(false)}>
-                {t.common.back}
+              <Button variant="ghost" type="button" onClick={() => setIsReadyForReview(false)}>
+                {t.order.editInChat}
               </Button>
               <Button type="submit" className="flex-1" disabled={busy || !phone.trim()}>
                 {t.order.sendToWhatsApp}
@@ -407,7 +397,7 @@ export default function OrderPage() {
             </Card>
           )}
 
-          {!["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN"].includes(order.status) && (
+          {!["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE"].includes(order.status) && (
             <Button variant="ghost" onClick={() => setShowCancel(true)} className="self-start">
               {t.order.cancelOrder}
             </Button>

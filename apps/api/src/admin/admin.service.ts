@@ -27,7 +27,7 @@ import { InitiateProspectDto } from "./dto/initiate-prospect.dto";
 
 const QUEUE_STATUS_MAP: Record<string, OrderStatus[]> = {
   needs_review: ["NEEDS_OPERATOR"],
-  cancelled: ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN"],
+  cancelled: ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE"],
   active: ["PUBLISHED"],
 };
 
@@ -647,7 +647,7 @@ export class AdminService {
       }),
       this.prisma.order.count({ where: { publishedAt: { not: null } } }),
       this.prisma.order.count({ where: { status: "COMPLETED" } }),
-      this.prisma.order.count({ where: { status: { in: ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN"] } } }),
+      this.prisma.order.count({ where: { status: { in: ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE"] } } }),
       this.prisma.order.count({ where: { status: "NEEDS_OPERATOR" } }),
     ]);
 

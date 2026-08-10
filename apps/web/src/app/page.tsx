@@ -111,7 +111,14 @@ export default function LandingPage() {
             ? categories.flatMap((c) => c.examples.slice(0, 1).map((ex) => ex[locale]))
             : t.landing.fallbackExamples
           ).map((example) => (
-            <Chip key={example} onClick={() => submit(example)} disabled={submitting}>
+            // Подсказка ПОДСТАВЛЯЕТ текст, а не отправляет его.
+            //
+            // Раньше клик сразу заводил заявку, и любой любопытный тык
+            // становился записью в базе: из 29 застрявших заявок 17 состоят
+            // ровно из одной реплики, совпадающей с текстом подсказки, —
+            // «Нужен кран поднять груз» встречается девять раз. Теперь
+            // отправляет человек, когда действительно этого хочет.
+            <Chip key={example} onClick={() => setMessage(example)} disabled={submitting}>
               {example}
             </Chip>
           ))}

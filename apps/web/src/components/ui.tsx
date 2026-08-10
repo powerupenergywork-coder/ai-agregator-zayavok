@@ -47,7 +47,7 @@ export function Spinner({ className = "" }: { className?: string }) {
 
 export function StatusBadge({ label, status }: { label: string; status: string }) {
   const positive = ["COMPLETED", "PUBLISHED", "SUPPLIER_SELECTED", "IN_PROGRESS"];
-  const negative = ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "NO_OFFERS", "DISPUTE"];
+  const negative = ["CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE", "NO_OFFERS", "DISPUTE"];
   const tone = positive.includes(status) ? "bg-emerald-50 text-emerald-700" : negative.includes(status) ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-700";
   return <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${tone}`}>{label}</span>;
 }

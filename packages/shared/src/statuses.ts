@@ -16,6 +16,11 @@ export const ORDER_STATUSES = [
   "COMPLETED",
   "CANCELLED_BY_CLIENT",
   "CANCELLED_BY_ADMIN",
+  // Закрыта нами по молчанию клиента, а не отменена им. Раньше такие заявки
+  // получали CANCELLED_BY_CLIENT с actor=system, и в отчёте по причинам
+  // отмен выглядели как отказ заказчика — при том что заказчик не делал
+  // ничего. Заявка №76 так и «отменилась» за день до выезда.
+  "CLOSED_NO_RESPONSE",
 ] as const;
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -34,6 +39,7 @@ export const ORDER_STATUS_LABELS_RU: Record<OrderStatus, string> = {
   COMPLETED: "Завершена",
   CANCELLED_BY_CLIENT: "Отменена клиентом",
   CANCELLED_BY_ADMIN: "Отменена администратором",
+  CLOSED_NO_RESPONSE: "Закрыта: клиент не ответил",
 };
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, LocalizedText> = {
@@ -45,6 +51,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, LocalizedText> = {
   COMPLETED: { ru: "Завершена", kk: "Аяқталды" },
   CANCELLED_BY_CLIENT: { ru: "Отменена клиентом", kk: "Клиент бас тартты" },
   CANCELLED_BY_ADMIN: { ru: "Отменена администратором", kk: "Әкімші бас тартты" },
+  CLOSED_NO_RESPONSE: { ru: "Закрыта: не было ответа", kk: "Жабылды: жауап болмады" },
 };
 
 // Allowed transitions — the API rejects any transition not listed here.
@@ -52,9 +59,10 @@ export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   DRAFT: ["CLARIFYING", "CANCELLED_BY_CLIENT"],
   CLARIFYING: ["AWAITING_PHONE_CONFIRMATION", "CANCELLED_BY_CLIENT"],
   AWAITING_PHONE_CONFIRMATION: ["PUBLISHED", "CANCELLED_BY_CLIENT"],
-  PUBLISHED: ["COMPLETED", "NEEDS_OPERATOR", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN"],
-  NEEDS_OPERATOR: ["PUBLISHED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN"],
+  PUBLISHED: ["COMPLETED", "NEEDS_OPERATOR", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE"],
+  NEEDS_OPERATOR: ["PUBLISHED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE"],
   COMPLETED: [],
   CANCELLED_BY_CLIENT: [],
   CANCELLED_BY_ADMIN: [],
+  CLOSED_NO_RESPONSE: [],
 };
