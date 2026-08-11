@@ -10,6 +10,8 @@ import { AuthOtpModule } from "../auth-otp/auth-otp.module";
 import { BillingModule } from "../billing/billing.module";
 import { ProspectModule } from "../prospect/prospect.module";
 import { AuditLogService } from "../common/audit-log.service";
+import { DailyReportService } from "./daily-report.service";
+import { WhatsAppProviderModule } from "../whatsapp/whatsapp-provider.module";
 
 @Module({
   imports: [
@@ -19,8 +21,9 @@ import { AuditLogService } from "../common/audit-log.service";
     AuthOtpModule,
     BillingModule,
     ProspectModule,
+    WhatsAppProviderModule,
   ],
   controllers: [AdminController],
-  providers: [AdminService, AdminAuthService, AdminAuthGuard, AuditLogService],
+  providers: [AdminService, AdminAuthService, AdminAuthGuard, AuditLogService, DailyReportService],
 })
 export class AdminModule {}

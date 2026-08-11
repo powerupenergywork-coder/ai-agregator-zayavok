@@ -12,6 +12,12 @@ interface GlobalDefaults {
 
 /** "HH:MM" in env.dispatchTimezone — zero-padded, so plain string comparison
  * against the "HH:MM" window bounds works as a time-of-day comparison. */
+export function currentHourInTimezone(): number {
+  return Number(
+    new Date().toLocaleString("en-GB", { timeZone: env.dispatchTimezone, hour: "2-digit", hour12: false }),
+  );
+}
+
 function nowInTimezone(): string {
   return new Date().toLocaleTimeString("en-GB", {
     timeZone: env.dispatchTimezone,

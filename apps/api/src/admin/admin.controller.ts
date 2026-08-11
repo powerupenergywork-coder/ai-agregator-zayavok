@@ -12,6 +12,7 @@ import { ImportSuppliersDto } from "./dto/import-suppliers.dto";
 import { UpdateDispatchSettingsDto } from "./dto/update-dispatch-settings.dto";
 import { AdminEditOrderDto } from "./dto/admin-edit-order.dto";
 import { InitiateProspectDto } from "./dto/initiate-prospect.dto";
+import { DailyReportService } from "./daily-report.service";
 
 class SetBlockedDto {
   @IsBoolean()
@@ -35,7 +36,22 @@ export class AdminController {
     private readonly admin: AdminService,
     private readonly adminAuth: AdminAuthService,
     private readonly categories: CategoriesService,
+    private readonly dailyReport: DailyReportService,
   ) {}
+
+  /**
+   * Собрать и отправить сводку прямо сейчас, не дожидаясь вечера.
+   *
+   * Нужна не для удобства, а для проверки: расписание срабатывает раз в
+   * сутки, и ошибку в подсчётах иначе видно только на следующий день. Текст
+   * возвращается в ответе, поэтому проверить содержимое можно даже когда
+   * 24-часовое окно WhatsApp закрыто и отправка не проходит.
+   */
+  @UseGuards(AdminAuthGuard)
+  @Post("daily-report/send")
+  async sendDailyReport() {
+    return { text: await this.dailyReport.send() };
+  }
 
   @Post("auth/login")
   login(@Body() dto: LoginDto) {

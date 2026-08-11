@@ -212,6 +212,18 @@ export const env = {
   // полгода. 0 = хранить бессрочно (осознанный выключатель, не значение по
   // умолчанию). См. whatsapp/transcript-retention.service.ts.
   whatsappTranscriptRetentionDays: num("WHATSAPP_TRANSCRIPT_RETENTION_DAYS", 7),
+
+  // Ежедневная сводка владельцу: заявки, поставщики, зависшие диалоги.
+  // Пустой номер выключает отправку — так же, как выключены прочие
+  // необязательные каналы.
+  dailyReportPhone: str("DAILY_REPORT_PHONE", ""),
+  // Час по времени рассылки (dispatchTimezone), когда уходит сводка. Вечер, а
+  // не утро: отчёт за уже прошедший день читается, пока можно что-то
+  // исправить, а не назавтра.
+  dailyReportHour: num("DAILY_REPORT_HOUR", 20),
+  // Сколько часов без ответа считается «диалог завис». Меньше — попадут те,
+  // кто просто вышел покурить; больше — узнаем о потере на вторые сутки.
+  dailyReportStuckHours: num("DAILY_REPORT_STUCK_HOURS", 3),
 };
 
 /**
