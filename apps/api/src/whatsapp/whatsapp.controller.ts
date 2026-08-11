@@ -1,5 +1,20 @@
-import { Body, Controller, Get, HttpCode, Logger, Post, Query, Res, UnauthorizedException, Headers } from "@nestjs/common";
-import type { Response } from "express";
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Logger,
+  Post,
+  Query,
+  RawBodyRequest,
+  Req,
+  Res,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { SkipThrottle } from "@nestjs/throttler";
+import { createHmac, timingSafeEqual } from "crypto";
+import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizePhone } from "../common/phone.util";
@@ -11,6 +26,19 @@ import { chatIdToPhone } from "./whatsapp.util";
  * this one URL — we only act on incomingMessageReceived and 200 everything
  * else so it stops retrying/queuing them.
  */
+/**
+ * Лимит запросов здесь снят намеренно.
+ *
+ * Сюда стучится не человек, а Meta и GREEN-API — с горстки своих адресов и
+ * пачками: в час пик все входящие сообщения приходят с одного IP. Упрётся в
+ * лимит — мы отдадим 429, отправитель посчитает это сбоем, и сообщение
+ * клиента потеряется или придёт с задержкой в несколько минут.
+ *
+ * Вместо лимита эти маршруты закрыты подписью: Bearer-токен у GREEN-API и
+ * X-Hub-Signature-256 у Meta (см. verifyMetaSignature ниже). Считать запросы
+ * по адресу тут бессмысленно — их шлёт не тот, от кого мы защищаемся.
+ */
+@SkipThrottle()
 @Controller("whatsapp")
 export class WhatsAppController {
   private readonly logger = new Logger(WhatsAppController.name);
@@ -142,7 +170,18 @@ export class WhatsAppController {
    */
   @Post("cloud-webhook")
   @HttpCode(200)
-  async cloudWebhook(@Body() body: any): Promise<{ ok: true }> {
+  async cloudWebhook(
+    @Body() body: any,
+    @Req() req: RawBodyRequest<Request>,
+    @Headers("x-hub-signature-256") signature?: string,
+  ): Promise<{ ok: true }> {
+    if (!this.verifyMetaSignature(req.rawBody, signature)) {
+      // 200, а не 403: настоящая Meta сюда с плохой подписью не придёт, а
+      // чужому не нужно подсказывать, что именно не сошлось.
+      this.logger.warn("Вебхук Meta с неверной подписью — проигнорирован");
+      return { ok: true };
+    }
+
     const value = body?.entry?.[0]?.changes?.[0]?.value;
 
     // Статус доставки — единственное место, где видно, что сообщение не дошло.
@@ -242,5 +281,29 @@ export class WhatsAppController {
     }
 
     return { ok: true };
+  }
+
+  /**
+   * Подпись Meta: HMAC-SHA256 от сырого тела на App Secret, заголовок
+   * X-Hub-Signature-256 в виде "sha256=<hex>".
+   *
+   * Сравнение через timingSafeEqual, а не ===: обычное сравнение строк
+   * останавливается на первом несовпавшем символе, и по времени ответа
+   * подпись подбирается побайтно.
+   *
+   * Пустой секрет = проверка выключена (см. env.whatsappCloudAppSecret).
+   * Предупреждение пишется на каждый запрос намеренно: это временное
+   * состояние, и молчаливый лог позволил бы ему остаться навсегда.
+   */
+  private verifyMetaSignature(rawBody: Buffer | undefined, signature?: string): boolean {
+    if (!env.whatsappCloudAppSecret) {
+      this.logger.warn("WHATSAPP_CLOUD_APP_SECRET не задан — подпись вебхука не проверяется");
+      return true;
+    }
+    if (!rawBody || !signature?.startsWith("sha256=")) return false;
+
+    const expected = createHmac("sha256", env.whatsappCloudAppSecret).update(rawBody).digest();
+    const got = Buffer.from(signature.slice("sha256=".length), "hex");
+    return got.length === expected.length && timingSafeEqual(got, expected);
   }
 }

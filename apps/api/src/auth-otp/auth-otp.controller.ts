@@ -1,4 +1,6 @@
 import { Body, Controller, Ip, Post } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
+import { env } from "../config/env";
 import { AuthOtpService } from "./auth-otp.service";
 import { RequestCodeDto } from "./dto/request-code.dto";
 import { VerifyCodeDto } from "./dto/verify-code.dto";
@@ -8,6 +10,16 @@ import { CheckDeviceDto } from "./dto/check-device.dto";
 export class AuthOtpController {
   constructor(private readonly authOtp: AuthOtpService) {}
 
+  /**
+   * Самый дорогой маршрут в проекте: каждый вызов — это отправленная SMS или
+   * сообщение WhatsApp, то есть списанные деньги.
+   *
+   * Пауза на повтор по одному номеру (OTP_RESEND_COOLDOWN_SECONDS) тут не
+   * помогает: она не мешает подставлять в цикле разные номера, и счёт за
+   * рассылку по чужим телефонам придёт нам. Лимит считается по адресу
+   * отправителя и режет именно перебор.
+   */
+  @Throttle({ default: { limit: env.throttleLimitOtp, ttl: env.throttleWindowSeconds * 1000 } })
   @Post("request-code")
   requestCode(@Body() dto: RequestCodeDto, @Ip() ip: string) {
     return this.authOtp.requestCode(dto.phone, dto.purpose, dto.deviceId, ip, dto.lang);

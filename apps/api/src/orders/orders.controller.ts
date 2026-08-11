@@ -9,7 +9,20 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
+import { Throttle } from "@nestjs/throttler";
 import { memoryStorage } from "multer";
+import { env } from "../config/env";
+
+/**
+ * Лимит для маршрутов, которые стоят нам денег на каждом вызове.
+ *
+ * Живому человеку столько не нужно: заявка заводится один раз, а реплик в
+ * переписке за минуту физически не наберётся и десятка — надо прочитать
+ * вопрос и напечатать ответ.
+ */
+const EXPENSIVE = {
+  default: { limit: env.throttleLimitExpensive, ttl: env.throttleWindowSeconds * 1000 },
+};
 import { OrdersService } from "./orders.service";
 import { CreateDraftDto } from "./dto/create-draft.dto";
 import { ChatMessageDto } from "./dto/chat-message.dto";
@@ -25,6 +38,7 @@ import { AuthUser } from "../auth-otp/jwt-auth.guard";
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
+  @Throttle(EXPENSIVE)
   @Post()
   createDraft(@Body() dto: CreateDraftDto) {
     return this.orders.createDraft(dto.categorySlug, dto.urgent, {
@@ -50,6 +64,7 @@ export class OrdersController {
     return this.orders.toDto(id);
   }
 
+  @Throttle(EXPENSIVE)
   @Post(":id/chat")
   chat(@Param("id") id: string, @Body() dto: ChatMessageDto) {
     return this.orders.chat(id, dto.message, dto.lang);
@@ -69,6 +84,8 @@ export class OrdersController {
     return this.orders.setField(id, dto.key, dto.value, dto.lang);
   }
 
+  // Занимает место на диске — та же цена вопроса, что и у платных вызовов.
+  @Throttle(EXPENSIVE)
   @Post(":id/photos")
   @UseInterceptors(FileInterceptor("photo", { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
   addPhoto(@Param("id") id: string, @UploadedFile() file: Express.Multer.File) {

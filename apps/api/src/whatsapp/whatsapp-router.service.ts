@@ -198,6 +198,19 @@ const KK_TRIGGER_PHRASES = new Set(["қазақша", "қазақ тілінде
 export class WhatsAppRouterService {
   private readonly logger = new Logger(WhatsAppRouterService.name);
 
+  /**
+   * Счётчик сообщений по номеру — защита от потока в самом боте.
+   *
+   * Лимиты на HTTP сюда не достают: сообщения приходят через вебхук Meta, а не
+   * от того, кто их пишет. Между тем каждое сообщение — это вызов OpenAI и
+   * ответ через платный канал, так что скрипт, шлющий по сообщению в секунду,
+   * тратит наши деньги ровно с той же скоростью.
+   *
+   * В памяти, а не в базе: считать надо на каждое входящее, а данные эти
+   * живут минуту и после перезапуска не нужны.
+   */
+  private readonly floodCounters = new Map<string, { count: number; windowStart: number; warned: boolean }>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
@@ -210,8 +223,52 @@ export class WhatsAppRouterService {
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
+  /**
+   * Не слишком ли много сообщений с этого номера за окно.
+   *
+   * Предупреждение отправляется один раз за окно: молча замолчавший бот
+   * выглядит сломанным, а отвечать на каждое сообщение потока — то самое, от
+   * чего мы защищаемся.
+   *
+   * Порог сознательно выше живого темпа: человек, отвечающий на вопросы бота,
+   * до двадцати сообщений в минуту не доходит, даже если печатает обрывками.
+   */
+  private async isFlooding(phone: string, lang: Language): Promise<boolean> {
+    const now = Date.now();
+    const windowMs = env.whatsappFloodWindowSeconds * 1000;
+    const entry = this.floodCounters.get(phone);
+
+    if (!entry || now - entry.windowStart >= windowMs) {
+      this.floodCounters.set(phone, { count: 1, windowStart: now, warned: false });
+      // Заодно чистим протухшие записи, чтобы карта не росла бесконечно:
+      // номеров у нас много, а живут они здесь одну минуту.
+      if (this.floodCounters.size > 1000) {
+        for (const [key, val] of this.floodCounters) {
+          if (now - val.windowStart >= windowMs) this.floodCounters.delete(key);
+        }
+      }
+      return false;
+    }
+
+    entry.count += 1;
+    if (entry.count <= env.whatsappFloodLimit) return false;
+
+    if (!entry.warned) {
+      entry.warned = true;
+      this.logger.warn(`Поток сообщений с ${phone}: ${entry.count} за ${env.whatsappFloodWindowSeconds} с — отвечать перестали`);
+      const text =
+        lang === "kk"
+          ? "Хабарламалар тым жиі келіп жатыр. Бір минөттен кейін жазыңыз — жауап беремін."
+          : "Слишком много сообщений подряд. Напишите через минуту — отвечу.";
+      await this.whatsapp.sendText(phone, text).catch(() => undefined);
+    }
+    return true;
+  }
+
   async handleIncoming(msg: IncomingWhatsAppMessage): Promise<void> {
     const lang = await this.resolveLanguage(msg.phone, msg.text);
+
+    if (await this.isFlooding(msg.phone, lang)) return;
 
     // Источник запоминаем до разбора сообщения: любая ветка ниже может
     // ответить и выйти, а клик по рекламе Meta пришлёт ровно один раз.

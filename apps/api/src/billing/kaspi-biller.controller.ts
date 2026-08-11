@@ -1,4 +1,5 @@
 import { Controller, Get, Headers, Logger, Query, Req, Res } from "@nestjs/common";
+import { SkipThrottle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { KaspiBillerService, KaspiResponse, KaspiResult } from "./kaspi-biller.service";
@@ -15,6 +16,13 @@ import { toKaspiXml } from "./kaspi-response.util";
  * Отвечать надо быстрее 15 секунд, иначе банк рвёт соединение по таймауту.
  * Ни один путь здесь не ходит наружу и не ждёт очередей, поэтому запас есть.
  */
+/**
+ * Лимит запросов снят: чужие сюда и так не проходят — маршрут закрыт списком
+ * адресов Kaspi (KASPI_ALLOWED_IPS). А банку 429 отдавать нельзя: для их
+ * протокола это обрыв связи, они повторят запрос, и человек у кассы увидит
+ * ошибку оплаты.
+ */
+@SkipThrottle()
 @Controller("kaspi")
 export class KaspiBillerController {
   private readonly logger = new Logger(KaspiBillerController.name);

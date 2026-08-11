@@ -13,7 +13,10 @@ import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: true });
+  // rawBody нужен вебхуку Meta: подпись X-Hub-Signature-256 считается по
+  // байтам тела как они пришли. После JSON.parse + повторной сериализации
+  // байты уже другие (порядок ключей, экранирование), и подпись не сойдётся.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: true, rawBody: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableCors({ origin: process.env.WEB_URL || "http://localhost:3000", credentials: true });
   // Serves photos uploaded via STORAGE_PROVIDER=local (see storage/local-disk.provider.ts).
