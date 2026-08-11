@@ -1187,13 +1187,25 @@ export class WhatsAppRouterService {
     );
   }
 
-  /** Сколько последних входящих подряд мы не поняли — см. replyToSupplier(). */
+  /**
+   * Сколько последних входящих подряд мы не поняли — см. replyToSupplier()
+   * и escalateStuckDialogue().
+   *
+   * Считаем только свежие: человек, у которого неделю назад не задался
+   * разговор, сегодня приходит с чистого листа, иначе мы бы молчали в ответ
+   * на нормальное сообщение. Зациклившемуся боту окно не помогает — он пишет
+   * непрерывно, и его серия не успевает состариться.
+   */
   private async countRecentMisses(phone: string): Promise<number> {
     try {
       const recent = await this.prisma.whatsAppMessage.findMany({
-        where: { phone: normalizePhone(phone), direction: "IN" },
+        where: {
+          phone: normalizePhone(phone),
+          direction: "IN",
+          createdAt: { gte: new Date(Date.now() - env.whatsappMissWindowHours * 3600 * 1000) },
+        },
         orderBy: { createdAt: "desc" },
-        take: 5,
+        take: 10,
         select: { unrecognized: true },
       });
       let n = 0;
@@ -1295,6 +1307,23 @@ export class WhatsAppRouterService {
   }
 
   private async handleText(chatId: string, phone: string, text: string, lang: Language): Promise<void> {
+    // Полная тишина, когда подряд не понято уже слишком много.
+    //
+    // Ограничитель на ответ ниже (escalateStuckDialogue) бережёт собеседника,
+    // но не наш счёт: путь к нему лежит через orders.chat(), а это платный
+    // вызов OpenAI на каждое сообщение. Зациклившийся автоответчик пишет
+    // вечно, и вечно платить за попытки его понять незачем.
+    //
+    // Порог заметно выше, чем у ответа: живой человек, у которого не идёт
+    // разговор, должен успеть сформулировать по-другому. Серия рвётся сама,
+    // как только приходит понятное сообщение, и стареет за
+    // WHATSAPP_MISS_WINDOW_HOURS — см. countRecentMisses().
+    if ((await this.countRecentMisses(phone)) >= env.whatsappStuckSilenceAfter) {
+      await this.markUnrecognized(phone);
+      this.logger.warn(`${phone}: диалог заглох, сообщение не разбираем и не отвечаем: «${text.slice(0, 60)}»`);
+      return;
+    }
+
     const session = await this.sessions.findOrCreate(chatId, phone);
 
     if (session.currentOrderId) {
@@ -1421,6 +1450,24 @@ export class WhatsAppRouterService {
    * половина застрявших это исполнители, попавшие в оформление заказа.
    */
   private async escalateStuckDialogue(phone: string, lang: Language): Promise<void> {
+    // Пометить обязательно, иначе серия не растёт: следующее входящее
+    // окажется «понятым», счётчик обнулится, и отписка уйдёт снова. Именно
+    // это и случилось 11 августа — пятнадцать одинаковых сообщений подряд.
+    await this.markUnrecognized(phone);
+
+    // Второй раз то же самое отправлять некому: человек прочитал с первого
+    // раза, а на другом конце может оказаться не человек. 11 августа наш бот
+    // и чужой автоответчик перекидывались так почти два часа — каждый круг
+    // стоил денег за сообщение и вызова OpenAI.
+    const misses = await this.countRecentMisses(phone);
+    if (misses > env.whatsappStuckReplyLimit) {
+      this.logger.warn(
+        `${phone}: ${misses} непонятых сообщений подряд — молчим. ` +
+          `Если это живой человек, ему нужен оператор: ${env.supportPhone}`,
+      );
+      return;
+    }
+
     await this.whatsapp.sendButtons(
       phone,
       lang === "kk"
