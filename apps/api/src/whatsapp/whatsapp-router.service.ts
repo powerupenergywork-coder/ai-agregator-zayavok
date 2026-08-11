@@ -137,6 +137,27 @@ function isJustACity(text: string): boolean {
 const PROFESSION_RE =
   /^\s*(камазис[тк]?|крановщи[кц][а-яё]*|манипуляторщи[кц][а-яё]*|экскаваторщи[кц][а-яё]*|тракторист[а-яё]*|бульдозерист[а-яё]*|водител[ья]|дальнобойщи[кц][а-яё]*|жүргізуші)\s*$/i;
 
+/**
+ * Зарегистрированный исполнитель просит услугу для СЕБЯ.
+ *
+ * Реальный случай: подтверждённый поставщик написал «Нужна спецтехника» — ту
+ * самую фразу, что стоит на наших листовках и в клиентской рекламе, — и бот
+ * ответил «Записал: „Нужна спецтехника“, добавил к вашему профилю». Просьба о
+ * помощи осела в описании техники.
+ *
+ * Исполнитель — тоже человек, которому иногда нужен самосвал. Раньше выйти из
+ * режима поставщика можно было только фразой «новая заявка», о которой он
+ * узнаёт из меню, если до него доберётся.
+ *
+ * «Работа» и «заявки» исключены намеренно: «нужна работа» и «нужны заявки» —
+ * это про сотрудничество с нами, а не заказ услуги.
+ */
+function looksLikeServiceRequest(text: string): boolean {
+  if (/работ|подработк/i.test(text)) return false;
+  if (ORDER_TALK_RE.test(text)) return false;
+  return NEED_RE.test(text);
+}
+
 /** Речь о заявке: цена, созвон, клиент. Не про себя — см. looksLikeSelfInfo. */
 const ORDER_TALK_RE =
   /цен[аеуы]|ценом|стоимост|тенге|тг\b|договор|созвон|перезвон|клиент|заказчик|заявк|баға|келіс|хабарлас/i;
@@ -1256,7 +1277,7 @@ export class WhatsAppRouterService {
     // base with abandoned drafts and left the supplier with a bot asking what
     // they need. Answer with what they can actually do instead, and keep an
     // explicit way through for the times they really do want to order.
-    if (!currentOrderId && !NEW_ORDER_PHRASES.test(text)) {
+    if (!currentOrderId && !NEW_ORDER_PHRASES.test(text) && !looksLikeServiceRequest(text)) {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
         // Молчим на «спасибо» и «👍». Это не вопрос и не сообщение — человек
