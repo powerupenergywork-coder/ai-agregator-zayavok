@@ -35,6 +35,14 @@ export interface LandingCategory {
   intro: (city: LandingCity) => string;
   /** Что обычно заказывают — заодно подсказка человеку, что писать. */
   examples: string[];
+  /**
+   * Первая фраза, которая подставится в WhatsApp по кнопке.
+   *
+   * Не «Нужна спецтехника»: бот на такое отвечает списком категорий, а мы уже
+   * знаем, зачем человек пришёл — он открыл страницу именно этой услуги.
+   * Конкретная фраза избавляет его от лишнего шага.
+   */
+  whatsappText: (city: LandingCity) => string;
 }
 
 export const LANDING_CATEGORIES: LandingCategory[] = [
@@ -52,6 +60,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
       "Демонтаж и вывоз старой стяжки, примерно 5 кубов",
       "Убрать строительный мусор со двора, нужны грузчики",
     ],
+    whatsappText: (c) => `Нужен вывоз строительного мусора, ${c.name}`,
   },
   {
     slug: "samosval",
@@ -67,6 +76,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
       "Вывезти грунт со стройплощадки, нужно 3 рейса",
       "Песок для стяжки, самосвал 15 тонн",
     ],
+    whatsappText: (c) => `Нужен самосвал, ${c.name}`,
   },
   {
     slug: "avtokran",
@@ -82,6 +92,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
       "Монтаж металлоконструкций, кран от 25 тонн",
       "Разгрузить плиты на объекте",
     ],
+    whatsappText: (c) => `Нужен автокран, ${c.name}`,
   },
   {
     slug: "manipulyator",
@@ -97,6 +108,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
       "Разгрузить поддоны с кирпичом",
       "Погрузить и увезти технику, вес около 3 тонн",
     ],
+    whatsappText: (c) => `Нужен манипулятор, ${c.name}`,
   },
   {
     slug: "gazel-gruzchiki",
@@ -112,6 +124,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
       "Забрать диван из магазина и привезти домой",
       "Перевезти вещи на дачу",
     ],
+    whatsappText: (c) => `Нужна газель с грузчиками, ${c.name}`,
   },
   {
     slug: "gruzchiki",
@@ -125,6 +138,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
       "Разгрузить фуру, нужны 4 человека",
       "Помочь с погрузкой при переезде офиса",
     ],
+    whatsappText: (c) => `Нужны грузчики, ${c.name}`,
   },
 ];
 
