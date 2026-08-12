@@ -169,6 +169,42 @@ const ACK_RE = /^[\s\p{Extended_Pictographic}‍️]+$/u;
 const ACK_WORDS = new Set([
   "спасибо", "спс", "рахмет", "рақмет", "ок", "окей", "ok", "хорошо", "принял", "понял", "жарайды", "жақсы", "да",
 ]);
+/**
+ * Ответ словами на холодное приглашение: согласие и отказ.
+ *
+ * Списками, а не регулярками по подстроке: «не надо» и «надо» отличаются
+ * одним словом, и поиск подстроки перепутал бы их. Длина ограничена тремя
+ * словами — «да, но только по Астане» это уже разговор, его должен читать
+ * человек, а не список.
+ */
+const COLD_YES_WORDS = new Set([
+  "да", "ага", "конечно", "можно", "давайте", "давай", "хорошо", "согласен", "согласна", "интересно",
+  "буду", "беру", "присылайте", "присылай", "шлите", "отправляйте", "ок", "окей", "ok",
+  "иә", "ия", "жарайды", "болады", "келісемін", "жіберіңіз",
+]);
+const COLD_NO_WORDS = new Set([
+  "нет", "не", "неинтересно", "ненужно", "спасибо-нет", "откажусь", "отказываюсь",
+  "жоқ", "керекемес", "қажетемес",
+]);
+/** «Не надо», «не пишите», «не интересно» — отказ из двух слов. */
+const COLD_NO_RE = /^не\s*(надо|нужно|интересно|пиши(те)?|присылай(те)?|звони(те)?|хочу)$/i;
+
+function coldInviteAnswer(text: string): "yes" | "no" | null {
+  const words = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?…]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0 || words.length > 3) return null;
+
+  const compact = words.join(" ");
+  if (COLD_NO_RE.test(compact)) return "no";
+  if (words.every((w) => COLD_NO_WORDS.has(w))) return "no";
+  if (words.every((w) => COLD_YES_WORDS.has(w))) return "yes";
+  return null;
+}
+
 function isAcknowledgement(text: string): boolean {
   if (ACK_RE.test(text)) return true;
   // По словам, а не целой строкой. «Ок рахмет» — два подтверждения подряд —
@@ -497,6 +533,51 @@ export class WhatsAppRouterService {
    * no client contact details. Declining blocks them outright — an explicit
    * "don't contact me" is worth honouring permanently, both for them and to
    * keep the number's quality rating clean. */
+  /**
+   * Тот же обработчик, что и у кнопки, но для ответа словами.
+   *
+   * Номер заявки в тексте не придёт — берём его из журнала отправок: там
+   * лежит последнее холодное приглашение этому поставщику вместе с orderId.
+   * Именно на него человек и отвечает, другого приглашения он не видел.
+   *
+   * Только для неподтверждённых: у подтверждённого «да» означает что угодно,
+   * и перехватывать его этой веткой нельзя.
+   *
+   * Возвращает true, если ответ разобран и обработан.
+   */
+  private async tryColdInviteTextReply(
+    phone: string,
+    supplier: { id: string; confirmedAt: Date | null },
+    text: string,
+    lang: Language,
+  ): Promise<boolean> {
+    if (supplier.confirmedAt) return false;
+
+    const answer = coldInviteAnswer(text);
+    if (!answer) return false;
+
+    // Только свежее приглашение. Без ограничения «ок», сказанное через месяц
+    // совсем по другому поводу, молча подключило бы человека к рассылке — а
+    // это уже не согласие, а спам, за который жалуются и падает рейтинг
+    // номера. Две недели: столько живёт память о полученном сообщении.
+    const invite = await this.prisma.notificationLog.findFirst({
+      where: {
+        supplierId: supplier.id,
+        templateKey: "supplier_cold_invite",
+        status: { not: "FAILED" },
+        orderId: { not: null },
+        createdAt: { gte: new Date(Date.now() - 14 * 24 * 3600 * 1000) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { orderId: true },
+    });
+    if (!invite?.orderId) return false;
+
+    this.logger.log(`${phone}: ответ на приглашение словами «${text.trim()}» → ${answer}`);
+    await this.handleColdInviteReply(phone, `supconfirm|${answer}|${invite.orderId}`, lang);
+    return true;
+  }
+
   private async handleColdInviteReply(phone: string, token: string, lang: Language): Promise<void> {
     const [, answer, orderId] = token.split("|");
     const supplier = await this.prisma.supplierProfile.findFirst({
@@ -1382,6 +1463,19 @@ export class WhatsAppRouterService {
     if (!currentOrderId && !NEW_ORDER_PHRASES.test(text) && !looksLikeServiceRequest(text)) {
       const supplier = await this.findSupplier(phone);
       if (supplier) {
+        // Согласие на холодное приглашение, написанное словами.
+        //
+        // Проверяется ДО isAcknowledgement: «да» лежит в списке подтверждений
+        // прочтения, поэтому человек, ответивший на приглашение «Да», получал
+        // в ответ молчание, а на «Можно» — повторный рассказ о том, кто мы
+        // такие. Реальный случай 12 августа, +7 778 900 84 84: согласился
+        // дважды и оба раза остался неподключённым.
+        //
+        // Кнопки в шаблоне есть, но нажимают их не все: в WhatsApp привычнее
+        // ответить текстом, и отказывать такому человеку — значит терять
+        // ровно тех, кто согласился.
+        if (await this.tryColdInviteTextReply(phone, supplier, text, lang)) return;
+
         // Молчим на «спасибо» и «👍». Это не вопрос и не сообщение — человек
         // подтвердил, что прочитал. Меню команд в ответ на лайк выглядит так,
         // будто с ним говорит автомат, и засоряет метрику «бот не понял»,
