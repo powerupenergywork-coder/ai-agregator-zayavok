@@ -814,6 +814,53 @@ export class OrdersService {
    * значит 24-часовое окно закрыто и свободный текст не пройдёт. Повторная
    * отправка одобренного шаблона разрешена и ничего не ждёт.
    */
+  /**
+   * Закрывает черновики, которые не двигались больше суток.
+   *
+   * Заявка в «уточнении данных» — это незаконченный разговор. Если человек не
+   * вернулся за сутки, он не вернётся: за месяцы работы ни один такой черновик
+   * не превратился в заказ. Зато они копятся — на 13 августа тридцать штук,
+   * самая старая с 19 июля, — и оператор тратит время, открывая пустые.
+   *
+   * Считаем по updatedAt, а не по createdAt — в отличие от соседнего крона
+   * ниже. Там опасались, что правка оператора сделает заявку бессмертной; тут
+   * наоборот: черновик двигают только сообщения самого клиента, и это ровно
+   * тот признак, по которому его нельзя трогать. Разговор в WhatsApp может
+   * идти с перерывом в день, и закрывать его по дате создания — значит
+   * оборвать человека на полуслове.
+   *
+   * Поставщиков не уведомляем: заявка не публиковалась, они о ней не знают.
+   * Клиенту тоже не пишем — он ушёл сам, и «мы закрыли вашу заявку» будет
+   * выглядеть придиркой к тому, кто ничего не просил.
+   */
+  @Cron("20 * * * *")
+  async expireStaleDrafts(): Promise<void> {
+    if (env.orderDraftExpireHours <= 0) return;
+
+    const idleBefore = new Date(Date.now() - env.orderDraftExpireHours * 60 * 60 * 1000);
+    const stale = await this.prisma.order.findMany({
+      where: { status: { in: ["DRAFT", "CLARIFYING"] }, updatedAt: { lt: idleBefore } },
+      select: { id: true, number: true },
+      take: 200,
+    });
+
+    for (const order of stale) {
+      try {
+        await this.closeOrderAsCancelled(
+          order.id,
+          order.number,
+          "system",
+          `Заявка не завершена — данные не уточнены больше ${env.orderDraftExpireHours} ч`,
+          { notifySuppliers: false },
+        );
+      } catch (err) {
+        this.logger.error(`Не удалось закрыть черновик ${order.number}: ${(err as Error).message}`);
+      }
+    }
+
+    if (stale.length) this.logger.log(`Закрыто незавершённых заявок: ${stale.length}`);
+  }
+
   @Cron("0 * * * *")
   async chaseUnconfirmedOrders(): Promise<void> {
     const now = Date.now();
