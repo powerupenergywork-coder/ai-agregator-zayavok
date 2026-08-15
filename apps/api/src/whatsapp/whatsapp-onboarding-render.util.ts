@@ -4,6 +4,7 @@ import { OutgoingWhatsAppMessage } from "./whatsapp-message-render.util";
 // Token namespace for supplier onboarding, kept separate from the order
 // flow's "cat|"/"fld|"/"action|" tokens:
 //   "sup|cat|<slug>|true|false" — one category asked at a time, button tap
+//   "sup|catnone" — «моей услуги в списке нет», выход из опроса категорий
 //   "sup|urgent|true|false"
 //   "sup|hours|true|false"
 //   "sup|confirm" | "sup|restart"
@@ -15,10 +16,30 @@ import { OutgoingWhatsAppMessage } from "./whatsapp-message-render.util";
 // numbered list is still unavoidable for >3 options elsewhere (e.g. the
 // order flow's field chips), but category selection never needs more than
 // two buttons per message this way.
+/**
+ * Третья кнопка — выход из опроса для тех, кого нет в списке.
+ *
+ * Без неё честный ответ «нет» на все шесть категорий приводит к «Нужно
+ * выбрать хотя бы одну» и опрос начинается сначала — бесконечно. Реальный
+ * случай: владелец минипогрузчика прошёл круг трижды, между кругами дважды
+ * написал словами «У меня минипогрузчик» и оба раза получил «Ответьте
+ * кнопкой выше». Человек говорит правду о себе, и за это его наказывают
+ * бесконечным опросом.
+ *
+ * Кнопка нужна и нам: список того, что просят и чего у нас нет, — это
+ * готовый ответ на вопрос, какую категорию заводить следующей.
+ */
 export function renderCategoryQuestion(category: { slug: string; name: LocalizedText }, lang: Language): OutgoingWhatsAppMessage {
   const body =
     lang === "kk" ? `«${category.name.kk}» қызметін ұсынасыз ба?` : `Вы предоставляете услугу «${category.name.ru}»?`;
-  return renderYesNo(body, `sup|cat|${category.slug}`, lang);
+  return {
+    body,
+    buttons: [
+      { id: `sup|cat|${category.slug}|true`, text: lang === "kk" ? "Иә" : "Да" },
+      { id: `sup|cat|${category.slug}|false`, text: lang === "kk" ? "Жоқ" : "Нет" },
+      { id: "sup|catnone", text: lang === "kk" ? "Басқа" : "Другое" },
+    ],
+  };
 }
 
 export function renderYesNo(body: string, tokenPrefix: string, lang: Language): OutgoingWhatsAppMessage {

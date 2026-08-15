@@ -11,7 +11,11 @@ import { renderCategoryQuestion, renderOnboardingConfirm, renderYesNo } from "./
 import { ProspectService } from "../prospect/prospect.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 
-type Step = "company_name" | "categories" | "cities" | "urgent" | "hours" | "confirm";
+type Step = "company_name" | "categories" | "other_category" | "cities" | "urgent" | "hours" | "confirm";
+
+/** Голые «да»/«нет» на шаге категорий — попытка ответить словами на текущий
+ *  вопрос, а не название своей услуги. См. разбор шага «categories». */
+const YES_NO_WORDS = new Set(["да", "нет", "ага", "не", "иә", "ия", "жоқ", "жок"]);
 
 interface Collected {
   companyName?: string;
@@ -160,7 +164,32 @@ export class WhatsAppOnboardingService {
     }
 
     if (state.step === "categories") {
+      if (token === "sup|catnone") {
+        state.step = "other_category";
+        await this.saveState(chatId, state);
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Не істейтіңізді жазыңыз — техника немесе қызмет атауы. Бір хабарламамен жеткілікті."
+            : "Напишите, что у вас за техника или услуга. Одним сообщением, своими словами.",
+        );
+        return;
+      }
       if (!token || !token.startsWith("sup|cat|")) {
+        // Слова вместо кнопки — не мусор, а ответ. «У меня минипогрузчик»
+        // дважды получило «Ответьте кнопкой выше» и пропало. Теперь текст на
+        // этом шаге считаем тем же, чем и кнопка «Другое»: человек называет
+        // то, чего нет в списке.
+        // Кроме голых «да»/«нет»: это попытка ответить на текущий вопрос
+        // словами, а не название своей услуги. Записать «Просит категорию:
+        // да» — хуже, чем попросить нажать кнопку.
+        const bare = msg.text?.trim().toLowerCase().replace(/[.!?]+$/, "") ?? "";
+        if (bare && !YES_NO_WORDS.has(bare)) {
+          state.step = "other_category";
+          await this.saveState(chatId, state);
+          await this.handleOtherCategory(chatId, phone, state, msg.text!, lang);
+          return;
+        }
         await this.whatsapp.sendText(phone, lang === "kk" ? "Жоғарыдағы батырмамен жауап беріңіз." : "Ответьте кнопкой выше.");
         return;
       }
@@ -190,6 +219,18 @@ export class WhatsAppOnboardingService {
       }
       await this.saveState(chatId, state);
       await this.askNextCategory(chatId, phone, state, lang);
+      return;
+    }
+
+    if (state.step === "other_category") {
+      if (!msg.text?.trim()) {
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk" ? "Не істейтіңізді мәтінмен жазыңыз." : "Напишите текстом, что у вас за техника или услуга.",
+        );
+        return;
+      }
+      await this.handleOtherCategory(chatId, phone, state, msg.text, lang);
       return;
     }
 
@@ -318,6 +359,67 @@ export class WhatsAppOnboardingService {
     }
   }
 
+  /**
+   * Услуга, которой у нас нет: записываем и говорим правду.
+   *
+   * Соблазн — ответить «обязательно пришлём, как появится заявка». Ровно так
+   * бот и ответил владельцу минипогрузчика 15 августа, и это обещание нечем
+   * исполнить: категории нет, заявка по ней прийти не может, человек ждёт
+   * впустую. Обещание, которое некому исполнить, хуже отказа.
+   *
+   * Профиль всё равно заводим: без него незачем и спрашивать, а с ним запрос
+   * виден в админке и человеку есть куда вернуться. Категорий у профиля ноль,
+   * поэтому рассылка его не увидит — matching.service.ts подбирает строго по
+   * категории, лишних заявок не придёт.
+   */
+  private async handleOtherCategory(
+    chatId: string,
+    phone: string,
+    state: OnboardingState,
+    text: string,
+    lang: Language,
+  ): Promise<void> {
+    const wanted = text.trim().slice(0, 200);
+    const normalized = normalizePhone(phone);
+
+    const user = await this.prisma.user.upsert({
+      where: { phone: normalized },
+      create: { phone: normalized, preferredChannel: "WHATSAPP" },
+      update: { preferredChannel: "WHATSAPP" },
+    });
+    const supplier = await this.prisma.supplierProfile.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id, companyName: state.collected.companyName },
+      update: { companyName: state.collected.companyName ?? undefined },
+    });
+    // Префикс, а не голый текст: по нему запросы отличаются от прочих заметок
+    // «с ваших слов» и собираются в список — какую категорию заводить первой.
+    await this.noteAside(phone, `Просит категорию: ${wanted}`);
+
+    await this.audit.log({
+      actorType: "supplier",
+      actorId: supplier.id,
+      action: "requested_missing_category",
+      targetType: "SupplierProfile",
+      targetId: supplier.id,
+    });
+    this.logger.log(`${phone}: просит категорию, которой нет — «${wanted}»`);
+
+    await this.sessions.resetToOrderFlow(phoneToChatId(normalized));
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? `«${wanted}» жазып алдым.\n\n` +
+          "Бізде мұндай санат әзірге жоқ, сондықтан ол бойынша өтінімдер жіберілмейді — күтпеңіз. " +
+          "Пайда болған сәтте сізге бірінші боп жазамыз.\n\n" +
+          "Тізімдегі басқа нәрсемен де айналысатын болсаңыз — «жеткізуші» деп жазыңыз, санаттарды таңдаймыз."
+        : `Записал: «${wanted}».\n\n` +
+          "Такой категории у нас пока нет, поэтому заявок по ней не будет — не ждите. " +
+          "Как появится, напишем вам первым.\n\n" +
+          "Если возите или делаете что-то ещё из нашего списка — напишите «поставщик», подберём категории.",
+    );
+  }
+
   private async goToCategories(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
     state.step = "categories";
     state.categoryIndex = 0;
@@ -339,8 +441,8 @@ export class WhatsAppOnboardingService {
         await this.whatsapp.sendText(
           phone,
           lang === "kk"
-            ? "Кемінде бір қызмет түрін таңдау керек. Қайта сұраймыз:"
-            : "Нужно выбрать хотя бы одну категорию услуг. Спросим ещё раз:",
+            ? "Кемінде бір қызмет түрін таңдау керек. Қайта сұраймыз:\nТізімде сіздің қызметіңіз болмаса — «Басқа» батырмасын басыңыз."
+            : "Нужно выбрать хотя бы одну категорию услуг. Спросим ещё раз:\nЕсли вашей услуги в списке нет — нажмите «Другое».",
         );
         await this.askNextCategory(chatId, phone, state, lang);
         return;
