@@ -12,6 +12,7 @@ import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
 import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
+import { readyForReviewMessage } from "../orders/order-derive.util";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
@@ -211,6 +212,20 @@ const WHO_ARE_YOU_RE = new RegExp(
     ")",
   "i",
 );
+
+/**
+ * «Всё верно» — подтверждение карточки словами вместо нажатия кнопки.
+ *
+ * Карточка заканчивается вопросом «Всё верно?», и человек отвечает на него
+ * так, как отвечают на вопрос: пишет «Верно». Кнопку при этом не трогает.
+ * Заявка №101, 15 августа: клиент написал «Верно» дважды с интервалом в
+ * минуту, оба раза получил ту же карточку и ушёл. Ноль уведомлённых
+ * исполнителей при полностью заполненной заявке.
+ *
+ * Мы сами задали вопрос — значит обязаны принять ответ на него.
+ */
+const REVIEW_CONFIRM_RE =
+  /^\s*(всё|все|всйо)?\s*(верно|правильно|так|точно|да|ок|окей|ok|подтверждаю|отправляй(те)?|отправить|публикуй(те)?|поехали|давай(те)?|согласен|согласна)\s*[.!]*\s*$|^\s*(иә|ия|дұрыс|солай|жіберіңіз|жібер|жарайды|болады)\s*[.!]*\s*$/i;
 
 /** Речь о заявке: цена, созвон, клиент. Не про себя — см. looksLikeSelfInfo. */
 const ORDER_TALK_RE =
@@ -1662,6 +1677,16 @@ export class WhatsAppRouterService {
       );
     }
 
+    // Карточка ждёт подтверждения, а человек ответил на её вопрос словами.
+    //
+    // Проверяем ДО orders.chat: иначе «Верно» уходит в ИИ-экстрактор, тот
+    // ничего из него не достаёт, и в ответ прилетает та же карточка — ровно
+    // то, что случилось с заявкой №101.
+    if (currentOrderId && REVIEW_CONFIRM_RE.test(text) && (await this.isAwaitingReview(currentOrderId))) {
+      await this.publishCurrentOrder(chatId, phone, lang);
+      return;
+    }
+
     const orderId = await this.ensureOrder(chatId, phone);
     const turn = await this.orders.chat(orderId, text, lang);
     // Третий одинаковый вопрос подряд — это не диалог, а стена. Человек уже
@@ -1672,6 +1697,31 @@ export class WhatsAppRouterService {
       return;
     }
     await this.sendTurn(chatId, phone, turn, lang);
+  }
+
+  /**
+   * Стоит ли сейчас на экране карточка заявки, ждущая подтверждения.
+   *
+   * По последней реплике бота, а не по отдельному полю в сессии: карточка
+   * отправляется ровно тогда, когда собраны все поля, и её текст —
+   * readyForReviewMessage(). Поля в базе для этого заводить не нужно, а
+   * лишнее состояние рассинхронизируется молча.
+   *
+   * Проверяем обе локали: язык мог смениться между отправкой карточки и
+   * ответом на неё — человек написал вопрос по-казахски, ответил по-русски.
+   */
+  private async isAwaitingReview(orderId: string): Promise<boolean> {
+    try {
+      const last = await this.prisma.chatMessage.findFirst({
+        where: { orderId, role: "ASSISTANT" },
+        orderBy: { createdAt: "desc" },
+        select: { content: true },
+      });
+      if (!last) return false;
+      return last.content.endsWith(readyForReviewMessage("ru")) || last.content.endsWith(readyForReviewMessage("kk"));
+    } catch {
+      return false; // не смогли проверить — ведём разговор обычным путём
+    }
   }
 
   /** Задавали ли мы уже этот же вопрос дважды подряд. */
