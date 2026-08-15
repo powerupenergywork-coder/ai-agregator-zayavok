@@ -270,11 +270,12 @@ export class WhatsAppController {
         // downloadMedia() knows to resolve this id via the Graph API instead.
         await this.router.handleIncoming({ chatId, phone, referral, imageUrl: message.image?.id });
       } else {
-        // Стикер, голосовое, документ. Молчать нельзя: человек видит, что
+        // Голосовое, документ, видео. Молчать нельзя: человек видит, что
         // сообщение доставлено, и ждёт ответа — в живой переписке это
-        // выглядит как «меня игнорируют». Одной строки достаточно.
+        // выглядит как «меня игнорируют». Одной строки достаточно, и
+        // replyUnsupportedType сам следит, чтобы она не повторялась.
         this.logger.warn(`Необработанный тип входящего сообщения: ${message.type}`);
-        await this.router.replyUnsupportedType(phone);
+        await this.router.replyUnsupportedType(phone, String(message.type ?? "unknown"));
       }
     } catch (err) {
       this.logger.error(`cloud webhook handling failed: ${(err as Error).message}`);
