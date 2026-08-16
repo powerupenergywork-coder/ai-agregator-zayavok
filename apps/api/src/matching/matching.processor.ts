@@ -23,6 +23,8 @@ export class MatchingProcessor extends WorkerHost {
         await this.orders.sendCompletionCheckin(job.data.orderId);
       } else if (job.name === "checkin-escalate") {
         await this.orders.autoCloseStaleOrder(job.data.orderId);
+      } else if (job.name === "dispatch-progress") {
+        await this.orders.sendDispatchProgress(job.data.orderId);
       }
     } catch (err) {
       this.logger.error(`Job ${job.name} failed for order ${job.data.orderId}: ${(err as Error).message}`);

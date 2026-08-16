@@ -12,6 +12,9 @@ export type AnalyticsEventType =
   | "otp_verified"
   | "order_published"
   | "order_sent_to_suppliers"
+  /** Исполнитель открыл ссылку на заявку. Единственный признак интереса,
+   *  который у нас есть до звонка, — см. OrdersService.countOrderViewers. */
+  | "supplier_opened_order"
   | "order_cancelled"
   | "order_completed"
   | "order_redispatch_requested"

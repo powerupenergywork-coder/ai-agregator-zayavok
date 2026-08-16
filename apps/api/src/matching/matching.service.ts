@@ -1,5 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
+import { WHATSAPP_PROVIDER, WhatsAppProvider } from "../whatsapp/whatsapp-provider.interface";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
@@ -39,6 +40,7 @@ export class MatchingService {
     private readonly realtime: RealtimeGateway,
     private readonly billing: BillingService,
     @InjectQueue("matching") private readonly matchingQueue: Queue,
+    @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
   async startDispatch(orderId: string) {
@@ -66,6 +68,16 @@ export class MatchingService {
         const reason = "Нет подходящих поставщиков для этой категории/города";
         await this.orders.transitionStatus(orderId, "NEEDS_OPERATOR", "system", reason);
         await this.notifications.send({ event: "needs_operator", payload: { orderNumber: order.number, reason }, orderId });
+        // Клиенту тоже надо сказать. Раньше он получал «мы начали поиск
+        // исполнителей» и не получал больше ничего: поиск закончился ничем в
+        // ту же секунду, а человек ждал звонков, которых не будет.
+        await this.tellClient(
+          order,
+          `Заявка №${order.number} принята, но подходящих исполнителей у нас пока нет. ` +
+            "Мы разберёмся вручную и напишем вам. Извините за задержку.",
+          `№${order.number} өтінімі қабылданды, бірақ сәйкес орындаушылар әзірге жоқ. ` +
+            "Қолмен қарап, сізге хабарласамыз. Кешігу үшін кешіріңіз.",
+        );
         this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
       }
       return;
@@ -84,7 +96,52 @@ export class MatchingService {
       orderId,
       metadata: { waveNumber, count: candidates.length },
     });
+
+    // Сколько именно и чего ждать — точным числом, сразу после рассылки.
+    //
+    // «Мы начали поиск исполнителей» отправляется в момент публикации, когда
+    // рассылки ещё не было: она идёт очередью. Дальше человек сидит в тишине
+    // и не знает ни сколько людей увидели заявку, ни когда ждать звонка.
+    // Заявка №100 умерла ровно здесь — клиент закрыл её через восемь минут,
+    // а первый исполнитель откликнулся на одиннадцатой.
+    const city = order.city ? ` в городе ${order.city}` : "";
+    await this.tellClient(
+      order,
+      waveNumber === 1
+        ? `Отправили заявку №${order.number} ${candidates.length} исполнителям${city}.\n\n` +
+            "Они позвонят вам сами — обычно первые звонки приходят в течение 15–30 минут.\n" +
+            "Если за час никто не позвонит — напишите нам, и мы разошлём заявку повторно."
+        : `Разослали заявку №${order.number} ещё ${candidates.length} исполнителям${city}. Ждите звонков.`,
+      waveNumber === 1
+        ? `№${order.number} өтінімін ${candidates.length} орындаушыға жібердік${order.city ? ` (${order.city})` : ""}.\n\n` +
+            "Олар сізге өздері қоңырау шалады — әдетте алғашқы қоңыраулар 15–30 минут ішінде.\n" +
+            "Бір сағат ішінде ешкім қоңырау шалмаса — бізге жазыңыз, өтінімді қайта жібереміз."
+        : `№${order.number} өтінімін тағы ${candidates.length} орындаушыға жібердік. Қоңырауларды күтіңіз.`,
+    );
+
     this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
+  }
+
+  /**
+   * Короткое сообщение клиенту на его языке, мимо шаблонов уведомлений.
+   *
+   * Через шаблоны идут события со своей структурой и историей; здесь нужен
+   * один живой текст, который меняется вместе с числом исполнителей. Ошибка
+   * отправки не должна ронять рассылку: исполнители уже получили заявку, и
+   * это главное.
+   */
+  private async tellClient(
+    order: { client?: { user: { phone: string; preferredLanguage?: string | null } } | null },
+    ru: string,
+    kk: string,
+  ): Promise<void> {
+    const phone = order.client?.user.phone;
+    if (!phone) return;
+    try {
+      await this.whatsapp.sendText(phone, order.client?.user.preferredLanguage === "KK" ? kk : ru);
+    } catch (err) {
+      this.logger.warn(`Не удалось написать клиенту по заявке: ${(err as Error).message}`);
+    }
   }
 
   /** One supplier, one order — quiet-hours deferral, quota gate, then the

@@ -32,6 +32,7 @@ import {
   nextQuestionFields,
 } from "../ai/field-completion.util";
 import { STORAGE_PROVIDER, StorageProvider } from "../storage/storage-provider.interface";
+import { WHATSAPP_PROVIDER, WhatsAppProvider } from "../whatsapp/whatsapp-provider.interface";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AnalyticsService } from "../analytics/analytics.service";
 import { RealtimeGateway } from "../realtime/realtime.gateway";
@@ -43,11 +44,6 @@ import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } f
 import { NewOrderAlertService } from "./new-order-alert.service";
 import { priceHintSentence } from "../categories/category-price-hints";
 
-/** Абзац с отбивкой, если строка непустая. Пустая вилка не должна оставлять
- *  в сообщении два пустых перевода строки. */
-function withGap(text: string): string {
-  return text ? `${text}\n\n` : "";
-}
 import { isDecentHourNow } from "../matching/quiet-hours.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { formatFieldValue } from "../common/field-format.util";
@@ -56,6 +52,24 @@ import { normalizePhone, isValidPhone } from "../common/phone.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderCompletionOutcome } from "./dto/complete-order.dto";
 import { OrderDto } from "./order.dto";
+
+/** Абзац с отбивкой, если строка непустая. Пустая вилка не должна оставлять
+ *  в сообщении два пустых перевода строки. */
+function withGap(text: string): string {
+  return text ? `${text}\n\n` : "";
+}
+
+/** «1 исполнитель, 2 исполнителя, 5 исполнителей». Число в сообщении живое —
+ *  «3 исполнитель» выглядит так, будто писал автомат, и обесценивает всё
+ *  остальное сообщение. */
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = n % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
 
 export interface ChatTurnResponse {
   order: OrderDto;
@@ -81,6 +95,7 @@ export class OrdersService {
     @InjectQueue("matching") private readonly matchingQueue: Queue,
     private readonly authOtp: AuthOtpService,
     private readonly newOrderAlert: NewOrderAlertService,
+    @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
   // ---------- draft lifecycle ----------
@@ -638,6 +653,17 @@ export class OrdersService {
     // публикации, как раньше.
     const from = Math.max(order?.dateNeeded?.getTime() ?? now, now);
 
+    // Сводка «сколько человек открыли заявку» — отсчёт от публикации, а не от
+    // даты работы: она про то, что происходит прямо сейчас, и через сутки
+    // бессмысленна.
+    if (env.dispatchProgressAfterMinutes > 0) {
+      await this.matchingQueue.add(
+        "dispatch-progress",
+        { orderId },
+        { delay: env.dispatchProgressAfterMinutes * 60 * 1000 },
+      );
+    }
+
     const checkinAt = from + env.orderCheckinDelayHours * 3600 * 1000;
     await this.matchingQueue.add("checkin", { orderId }, { delay: checkinAt - now });
     await this.matchingQueue.add(
@@ -1164,10 +1190,84 @@ export class OrdersService {
     return user ? toLang(user.preferredLanguage) : "ru";
   }
 
-  async getByPublicToken(token: string) {
+  /**
+   * @param viewer — отпечаток открывшего: по нему считаются РАЗНЫЕ исполнители,
+   *   а не число обновлений страницы. Ссылка одна на всех, личности за ней нет,
+   *   поэтому отпечаток — единственный доступный способ отличить троих
+   *   заинтересовавшихся от одного, открывшего заявку трижды.
+   */
+  async getByPublicToken(token: string, viewer?: string) {
     const order = await this.prisma.order.findUnique({ where: { publicToken: token } });
     if (!order) throw new NotFoundException("Заявка не найдена");
+    if (viewer) {
+      // Клиенту важно знать, что заявку смотрят: тишина после отправки
+      // читается как «ничего не работает». Заявку №100 клиент закрыл через
+      // восемь минут, а исполнители открыли её на одиннадцатой и девятнадцатой.
+      await this.analytics
+        .track("supplier_opened_order", { orderId: order.id, metadata: { viewer } })
+        .catch(() => undefined); // счётчик не должен мешать открыть заявку
+    }
     return this.toDto(order.id);
+  }
+
+  /** Сколько разных исполнителей открывали заявку. */
+  async countOrderViewers(orderId: string): Promise<number> {
+    const rows = await this.prisma.analyticsEvent.findMany({
+      where: { orderId, eventType: "supplier_opened_order" },
+      select: { metadata: true },
+    });
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const viewer = (r.metadata as { viewer?: string } | null)?.viewer;
+      if (viewer) seen.add(viewer);
+    }
+    return seen.size;
+  }
+
+  /**
+   * Через несколько минут после рассылки — сказать клиенту, что происходит.
+   *
+   * Это единственное сообщение между «отправили N исполнителям» и первым
+   * звонком. Без него человек сидит в тишине и решает, что сервис не работает:
+   * ровно так закрылась заявка №100.
+   *
+   * Отдельная ветка на ноль просмотров нужна не меньше: молчать в этом случае
+   * значит дать человеку прождать впустую весь вечер. Владельцу об этом тоже
+   * сообщаем — ноль открытий при тридцати разосланных означает, что проблема
+   * не у клиента, а у нас.
+   */
+  async sendDispatchProgress(orderId: string): Promise<void> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { client: { include: { user: true } } },
+    });
+    if (!order || order.status !== "PUBLISHED") return; // уже закрыта или отменена
+    const phone = order.client?.user.phone;
+    if (!phone) return;
+
+    const viewers = await this.countOrderViewers(orderId);
+    const lang = await this.getLangForPhone(phone);
+
+    const text =
+      viewers > 0
+        ? lang === "kk"
+          ? `Өтінімді ${viewers} орындаушы қарады — қоңырауларды күтіңіз.\n\n` +
+            "Бір сағат ішінде ешкім қоңырау шалмаса — бізге жазыңыз, қайта жібереміз."
+          : `Вашу заявку открыли ${viewers} ${plural(viewers, "исполнитель", "исполнителя", "исполнителей")} — ждите звонков.\n\n` +
+            "Если в ближайший час никто не позвонит — напишите нам, разошлём повторно."
+        : lang === "kk"
+          ? "Өтінімді әзірге ешкім ашқан жоқ. Біз оны көреміз және қайта жіберуге тырысамыз — сізден ештеңе қажет емес."
+          : "Пока заявку никто не открыл. Мы это видим и разошлём её ещё раз — от вас ничего не нужно.";
+
+    try {
+      await this.whatsapp.sendText(phone, text);
+    } catch (err) {
+      this.logger.warn(`Не удалось отправить сводку по рассылке: ${(err as Error).message}`);
+    }
+
+    if (viewers === 0) {
+      await this.newOrderAlert.alertNoViews(orderId, order.number);
+    }
   }
 
   private assertEditable(order: { status: string }) {

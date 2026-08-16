@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -11,6 +12,8 @@ import {
 import { FileInterceptor } from "@nestjs/platform-express";
 import { Throttle } from "@nestjs/throttler";
 import { memoryStorage } from "multer";
+import { createHash } from "node:crypto";
+import type { Request } from "express";
 import { env } from "../config/env";
 
 /**
@@ -54,9 +57,20 @@ export class OrdersController {
     return this.orders.listMine(user);
   }
 
+  /**
+   * Ссылка одна на всех исполнителей, личности за ней нет. Чтобы отличить
+   * троих заинтересовавшихся от одного, обновившего страницу трижды, считаем
+   * по отпечатку: адрес плюс браузер, свёрнутые в короткий хеш.
+   *
+   * Хеш, а не сырой адрес: точное число нам не нужно, нужно «сколько разных»,
+   * а хранить чужие IP ради этого незачем.
+   */
   @Get("by-token/:token")
-  getByToken(@Param("token") token: string) {
-    return this.orders.getByPublicToken(token);
+  getByToken(@Param("token") token: string, @Req() req: Request) {
+    const ip = (req.headers["x-real-ip"] as string) || req.ip || "";
+    const ua = (req.headers["user-agent"] as string) || "";
+    const viewer = ip || ua ? createHash("sha256").update(`${ip}|${ua}`).digest("hex").slice(0, 16) : undefined;
+    return this.orders.getByPublicToken(token, viewer);
   }
 
   @Get(":id")

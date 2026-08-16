@@ -47,6 +47,27 @@ export class NewOrderAlertService {
     }
   }
 
+  /**
+   * Разослали, а никто не открыл.
+   *
+   * Это не про клиента, а про нас: тридцать уведомлений и ноль открытий
+   * означают, что список исполнителей мёртвый, а не что заявка плохая. Клиент
+   * об этом узнать не может, и кроме владельца среагировать некому.
+   */
+  async alertNoViews(orderId: string, orderNumber: number): Promise<void> {
+    if (!this.recipient) return;
+    try {
+      await this.whatsapp.sendText(
+        this.recipient,
+        `⚠️ Заявку №${orderNumber} не открыл ни один исполнитель.\n\n` +
+          "Разослали, но по ссылке никто не перешёл. Стоит позвонить исполнителям вручную — " +
+          "клиент ждёт звонков и пока их не будет.",
+      );
+    } catch (err) {
+      this.logger.error(`Оповещение о нуле просмотров не ушло: ${(err as Error).message}`);
+    }
+  }
+
   private async build(orderId: string, firstMessage: string): Promise<string> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
