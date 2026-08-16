@@ -40,6 +40,7 @@ import { env } from "../config/env";
 import { AuthUser } from "../auth-otp/jwt-auth.guard";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } from "./order-derive.util";
+import { NewOrderAlertService } from "./new-order-alert.service";
 import { isDecentHourNow } from "../matching/quiet-hours.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { formatFieldValue } from "../common/field-format.util";
@@ -72,6 +73,7 @@ export class OrdersService {
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     @InjectQueue("matching") private readonly matchingQueue: Queue,
     private readonly authOtp: AuthOtpService,
+    private readonly newOrderAlert: NewOrderAlertService,
   ) {}
 
   // ---------- draft lifecycle ----------
@@ -119,6 +121,15 @@ export class OrdersService {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
     await this.prisma.chatMessage.create({ data: { orderId, role: "USER", content: message } });
+
+    // Первая реплика клиента — момент, когда владельцу стоит о заявке узнать.
+    // Считаем после записи, поэтому единица означает «эта реплика и есть
+    // первая». Ждать публикации нельзя: заявки 102, 103 и 104 до неё не
+    // дошли, и в вечернюю сводку попали, когда звонить было уже поздно.
+    const userMessages = await this.prisma.chatMessage.count({ where: { orderId, role: "USER" } });
+    if (userMessages === 1) {
+      await this.newOrderAlert.alert(orderId, message);
+    }
 
     let categoryRow = order.categoryId ? await this.categories.findByIdOrThrow(order.categoryId) : null;
     const categoryJustDetermined = !categoryRow;

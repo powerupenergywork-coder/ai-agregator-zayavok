@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { OrdersService } from "./orders.service";
 import { OrdersController } from "./orders.controller";
+import { NewOrderAlertService } from "./new-order-alert.service";
 import { CategoriesModule } from "../categories/categories.module";
 import { AiModule } from "../ai/ai.module";
 import { StorageModule } from "../storage/storage.module";
@@ -20,7 +21,7 @@ import { AuthOtpModule } from "../auth-otp/auth-otp.module";
     AuthOtpModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService],
+  providers: [OrdersService, NewOrderAlertService],
   exports: [OrdersService],
 })
 export class OrdersModule {}
