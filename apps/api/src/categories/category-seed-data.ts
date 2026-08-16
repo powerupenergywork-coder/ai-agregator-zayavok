@@ -27,7 +27,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "date",
-        combineGroup: "when",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
         required: true,
@@ -35,10 +34,9 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "time",
-        combineGroup: "when",
         label: { ru: "Время подачи", kk: "Беру уақыты" },
         type: "time",
-        required: true,
+        required: false,
         question: { ru: "В какое время нужна машина?", kk: "Көлік қай уақытта керек?" },
       },
       {
@@ -73,7 +71,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "addressFrom",
         label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
         type: "address",
-        required: true,
+        required: false,
         question: {
           ru: "Укажите адрес загрузки и адрес выгрузки.",
           kk: "Тиеу мекенжайы мен түсіру мекенжайын көрсетіңіз.",
@@ -84,7 +82,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "addressTo",
         label: { ru: "Адрес выгрузки", kk: "Түсіру мекенжайы" },
         type: "address",
-        required: true,
+        required: false,
         question: {
           ru: "Укажите адрес загрузки и адрес выгрузки.",
           kk: "Тиеу мекенжайы мен түсіру мекенжайын көрсетіңіз.",
@@ -123,7 +121,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "cargoType",
         label: { ru: "Что везём", kk: "Жүк түрі" },
         type: "enum",
-        required: true,
+        required: false,
         options: [
           { value: "soil", label: { ru: "Грунт", kk: "Топырақ" } },
           { value: "sand", label: { ru: "Песок", kk: "Құм" } },
@@ -150,7 +148,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "date",
-        combineGroup: "when",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
         required: true,
@@ -158,17 +155,16 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "time",
-        combineGroup: "when",
         label: { ru: "Время подачи", kk: "Беру уақыты" },
         type: "time",
-        required: true,
+        required: false,
         question: { ru: "В какое время подать машину?", kk: "Көлікті қай уақытта беру керек?" },
       },
       {
         key: "address",
         label: { ru: "Адрес", kk: "Мекенжай" },
         type: "address",
-        required: true,
+        required: false,
         question: { ru: "Укажите адрес, куда подать самосвал.", kk: "Самосвалды қай жерге беру керектігін көрсетіңіз." },
       },
       {
@@ -221,7 +217,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "date",
-        combineGroup: "when",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
         required: true,
@@ -229,17 +224,16 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "time",
-        combineGroup: "when",
         label: { ru: "Время подачи", kk: "Беру уақыты" },
         type: "time",
-        required: true,
+        required: false,
         question: { ru: "В какое время нужна машина?", kk: "Көлік қай уақытта керек?" },
       },
       {
         key: "addressFrom",
         label: { ru: "Адрес загрузки", kk: "Тиеу мекенжайы" },
         type: "address",
-        required: true,
+        required: false,
         // Both fields in a combineGroup share one question on purpose:
         // buildQuestionText de-duplicates, so the client reads a single
         // sentence instead of two commands stitched together.
@@ -253,7 +247,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "addressTo",
         label: { ru: "Адрес назначения", kk: "Межелі мекенжай" },
         type: "address",
-        required: true,
+        required: false,
         question: {
           ru: "Укажите адрес загрузки и адрес доставки.",
           kk: "Тиеу мекенжайы мен жеткізу мекенжайын көрсетіңіз.",
@@ -289,7 +283,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "taskType",
         label: { ru: "Вид работ", kk: "Жұмыс түрі" },
         type: "enum",
-        required: true,
+        required: false,
         options: [
           { value: "lifting", label: { ru: "Подъём груза", kk: "Жүк көтеру" } },
           { value: "installation", label: { ru: "Монтаж конструкций", kk: "Конструкцияларды монтаждау" } },
@@ -327,7 +321,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "date",
-        combineGroup: "when",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
         required: true,
@@ -335,17 +328,16 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "time",
-        combineGroup: "when",
         label: { ru: "Время подачи", kk: "Беру уақыты" },
         type: "time",
-        required: true,
+        required: false,
         question: { ru: "В какое время нужен кран?", kk: "Кран қай уақытта керек?" },
       },
       {
         key: "address",
         label: { ru: "Адрес объекта", kk: "Нысан мекенжайы" },
         type: "address",
-        required: true,
+        required: false,
         question: { ru: "Укажите адрес объекта, куда подать кран.", kk: "Кранды беру керек нысанның мекенжайын көрсетіңіз." },
       },
       {
@@ -377,7 +369,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "wasteType",
         label: { ru: "Тип мусора", kk: "Қоқыс түрі" },
         type: "enum",
-        required: true,
+        required: false,
         options: [
           { value: "concrete", label: { ru: "Бетон", kk: "Бетон" } },
           { value: "brick", label: { ru: "Кирпич", kk: "Кірпіш" } },
@@ -415,7 +407,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "date",
-        combineGroup: "when",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
         required: true,
@@ -423,17 +414,16 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "time",
-        combineGroup: "when",
         label: { ru: "Время", kk: "Уақыт" },
         type: "time",
-        required: true,
+        required: false,
         question: { ru: "В какое время удобно?", kk: "Қай уақыт ыңғайлы?" },
       },
       {
         key: "address",
         label: { ru: "Адрес", kk: "Мекенжай" },
         type: "address",
-        required: true,
+        required: false,
         question: { ru: "Укажите адрес, откуда вывозить мусор.", kk: "Қоқысты шығару керек мекенжайды көрсетіңіз." },
       },
       {
@@ -462,7 +452,7 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         key: "workType",
         label: { ru: "Вид работы", kk: "Жұмыс түрі" },
         type: "enum",
-        required: true,
+        required: false,
         options: [
           { value: "loading", label: { ru: "Погрузка", kk: "Тиеу" } },
           { value: "unloading", label: { ru: "Разгрузка", kk: "Түсіру" } },
@@ -501,7 +491,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "date",
-        combineGroup: "when",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
         required: true,
@@ -509,17 +498,16 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
       },
       {
         key: "time",
-        combineGroup: "when",
         label: { ru: "Время", kk: "Уақыт" },
         type: "time",
-        required: true,
+        required: false,
         question: { ru: "К какому времени?", kk: "Қай уақытқа дейін?" },
       },
       {
         key: "address",
         label: { ru: "Адрес", kk: "Мекенжай" },
         type: "address",
-        required: true,
+        required: false,
         question: { ru: "Укажите адрес.", kk: "Мекенжайды көрсетіңіз." },
       },
     ],
