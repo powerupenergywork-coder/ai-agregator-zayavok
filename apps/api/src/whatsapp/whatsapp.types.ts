@@ -21,5 +21,9 @@ export interface IncomingWhatsAppMessage {
   text?: string;
   buttonReplyId?: string;
   imageUrl?: string;
+  /** Голосовое или звук видео: id медиа у Cloud API, ссылка у GREEN-API —
+   *  ровно как imageUrl. Расшифровывается в текст, см. handleVoice(). */
+  audioId?: string;
+  videoId?: string;
   referral?: WhatsAppReferral;
 }

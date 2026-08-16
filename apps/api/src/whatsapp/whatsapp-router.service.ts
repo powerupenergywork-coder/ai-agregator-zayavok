@@ -13,6 +13,7 @@ import { normalizePhone } from "../common/phone.util";
 import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { readyForReviewMessage } from "../orders/order-derive.util";
+import { MediaUnderstandingService } from "../ai/media-understanding.service";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
@@ -361,6 +362,7 @@ export class WhatsAppRouterService {
     private readonly billing: BillingService,
     private readonly prospect: ProspectService,
     private readonly matching: MatchingService,
+    private readonly media: MediaUnderstandingService,
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
@@ -559,6 +561,10 @@ export class WhatsAppRouterService {
         await this.handleToken(msg.chatId, msg.phone, token, lang);
       } else if (msg.imageUrl) {
         await this.handlePhoto(msg.chatId, msg.phone, msg.imageUrl, lang);
+      } else if (msg.audioId) {
+        await this.handleVoice(msg.chatId, msg.phone, msg.audioId, "voice", lang);
+      } else if (msg.videoId) {
+        await this.handleVoice(msg.chatId, msg.phone, msg.videoId, "video", lang);
       } else if (msg.text) {
         await this.handleText(msg.chatId, msg.phone, msg.text, lang);
       }
@@ -1853,7 +1859,73 @@ export class WhatsAppRouterService {
     const orderId = await this.ensureOrder(chatId, phone);
     const buffer = await this.whatsapp.downloadMedia(imageUrl);
     await this.orders.addPhoto(orderId, buffer, `whatsapp-${Date.now()}.jpg`, "image/jpeg");
-    await this.whatsapp.sendText(phone, lang === "kk" ? "Фото өтінімге қосылды." : "Фото добавлено к заявке.");
+
+    // Фото не только прикладываем, но и читаем. «Фото добавлено к заявке» —
+    // вежливо и бесполезно: следующим сообщением бот всё равно спрашивал тип
+    // мусора и объём, которые на фото видны. Описание уходит в тот же разбор,
+    // что и текст, поэтому поля заполняются сами.
+    const described = await this.media.describeImage(buffer, "image/jpeg", lang);
+    if (!described || /не относится к заказу|тапсырысқа қатысы жоқ/i.test(described)) {
+      await this.whatsapp.sendText(phone, lang === "kk" ? "Фото өтінімге қосылды." : "Фото добавлено к заявке.");
+      return;
+    }
+
+    await this.whatsapp.sendText(
+      phone,
+      (lang === "kk" ? "Фото қосылды. Суреттен көргенім: " : "Фото добавил. Вижу на нём: ") + described,
+    );
+    const turn = await this.orders.chat(orderId, described, lang);
+    await this.sendTurn(chatId, phone, turn, lang);
+  }
+
+  /**
+   * Голосовое и видео — расшифровываем и ведём разговор дальше как обычно.
+   *
+   * Голосом здесь говорят охотнее, чем печатают: продиктовать «Анет Баба 7,
+   * пятый этаж, одиннадцатая квартира» — три секунды, набрать — полминуты.
+   * Видео идёт тем же путём: OpenAI принимает mp4 и сам достаёт звук, ffmpeg
+   * для этого не нужен. Картинку из видео мы не смотрим — только речь.
+   *
+   * Расшифровку показываем человеку. Во-первых, распознавание ошибается, и
+   * молча уехавший в заявку неверный адрес хуже, чем видимый; во-вторых, это
+   * снимает вопрос «услышали меня вообще или нет».
+   */
+  private async handleVoice(
+    chatId: string,
+    phone: string,
+    mediaId: string,
+    kind: "voice" | "video",
+    lang: Language,
+  ): Promise<void> {
+    if (!this.media.enabled) {
+      await this.replyUnsupportedType(phone, kind === "video" ? "video" : "audio");
+      return;
+    }
+
+    const buffer = await this.whatsapp.downloadMedia(mediaId);
+    // Расширение важно: по нему OpenAI определяет формат. Голосовые WhatsApp
+    // приходят как ogg/opus, видео — mp4.
+    const filename = kind === "video" ? `whatsapp-${Date.now()}.mp4` : `whatsapp-${Date.now()}.ogg`;
+    const text = await this.media.transcribe(buffer, filename, lang);
+
+    if (!text) {
+      // Видео без речи — обычная вещь: сняли мусор молча. Это не ошибка, и
+      // говорить о ней как об ошибке не надо.
+      await this.whatsapp.sendText(
+        phone,
+        kind === "video"
+          ? lang === "kk"
+            ? "Бейнеде сөз естімедім. Не керектігін жазып жіберіңізші — немесе фото жіберіңіз, оны оқи аламын."
+            : "В видео не расслышал слов. Напишите, что нужно, — или пришлите фото, его я разберу."
+          : lang === "kk"
+            ? "Дауыстық хабарламаны түсіне алмадым. Қайталап көріңізші немесе жазып жіберіңіз."
+            : "Не разобрал голосовое. Попробуйте ещё раз или напишите словами.",
+      );
+      return;
+    }
+
+    await this.whatsapp.sendText(phone, (lang === "kk" ? "Естігенім: " : "Услышал: ") + text);
+    await this.handleText(chatId, phone, text, lang);
   }
 
   private async publishCurrentOrder(chatId: string, phone: string, lang: Language): Promise<void> {

@@ -11,6 +11,7 @@ import { CategoriesModule } from "../categories/categories.module";
 import { BillingModule } from "../billing/billing.module";
 import { ProspectModule } from "../prospect/prospect.module";
 import { MatchingModule } from "../matching/matching.module";
+import { AiModule } from "../ai/ai.module";
 import { AuditLogService } from "../common/audit-log.service";
 
 @Module({
@@ -22,6 +23,7 @@ import { AuditLogService } from "../common/audit-log.service";
     BillingModule,
     ProspectModule,
     MatchingModule,
+    AiModule,
   ],
   controllers: [WhatsAppController],
   providers: [

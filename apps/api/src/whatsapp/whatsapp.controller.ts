@@ -269,8 +269,17 @@ export class WhatsAppController {
         // Cloud API gives an opaque media id, not a URL — CloudApiProvider's
         // downloadMedia() knows to resolve this id via the Graph API instead.
         await this.router.handleIncoming({ chatId, phone, referral, imageUrl: message.image?.id });
+      } else if (message.type === "audio" || message.type === "voice") {
+        // Голосовое. Здесь диктуют чаще, чем печатают: «Анет Баба 7, пятый
+        // этаж» проще сказать, чем набрать. Расшифровка идёт в тот же разбор,
+        // что и текст — см. WhatsAppRouterService.handleVoice.
+        await this.router.handleIncoming({ chatId, phone, referral, audioId: message.audio?.id ?? message.voice?.id });
+      } else if (message.type === "video") {
+        // Из видео берём только речь: OpenAI принимает mp4 и достаёт звук сам.
+        // Кадры не смотрим — для этого нужен ffmpeg в образе.
+        await this.router.handleIncoming({ chatId, phone, referral, videoId: message.video?.id });
       } else {
-        // Голосовое, документ, видео. Молчать нельзя: человек видит, что
+        // Документ и всё прочее. Молчать нельзя: человек видит, что
         // сообщение доставлено, и ждёт ответа — в живой переписке это
         // выглядит как «меня игнорируют». Одной строки достаточно, и
         // replyUnsupportedType сам следит, чтобы она не повторялась.

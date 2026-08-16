@@ -54,6 +54,19 @@ export const env = {
   aiProvider: str("AI_PROVIDER", "mock"),
   openaiApiKey: str("OPENAI_API_KEY", ""),
   openaiModel: str("OPENAI_MODEL", "gpt-4.1-mini"),
+  // Расшифровка голосовых и звука из видео. whisper-1 берёт ogg (формат
+  // голосовых WhatsApp) и mp4 (видео, звук достаётся на их стороне — ffmpeg
+  // у нас в образе нет). Более новые модели транскрипции поддерживают не все
+  // форматы, поэтому менять только после проверки на реальном голосовом.
+  openaiTranscribeModel: str("OPENAI_TRANSCRIBE_MODEL", "whisper-1"),
+  // Модель для описания фото. Должна уметь смотреть картинки: gpt-4.1-mini
+  // умеет, отдельная переменная — чтобы OPENAI_MODEL можно было сменить на
+  // текстовую, не сломав фото.
+  openaiVisionModel: str("OPENAI_VISION_MODEL", "gpt-4.1-mini"),
+  // Потолок на файл, который отправляем в распознавание. Лимит OpenAI — 25 МБ,
+  // WhatsApp отдаёт до 16 МБ; берём с запасом вниз, чтобы не платить за
+  // заведомо отклонённый запрос.
+  mediaMaxBytes: num("MEDIA_MAX_MB", 16) * 1024 * 1024,
 
   storageProvider: str("STORAGE_PROVIDER", "local"),
   s3Endpoint: str("S3_ENDPOINT", "http://localhost:9000"),
