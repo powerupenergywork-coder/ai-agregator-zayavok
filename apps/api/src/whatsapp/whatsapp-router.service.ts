@@ -14,6 +14,7 @@ import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { readyForReviewMessage } from "../orders/order-derive.util";
 import { MediaUnderstandingService } from "../ai/media-understanding.service";
+import { priceHintSentence } from "../categories/category-price-hints";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
@@ -1750,11 +1751,20 @@ export class WhatsAppRouterService {
     }
 
     if (PRICE_QUESTION_RE.test(text)) {
+      // Если категория уже известна — называем порядок суммы. Без него ответ
+      // сводится к «узнаете потом», а именно после такого ответа ушли двое.
+      const dto = currentOrderId ? await this.orders.toDto(currentOrderId).catch(() => null) : null;
+      const hint = priceHintSentence(dto?.category?.slug, lang);
       await this.whatsapp.sendText(
         phone,
-        lang === "kk"
-          ? "Бағаны орындаушының өзі айтады — әркімде әртүрлі. Өтінімді жібергеннен кейін олар қоңырау шалып, бағасын айтады. Әдетте алғашқы қоңыраулар 15–30 минут ішінде келеді."
-          : "Цену называет сам исполнитель — у всех она разная. Как отправим заявку, вам перезвонят и назовут. Обычно первые звонки приходят в течение 15–30 минут.",
+        hint
+          ? hint +
+            (lang === "kk"
+              ? "\n\nӨтінімді жібергеннен кейін олар қоңырау шалады — әдетте алғашқы қоңыраулар 15–30 минут ішінде."
+              : "\n\nКак отправим заявку, вам перезвонят — обычно первые звонки приходят в течение 15–30 минут.")
+          : lang === "kk"
+            ? "Бағаны орындаушының өзі айтады — әркімде әртүрлі. Өтінімді жібергеннен кейін олар қоңырау шалып, бағасын айтады. Әдетте алғашқы қоңыраулар 15–30 минут ішінде келеді."
+            : "Цену называет сам исполнитель — у всех она разная. Как отправим заявку, вам перезвонят и назовут. Обычно первые звонки приходят в течение 15–30 минут.",
       );
     }
 

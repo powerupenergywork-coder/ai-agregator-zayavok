@@ -41,6 +41,13 @@ import { AuthUser } from "../auth-otp/jwt-auth.guard";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
 import { buildQuestionText, deriveDenormalizedColumns, readyForReviewMessage } from "./order-derive.util";
 import { NewOrderAlertService } from "./new-order-alert.service";
+import { priceHintSentence } from "../categories/category-price-hints";
+
+/** Абзац с отбивкой, если строка непустая. Пустая вилка не должна оставлять
+ *  в сообщении два пустых перевода строки. */
+function withGap(text: string): string {
+  return text ? `${text}\n\n` : "";
+}
 import { isDecentHourNow } from "../matching/quiet-hours.util";
 import { formatWhen, fullDescription } from "../matching/matching-message.util";
 import { formatFieldValue } from "../common/field-format.util";
@@ -195,6 +202,7 @@ export class OrdersService {
 
     return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted }, lang, {
       previousFields: knownFields,
+      categoryJustDetermined,
     });
   }
 
@@ -214,7 +222,11 @@ export class OrdersService {
       data: { orderId, role: "USER", content: (category.name as unknown as LocalizedText)[lang] },
     });
 
-    return this.applyFieldUpdate(orderId, category, (order.fieldsData ?? {}) as Record<string, unknown>, lang);
+    // Выбор из списка — тоже момент, когда категория стала известна, и цену
+    // здесь надо назвать так же, как при автоматическом определении.
+    return this.applyFieldUpdate(orderId, category, (order.fieldsData ?? {}) as Record<string, unknown>, lang, {
+      categoryJustDetermined: true,
+    });
   }
 
   async setField(orderId: string, key: string, value: unknown, lang: Language = "ru"): Promise<ChatTurnResponse> {
@@ -278,7 +290,7 @@ export class OrdersService {
 
   private async applyFieldUpdate(
     orderId: string,
-    category: { id: string; fields: unknown },
+    category: { id: string; slug?: string; fields: unknown },
     mergedFields: Record<string, unknown>,
     lang: Language = "ru",
     context: {
@@ -287,6 +299,9 @@ export class OrdersService {
       previousFields?: Record<string, unknown>;
       /** The field the client answered outright, so it isn't read back. */
       answeredKey?: string;
+      /** Категорию определили именно этой репликой — значит самое время
+       *  назвать порядок цены, см. priceNotice ниже. */
+      categoryJustDetermined?: boolean;
     } = {},
   ): Promise<ChatTurnResponse> {
     const fields = category.fields as unknown as CategoryField[];
@@ -413,10 +428,21 @@ export class OrdersService {
           inferred.map((f) => `${f.label[lang].toLowerCase()} — ${formatFieldValue(validatedFields[f.key], f, lang)}`).join(", ") +
           `.\n\n`;
 
+    // Порядок цены — в первой же реплике, а не в ответ на вопрос о ней.
+    //
+    // Двое из пяти клиентов спросили цену первым или вторым сообщением и оба
+    // ушли. Отвечать «цену назовёт исполнитель» на прямой вопрос честно, но
+    // поздно: человек уже решил, что от него отмахнулись. Говорим сами, как
+    // только знаем категорию, — до того, как он спросил.
+    //
+    // Ровно один раз за заявку: категория определяется на первом сообщении и
+    // дальше не меняется, а повторять вилку у каждого вопроса — навязчиво.
+    const priceNotice = context.categoryJustDetermined ? withGap(priceHintSentence(category.slug, lang)) : "";
+
     const assistantMessage =
       missing.length === 0
-        ? inferredNotice + coverageNotice + readyForReviewMessage(lang)
-        : inferredNotice + coverageNotice + questionNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
+        ? inferredNotice + coverageNotice + priceNotice + readyForReviewMessage(lang)
+        : inferredNotice + coverageNotice + priceNotice + questionNotice + pastNotice + cityNotice + buildQuestionText(missing, lang);
     await this.prisma.chatMessage.create({ data: { orderId, role: "ASSISTANT", content: assistantMessage } });
 
     return {
