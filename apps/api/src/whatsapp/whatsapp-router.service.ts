@@ -14,6 +14,14 @@ import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { readyForReviewMessage } from "../orders/order-derive.util";
 import { MediaUnderstandingService } from "../ai/media-understanding.service";
+import {
+  AI_PROVIDER,
+  AiProvider,
+  INTENT_ACTION_THRESHOLD,
+  INTENT_CONFIDENCE_THRESHOLD,
+  IntentResult,
+} from "../ai/ai.types";
+import { CategoriesService } from "../categories/categories.service";
 import { priceHintSentence } from "../categories/category-price-hints";
 import { BillingService } from "../billing/billing.service";
 import { AuthOtpService } from "../auth-otp/auth-otp.service";
@@ -390,6 +398,8 @@ export class WhatsAppRouterService {
     private readonly prospect: ProspectService,
     private readonly matching: MatchingService,
     private readonly media: MediaUnderstandingService,
+    private readonly categories: CategoriesService,
+    @Inject(AI_PROVIDER) private readonly ai: AiProvider,
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
   ) {}
 
@@ -1754,6 +1764,10 @@ export class WhatsAppRouterService {
             return;
           }
         }
+        // Перед отпиской — спросить модель. Именно здесь тонули «Бопкат» и
+        // «Бригада»: человек называет свою технику, а получает меню команд.
+        if (await this.tryIntentFallback(chatId, phone, text, lang, supplier)) return;
+
         await this.markUnrecognized(phone);
         await this.replyToSupplier(phone, supplier, lang);
         return;
@@ -1810,6 +1824,10 @@ export class WhatsAppRouterService {
     // дважды показал, что не понимает, чего от него хотят; повторить в третий
     // раз то же самое значит потерять его окончательно.
     if (await this.isRepeating(orderId, turn.assistantMessage)) {
+      // Опрос встал — возможно, человек всё это время говорил не о заявке.
+      // Спрашиваем модель, прежде чем признать поражение: «Вы можете мне
+      // отправлять заявки по мини погрузчикам» умерло именно так.
+      if (await this.tryIntentFallback(chatId, phone, text, lang, null)) return;
       await this.escalateStuckDialogue(phone, lang);
       return;
     }
@@ -1856,6 +1874,124 @@ export class WhatsAppRouterService {
     } catch {
       return false; // диагностика не должна ломать разговор
     }
+  }
+
+  /**
+   * Последняя попытка понять сообщение — уже моделью, а не списком слов.
+   *
+   * Вызывается только там, где мы иначе ответили бы «не могу понять»: на
+   * проде это 12 сообщений из 340, то есть 3.5%. Регулярки остаются быстрым
+   * и бесплатным путём, модель — сеткой под ними.
+   *
+   * Половина непонятых оказалась исполнителями, пришедшими к нам самими:
+   * «Здрастуйте унас газел и гручики в,Астане», «Бопкат», «Бригада». Каждый
+   * такой случай требовал новой регулярки, и так по одному живому человеку
+   * за раз.
+   *
+   * Состояние по выводу модели не меняем НИКОГДА. Ответить текстом она может
+   * свободно, а подключить исполнителя или отменить заявку — только через
+   * кнопку, которую нажал человек. Ошибка распознавания не должна
+   * превращаться в действие от чужого имени.
+   *
+   * @returns true — сообщение обработано, отписка не нужна.
+   */
+  private async tryIntentFallback(
+    chatId: string,
+    phone: string,
+    text: string,
+    lang: Language,
+    supplier: { id: string } | null,
+  ): Promise<boolean> {
+    let verdict: IntentResult | null = null;
+    try {
+      verdict = await this.ai.classifyIntent(text, await this.categories.listForClassification());
+    } catch {
+      return false; // распознавание намерения необязательное — ведём себя как раньше
+    }
+    if (!verdict) return false;
+
+    // Лог по каждому вердикту: через неделю будет видно, что модель ловит
+    // сверх регулярок, и на этом основании решать, что зашивать в код.
+    this.logger.log(
+      `${phone}: намерение «${verdict.intent}» (${verdict.confidence.toFixed(2)}) для «${text.slice(0, 60)}»`,
+    );
+    if (verdict.confidence < INTENT_CONFIDENCE_THRESHOLD) return false;
+
+    switch (verdict.intent) {
+      case "autoreply":
+        // Чужой автоответчик. Отвечать нельзя: два бота переписываются
+        // вечно, и каждый круг стоит денег. 11 августа так набралось 34
+        // сообщения за два часа.
+        this.logger.warn(`${phone}: похоже на автоответчик, молчим`);
+        await this.markUnrecognized(phone);
+        return true;
+
+      case "question_about_service":
+        await this.explainService(phone, lang, supplier ? "supplier" : "client");
+        return true;
+
+      case "price_question": {
+        const hint = priceHintSentence(verdict.categorySlugs?.[0], lang);
+        await this.whatsapp.sendText(
+          phone,
+          hint ||
+            (lang === "kk"
+              ? "Бағаны орындаушының өзі айтады — әркімде әртүрлі. Не керектігін жазыңыз, өтінімді жіберейік."
+              : "Цену называет сам исполнитель — у всех она разная. Напишите, что нужно, и мы отправим заявку."),
+        );
+        return true;
+      }
+
+      case "supplier_offer":
+        await this.proposeSupplierRegistration(phone, verdict, lang);
+        return true;
+
+      case "client_request": {
+        // Единственная ветка, которая заводит заявку, — и единственная с
+        // высокой планкой. На прогоне два чужих автоответчика получили
+        // client_request с уверенностью 0.8: ответить им значит вернуть
+        // петлю бот-против-бота. Настоящие заявки уверенно дают 0.95.
+        if (verdict.confidence < INTENT_ACTION_THRESHOLD) return false;
+        const orderId = await this.ensureOrder(chatId, phone);
+        await this.sendTurn(chatId, phone, await this.orders.chat(orderId, text, lang), lang);
+        return true;
+      }
+
+      // Отмена и согласие меняют состояние, и обе уже разобраны словарями
+      // выше по потоку. Дублировать их здесь значит завести второй путь к
+      // тем же действиям — и однажды они разойдутся.
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * «Похоже, вы исполнитель» — предложение, а не регистрация.
+   *
+   * Модель ошибается, и подключить человека к рассылке заявок по её догадке
+   * значит начать слать ему чужие заказы без его согласия. Показываем, что
+   * поняли, и ждём нажатия.
+   */
+  private async proposeSupplierRegistration(phone: string, verdict: IntentResult, lang: Language): Promise<void> {
+    const categories = await this.categories.listForClassification();
+    const named = (verdict.categorySlugs ?? [])
+      .map((slug) => categories.find((c) => c.slug === slug)?.name)
+      .filter(Boolean)
+      .join(", ");
+    const what = named ? (lang === "kk" ? `${named} бойынша` : `по направлениям: ${named}`) : "";
+    const where = verdict.citySuggestion ? (lang === "kk" ? ` (${verdict.citySuggestion})` : ` в городе ${verdict.citySuggestion}`) : "";
+
+    const body =
+      lang === "kk"
+        ? `Түсіндім: сіз қызмет көрсетесіз${what ? ` — ${what}` : ""}${where}.\n\n` +
+          "Сізді осындай өтінімдерге қосайық па? Клиенттің телефонын жібереміз, тікелей келісесіз. Комиссия жоқ."
+        : `Понял вас: вы оказываете услуги${what ? ` — ${what}` : ""}${where}.\n\n` +
+          "Подключить вас на такие заявки? Пришлём телефон клиента, договоритесь напрямую. Комиссию не берём.";
+
+    await this.whatsapp.sendButtons(phone, body, [
+      { id: "who|supplier", text: lang === "kk" ? "Иә, қосыңыз" : "Да, подключите" },
+      { id: "who|client", text: lang === "kk" ? "Жоқ, тапсырыс берем" : "Нет, я заказчик" },
+    ]);
   }
 
   /**

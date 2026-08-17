@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import OpenAI from "openai";
 import { CategoryField } from "@ai-zayavki/shared";
 import { env } from "../config/env";
-import { AiCategoryOption, AiProvider, AiUnavailableError, ClassifyResult } from "./ai.types";
+import { AiCategoryOption, AiProvider, AiUnavailableError, ClassifyResult, IntentResult } from "./ai.types";
 
 // Real provider — talks to OpenAI with a short timeout so a slow/unavailable
 // API degrades to AiUnavailableError instead of blowing past the ≤5s NFR;
@@ -107,6 +107,73 @@ export class OpenAiProvider implements AiProvider {
     } catch (err) {
       this.logger.error(`extractFields() failed: ${(err as Error).message}`);
       throw new AiUnavailableError(err);
+    }
+  }
+
+  /**
+   * Последняя попытка понять сообщение перед отпиской.
+   *
+   * Возвращает null, а не бросает: этот вызов стоит на пути, где мы и так
+   * собирались сказать «не могу понять». Упасть здесь значит превратить
+   * неудачную догадку в ошибку разговора, хотя терять нечего.
+   */
+  async classifyIntent(message: string, categories: AiCategoryOption[]): Promise<IntentResult | null> {
+    const catalog = categories.map((c) => `- ${c.slug}: ${c.name}`).join("\n");
+    const system =
+      "Ты определяешь НАМЕРЕНИЕ сообщения в WhatsApp-сервисе заказа техники и услуг в Казахстане. " +
+      "Сервис соединяет заказчиков с исполнителями: заказчик описывает задачу, исполнители звонят ему напрямую.\n\n" +
+      "Возможные намерения:\n" +
+      "client_request — человек хочет заказать услугу для себя;\n" +
+      "supplier_offer — человек предлагает СВОИ услуги или технику, хочет получать заявки;\n" +
+      "question_about_service — спрашивает, кто мы, что за сервис, откуда у нас его номер;\n" +
+      "price_question — спрашивает, сколько это стоит;\n" +
+      "cancel_request — просит отменить заявку или больше не писать;\n" +
+      "agreement — соглашается с последним предложением («можно», «давайте», «хорошо»);\n" +
+      "autoreply — это автоответчик другой компании, а не живой человек;\n" +
+      "unknown — непонятно.\n\n" +
+      "Отличай client_request от supplier_offer по тому, КОМУ нужна услуга. " +
+      "«Нужна газель» — заказчик. «У нас газель, звоните» — исполнитель. " +
+      "Текст может быть с опечатками и без пробелов — это нормально.\n\n" +
+      // Два таких сообщения модель принимала за заявку клиента: перечень
+      // услуг без единой просьбы выглядит как заказ, если не знать, что это
+      // приветствие чужого бота. Признаки перечислены прямо.
+      "autoreply распознаётся по форме, а не по теме: «Спасибо за обращение», " +
+      "«Ваше сообщение принято», «Чем мы можем вам помочь», перечень своих услуг " +
+      "без единой просьбы и без конкретной задачи, приветствие компании в ответ на " +
+      "наше сообщение. Если человек ничего не просит и ни о чём не спрашивает, а " +
+      "просто перечисляет услуги в шаблонной вежливой форме — это autoreply, а не заказ.\n\n" +
+      "Отвечай строго JSON без пояснений.";
+    const user =
+      `Категории сервиса:\n${catalog}\n\n` +
+      `Сообщение: "${message}"\n\n` +
+      'Верни {"intent": "<одно из перечисленных>", "confidence": <0..1>, ' +
+      '"citySuggestion": "<город, если назван, иначе не включай>", ' +
+      '"categorySlugs": ["<slug>", ...] — категории, о которых речь; пустой массив, если неясно}.';
+
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: env.openaiModel,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      });
+      const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as Partial<IntentResult>;
+      if (!parsed.intent) return null;
+      // Категории, которых у нас нет, модель иногда придумывает — оставляем
+      // только настоящие, иначе подставим человеку несуществующую услугу.
+      const known = new Set(categories.map((c) => c.slug));
+      return {
+        intent: parsed.intent,
+        confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+        citySuggestion: parsed.citySuggestion || undefined,
+        categorySlugs: (parsed.categorySlugs ?? []).filter((s) => known.has(s)),
+      };
+    } catch (err) {
+      this.logger.warn(`classifyIntent() failed: ${(err as Error).message}`);
+      return null;
     }
   }
 }
