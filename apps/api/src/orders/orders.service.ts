@@ -1142,12 +1142,33 @@ export class OrdersService {
   /** Notifies every supplier who was ever sent this order (across all dispatch
    * waves) — used when the client or an admin closes an order out from under
    * them, e.g. cancellation. Reused by AdminService.adminCancel(). */
+  /**
+   * Сообщить об отмене — только тем, кто саму заявку получил.
+   *
+   * Раньше список брался из dispatchWave.supplierIds, то есть из кандидатов, а
+   * не из адресатов. В волну попадают трое разных: получившие полную заявку,
+   * получившие только холодное приглашение без деталей и отсечённые квотой
+   * или тихими часами — последним не уходило вообще ничего.
+   *
+   * Заявка №101: полную заявку получили семеро, приглашение — четверо, а
+   * «заявка отменена» ушло тридцати. Девятнадцать человек узнали об отмене
+   * заказа, о существовании которого не знали.
+   *
+   * Для холодного контакта это вдвойне плохо: второе в жизни сообщение от нас
+   * — «звонить по ней не нужно» про заказ, которого он не видел. Так и
+   * зарабатывают жалобы на спам, а вместе с ними — понижение качества номера
+   * у Меты.
+   *
+   * Источник правды — журнал отправок: кому фактически ушёл order_broadcast_full
+   * по этой заявке. Он же покрывает случай, когда холодный контакт согласился
+   * позже: в этот момент ему уходит та же полная заявка.
+   */
   async notifyDispatchedSuppliers(orderId: string, orderNumber: number, event: "order_cancelled") {
-    const waves = await this.prisma.dispatchWave.findMany({ where: { orderId } });
-    const supplierIds = new Set<string>();
-    for (const wave of waves) {
-      for (const id of wave.supplierIds as string[]) supplierIds.add(id);
-    }
+    const sent = await this.prisma.notificationLog.findMany({
+      where: { orderId, templateKey: "order_broadcast_full", supplierId: { not: null } },
+      select: { supplierId: true },
+    });
+    const supplierIds = new Set<string>(sent.map((s) => s.supplierId!));
     if (supplierIds.size === 0) return;
 
     const suppliers = await this.prisma.supplierProfile.findMany({
