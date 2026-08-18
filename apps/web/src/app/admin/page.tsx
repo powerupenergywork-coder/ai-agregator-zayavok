@@ -170,14 +170,19 @@ function SuppliersTab({ token }: { token: string }) {
   // Какому поставщику раскрыта детализация по деньгам. Один за раз: две
   // таблицы рядом всё равно не сравнивают, а список от них разъезжается.
   const [billingFor, setBillingFor] = useState<string | null>(null);
+  const [filters, setFilters] = useState({ q: "", categorySlug: "", city: "", confirmed: "", activityStatus: "", blocked: "" });
 
-  const load = () => adminApi.listSuppliers(token).then(setSuppliers);
+  const load = () => adminApi.listSuppliers(token, filters).then(setSuppliers);
   useEffect(() => {
     adminApi.listCategories(token).then(setAllCategories).catch(() => {});
   }, [token]);
+  // Поиск по подстроке ждёт паузы в наборе: запрос на каждую букву грузит
+  // базу и возвращается вразнобой — список дёргается на быстром вводе.
   useEffect(() => {
-    load();
-  }, [token]);
+    const t = setTimeout(load, filters.q ? 300 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, filters]);
 
   const create = async () => {
     await adminApi.upsertSupplier(token, {
@@ -229,6 +234,70 @@ function SuppliersTab({ token }: { token: string }) {
               ))}
         </p>
       </Card>
+      {/* Отбор. Список поставщиков перевалил за сотню, и без него любой
+          вопрос вида «кто у нас по грузчикам в Астане и кто из них ещё не
+          подтвердил» решается прокруткой глазами. */}
+      <Card className="mb-4 flex flex-wrap items-center gap-2 p-4">
+        <input
+          value={filters.q}
+          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+          placeholder="Поиск: номер или название"
+          className="min-w-[220px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <select
+          value={filters.categorySlug}
+          onChange={(e) => setFilters((f) => ({ ...f, categorySlug: e.target.value }))}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">Все категории</option>
+          {allCategories.map((c: any) => (
+            <option key={c.slug} value={c.slug}>
+              {c.name?.ru ?? c.slug}
+            </option>
+          ))}
+        </select>
+        <input
+          value={filters.city}
+          onChange={(e) => setFilters((f) => ({ ...f, city: e.target.value }))}
+          placeholder="Город"
+          className="w-36 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <select
+          value={filters.confirmed}
+          onChange={(e) => setFilters((f) => ({ ...f, confirmed: e.target.value }))}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">Подтверждение — любое</option>
+          <option value="true">Подтвердили</option>
+          <option value="false">Холодные</option>
+        </select>
+        <select
+          value={filters.activityStatus}
+          onChange={(e) => setFilters((f) => ({ ...f, activityStatus: e.target.value }))}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">Рассылка — любая</option>
+          <option value="ACTIVE">Включена</option>
+          <option value="PAUSED">На паузе</option>
+        </select>
+        <select
+          value={filters.blocked}
+          onChange={(e) => setFilters((f) => ({ ...f, blocked: e.target.value }))}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">С блокировкой и без</option>
+          <option value="false">Не заблокированы</option>
+          <option value="true">Заблокированы</option>
+        </select>
+        <span className="text-sm text-slate-500">Найдено: {suppliers.length}</span>
+        <button
+          type="button"
+          onClick={() => setFilters({ q: "", categorySlug: "", city: "", confirmed: "", activityStatus: "", blocked: "" })}
+          className="text-sm text-slate-500 underline decoration-dotted hover:text-brand-600"
+        >
+          Сбросить
+        </button>
+      </Card>
       <div className="flex flex-col gap-2">
         {suppliers.map((s) => (
           <div key={s.id} className="flex flex-col gap-1">
@@ -254,6 +323,20 @@ function SuppliersTab({ token }: { token: string }) {
                 )}
                 {" · "}
                 {s.cities.join(", ")} · рейтинг {s.rating.toFixed(1)} · заказов {s.completedOrders}
+              </p>
+              {/* Часы работы. Из-за них заявка №108, поданная в 07:09, ушла
+                  троим вместо тридцати: у кого окно не выбрано, тот получает
+                  заявки только с 08:00, и по карточке это должно быть видно
+                  сразу, а не выясняться по журналу отправок. */}
+              <p className="text-slate-500">
+                Заявки принимает:{" "}
+                <span className={s.workingHoursStart ? "text-slate-700" : "text-amber-700"}>
+                  {s.workingHoursLabel ?? "—"}
+                </span>
+                {s.acceptsUrgent === false && <span className="text-slate-400"> · срочные не берёт</span>}
+                {s.activityStatus === "PAUSED" && (
+                  <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-700">рассылка на паузе</span>
+                )}
               </p>
               {/* Слова самого поставщика о своей технике. Категория из
                   справочника не отличает 25-тонник от 10-тонника, а заявки

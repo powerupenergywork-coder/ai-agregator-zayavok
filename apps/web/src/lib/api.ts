@@ -198,7 +198,14 @@ export const adminApi = {
     request("/admin/categories", { method: "POST", body: JSON.stringify(body) }, token),
   updateCategory: (token: string, id: string, body: unknown) =>
     request(`/admin/categories/${id}`, { method: "PATCH", body: JSON.stringify(body) }, token),
-  listSuppliers: (token: string) => request<any[]>("/admin/suppliers", {}, token),
+  listSuppliers: (token: string, filters?: Record<string, string>) => {
+    // Пустые значения не отправляем: пустой параметр в строке запроса
+    // означал бы «фильтровать по пустоте», а не «не фильтровать».
+    const qs = new URLSearchParams(
+      Object.entries(filters ?? {}).filter(([, v]) => v) as [string, string][],
+    ).toString();
+    return request<any[]>(`/admin/suppliers${qs ? `?${qs}` : ""}`, {}, token);
+  },
   upsertSupplier: (token: string, body: unknown) =>
     request("/admin/suppliers", { method: "POST", body: JSON.stringify(body) }, token),
   setSupplierBlocked: (token: string, id: string, blocked: boolean) =>

@@ -44,18 +44,46 @@ export class AdminService {
 
   // ---------- suppliers ----------
 
-  async listSuppliers(filters: { categorySlug?: string; city?: string; blocked?: boolean }) {
+  async listSuppliers(filters: {
+    categorySlug?: string;
+    city?: string;
+    blocked?: boolean;
+    /** true — только подтвердившие, false — только холодные. */
+    confirmed?: boolean;
+    /** ACTIVE или PAUSED: «стоп» от самого поставщика видно только здесь. */
+    activityStatus?: string;
+    /** Поиск по номеру или названию — по подстроке, без учёта регистра. */
+    q?: string;
+  }) {
+    const q = filters.q?.trim();
     const suppliers = await this.prisma.supplierProfile.findMany({
       where: {
         isBlocked: filters.blocked,
+        ...(filters.activityStatus ? { activityStatus: filters.activityStatus as never } : {}),
+        // null и «не null» — это два разных запроса, а не одно поле: холодный
+        // контакт отличается от подтвердившего именно отсутствием даты.
+        ...(filters.confirmed === undefined ? {} : { confirmedAt: filters.confirmed ? { not: null } : null }),
         ...(filters.categorySlug
           ? { categories: { some: { category: { slug: filters.categorySlug } } } }
           : {}),
         ...(filters.city ? { serviceAreas: { some: { city: filters.city } } } : {}),
+        // Номер ищем и по цифрам тоже: в базе он с «+7», а в поиск его
+        // вставляют как придётся — из переписки, из объявления, из таблицы.
+        ...(q
+          ? {
+              OR: [
+                { companyName: { contains: q, mode: "insensitive" as const } },
+                { user: { phone: { contains: q.replace(/[^\d]/g, "") } } },
+              ],
+            }
+          : {}),
       },
       include: { user: true, categories: { include: { category: true } }, serviceAreas: true, subscription: true },
       orderBy: { createdAt: "desc" },
     });
+    // Общее окно нужно, чтобы отличить «человек так решил» от «мы за него
+    // предположили»: у большинства часы не заданы вовсе.
+    const settings = await this.prisma.dispatchSettings.findFirst();
     return suppliers.map((s) => ({
       id: s.id,
       phone: s.user.phone,
@@ -68,6 +96,12 @@ export class AdminService {
       isBlocked: s.isBlocked,
       confirmedAt: s.confirmedAt,
       acceptsUrgent: s.acceptsUrgent,
+      // Часы работы — то, из-за чего заявка, поданная в 07:09, дошла до
+      // троих вместо тридцати. Без них в карточке непонятно, почему одному
+      // ушло сразу, а другому только утром.
+      workingHoursStart: s.workingHoursStart,
+      workingHoursEnd: s.workingHoursEnd,
+      workingHoursLabel: workingHoursLabel(s, settings),
       // Both, deliberately. The slug is what the add-supplier form takes, so
       // it has to stay visible — but "crane" and "crane-truck" are an
       // autocrane and a manipulator, two different machines that are easy to
@@ -1044,4 +1078,26 @@ export class AdminService {
 
     return { phone, timeline };
   }
+}
+
+/**
+ * Часы работы поставщика человеческой строкой.
+ *
+ * Три разных состояния, и путать их нельзя. Заданные часы — это выбор
+ * самого человека на онбординге. Круглосуточно — тоже его выбор, просто
+ * другой. А пусто — не выбор вообще: мы подставляем общее окно за него, и
+ * именно из-за этого заявка №108, поданная в 07:09, дошла до троих вместо
+ * тридцати. В карточке это должно читаться с первого взгляда.
+ */
+function workingHoursLabel(
+  supplier: { workingHoursStart: string | null; workingHoursEnd: string | null },
+  settings: { quietHoursStart: string | null; quietHoursEnd: string | null } | null,
+): string {
+  const { workingHoursStart: start, workingHoursEnd: end } = supplier;
+  if (start && end) {
+    return start === "00:00" && end === "23:59" ? "круглосуточно" : `${start}–${end}`;
+  }
+  const defStart = settings?.quietHoursStart ?? env.dispatchQuietHoursStart;
+  const defEnd = settings?.quietHoursEnd ?? env.dispatchQuietHoursEnd;
+  return `${defStart}–${defEnd} (общее, сам не выбирал)`;
 }

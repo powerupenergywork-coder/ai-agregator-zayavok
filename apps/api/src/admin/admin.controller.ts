@@ -88,11 +88,19 @@ export class AdminController {
     @Query("categorySlug") categorySlug?: string,
     @Query("city") city?: string,
     @Query("blocked") blocked?: string,
+    @Query("confirmed") confirmed?: string,
+    @Query("activityStatus") activityStatus?: string,
+    @Query("q") q?: string,
   ) {
     return this.admin.listSuppliers({
       categorySlug,
       city,
-      blocked: blocked === undefined ? undefined : blocked === "true",
+      // Пустая строка из формы означает «не фильтровать», а не «false»:
+      // селект без выбора шлёт именно её.
+      blocked: blocked ? blocked === "true" : undefined,
+      confirmed: confirmed ? confirmed === "true" : undefined,
+      activityStatus: activityStatus || undefined,
+      q: q || undefined,
     });
   }
 
