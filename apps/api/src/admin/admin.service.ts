@@ -480,8 +480,25 @@ export class AdminService {
       .map(([key, value]) => ({ label: key, value: String(value) }));
 
     const supplierIds = [...new Set(order.dispatchWaves.flatMap((w) => w.supplierIds as string[]))];
+    // Дайджест — одно сообщение на несколько заявок, поэтому orderId у него
+    // пустой, и по строгому совпадению карточка его не находила. Заявка
+    // №108: в «Что ушло» было видно троих, хотя утренним дайджестом её
+    // получили ещё шестеро — то есть карточка показывала треть правды и
+    // выглядела так, будто рассылка не сработала.
+    //
+    // Номера заявок лежат внутри самого сообщения, в payload.orders — по ним
+    // и находим. Это чтение, а не запись: привязывать дайджест к одной
+    // заявке из нескольких было бы враньём в другую сторону.
     const notifications = await this.prisma.notificationLog.findMany({
-      where: { orderId },
+      where: {
+        OR: [
+          { orderId },
+          {
+            templateKey: "order_digest",
+            payload: { path: ["orders"], array_contains: [{ orderNumber: order.number }] },
+          },
+        ],
+      },
       select: {
         id: true,
         templateKey: true,
