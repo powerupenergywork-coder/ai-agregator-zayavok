@@ -1266,19 +1266,30 @@ export class OrdersService {
     const phone = order.client?.user.phone;
     if (!phone) return;
 
-    const viewers = await this.countOrderViewers(orderId);
+    // Считаем ПРОЧИТАВШИХ, а не перешедших по ссылке.
+    //
+    // Сначала здесь стояли переходы на /s/<token>, и это оказалось пустым
+    // сигналом: в полной заявке телефон клиента написан прямо в сообщении,
+    // открывать сайт исполнителю незачем — он просто звонит. По заявке №113
+    // переходов было ноль, и владельцу ушло «не открыл ни один исполнитель»,
+    // хотя сообщение прочитали восемь из одиннадцати.
+    //
+    // Отметки о прочтении приходят вебхуком от Меты и лежат в readAt — это
+    // тот же признак, который виден в стенограмме, и расходиться с ним
+    // сводка не должна.
+    const { read, sent } = await this.countOrderReads(orderId, order.number);
     const lang = await this.getLangForPhone(phone);
 
     const text =
-      viewers > 0
+      read > 0
         ? lang === "kk"
-          ? `Өтінімді ${viewers} орындаушы қарады — қоңырауларды күтіңіз.\n\n` +
+          ? `Өтінімді ${read} орындаушы оқыды — қоңырауларды күтіңіз.\n\n` +
             "Бір сағат ішінде ешкім қоңырау шалмаса — бізге жазыңыз, қайта жібереміз."
-          : `Вашу заявку открыли ${viewers} ${plural(viewers, "исполнитель", "исполнителя", "исполнителей")} — ждите звонков.\n\n` +
+          : `Вашу заявку прочитали ${read} ${plural(read, "исполнитель", "исполнителя", "исполнителей")} из ${sent} — ждите звонков.\n\n` +
             "Если в ближайший час никто не позвонит — напишите нам, разошлём повторно."
         : lang === "kk"
-          ? "Өтінімді әзірге ешкім ашқан жоқ. Біз оны көреміз және қайта жіберуге тырысамыз — сізден ештеңе қажет емес."
-          : "Пока заявку никто не открыл. Мы это видим и разошлём её ещё раз — от вас ничего не нужно.";
+          ? "Өтінімді әзірге ешкім оқыған жоқ. Біз оны көреміз және қайта жіберуге тырысамыз — сізден ештеңе қажет емес."
+          : "Заявку пока никто не прочитал. Мы это видим и разошлём её ещё раз — от вас ничего не нужно.";
 
     try {
       await this.whatsapp.sendText(phone, text);
@@ -1286,9 +1297,33 @@ export class OrdersService {
       this.logger.warn(`Не удалось отправить сводку по рассылке: ${(err as Error).message}`);
     }
 
-    if (viewers === 0) {
-      await this.newOrderAlert.alertNoViews(orderId, order.number);
+    if (read === 0) {
+      await this.newOrderAlert.alertNoViews(orderId, order.number, sent);
     }
+  }
+
+  /**
+   * Сколько исполнителей прочитали заявку и скольким она ушла.
+   *
+   * Дайджест приходится искать по номеру заявки внутри самого сообщения:
+   * одно сообщение на несколько заказов, поэтому orderId у него пустой —
+   * та же причина, по которой карточка заявки показывала треть отправок.
+   */
+  private async countOrderReads(orderId: string, orderNumber: number): Promise<{ read: number; sent: number }> {
+    const where = {
+      OR: [
+        { orderId, templateKey: "order_broadcast_full" },
+        {
+          templateKey: "order_digest",
+          payload: { path: ["orders"], array_contains: [{ orderNumber }] },
+        },
+      ],
+    };
+    const [sent, read] = await Promise.all([
+      this.prisma.notificationLog.count({ where }),
+      this.prisma.notificationLog.count({ where: { ...where, readAt: { not: null } } }),
+    ]);
+    return { read, sent };
   }
 
   private assertEditable(order: { status: string }) {
