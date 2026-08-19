@@ -16,6 +16,12 @@ import { toLang } from "../common/language.util";
 import { CategoryField, Language, LocalizedText, citiesServing } from "@ai-zayavki/shared";
 
 /**
+ * Код Меты «Message undeliverable»: у номера нет WhatsApp или он не может
+ * принимать сообщения. Ошибка окончательная, повторять по ней нечего.
+ */
+const UNDELIVERABLE_ERROR_CODE = "131026";
+
+/**
  * Чем закончилось согласие поставщика на холодное приглашение.
  *
  * Нужен именно исход, а не void: «заявку уже закрыли» и «заявка отправлена» —
@@ -243,12 +249,28 @@ export class MatchingService {
    * в базе: 15 приглашений 5 августа не ушли из-за неверного канала.
    */
   private async mayInviteAgain(supplierId: string): Promise<boolean> {
+    // Считаем ПОПЫТКИ, а не удачные доставки.
+    //
+    // Здесь стоял фильтр `status: { not: "FAILED" }`, и он обнулял всю
+    // защиту. Приглашение уходит со статусом SENT, а через секунду вебхук
+    // Меты переводит его в FAILED — значит из подсчёта выпадали ровно те
+    // отправки, которые надо было считать в первую очередь. Счётчик всегда
+    // показывал ноль, лимит в три попытки не срабатывал ни разу, и пауза в
+    // три дня тоже: при нуле отправок функция сразу отвечает «можно».
+    //
+    // +7 775 238 8228 получил четыре приглашения — 15, 15, 19 и 19 августа,
+    // все четыре недоставлены. И получал бы дальше на каждую новую заявку.
     const sent = await this.prisma.notificationLog.findMany({
-      where: { supplierId, templateKey: "supplier_cold_invite", status: { not: "FAILED" } },
-      select: { createdAt: true },
+      where: { supplierId, templateKey: "supplier_cold_invite" },
+      select: { createdAt: true, errorMessage: true },
       orderBy: { createdAt: "desc" },
       take: env.supplierInviteMaxAttempts,
     });
+    // «Доставить невозможно» — это не человек, который не ответил, а номер без
+    // WhatsApp. Ему не поможет ни вторая попытка, ни третья: 31 приглашение
+    // из 103 ушло именно в такие номера. Прекращаем сразу, не тратя оставшиеся
+    // попытки и не портя качество номера отправителя.
+    if (sent.some((s) => s.errorMessage?.includes(UNDELIVERABLE_ERROR_CODE))) return false;
     if (sent.length >= env.supplierInviteMaxAttempts) return false;
     if (sent.length === 0) return true;
     const cooldownMs = env.supplierInviteCooldownDays * 24 * 60 * 60 * 1000;
