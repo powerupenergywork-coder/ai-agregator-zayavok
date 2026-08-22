@@ -1105,47 +1105,31 @@ export class OrdersService {
    * по тому, кто сейчас едет к клиенту. Чтобы дошло до всех, нужен новый
    * шаблон, утверждённый у Меты.
    */
+  /**
+   * Сообщить исполнителям, чем кончилась заявка.
+   *
+   * Два разных события, а не одно. «Клиент нашёл исполнителя» — нормальный
+   * рабочий финал, извиняться тут не за что. «Клиенту больше не нужно» —
+   * человека дёрнули зря, и извинение уместно.
+   *
+   * До появления второго события во всех случаях уходило «Заявка отменена.
+   * Извините за беспокойство» — включая того исполнителя, который эту заявку
+   * и взял.
+   *
+   * Оба идут утверждённым шаблоном: сообщение приходит через часы после
+   * рассылки, когда 24-часовое окно давно закрыто, и свободный текст до
+   * человека просто не дойдёт.
+   */
   private async notifySuppliersOrderClosed(
     orderId: string,
     orderNumber: number,
     kind: "found" | "cancelled",
   ): Promise<void> {
-    if (kind === "cancelled") {
-      await this.notifyDispatchedSuppliers(orderId, orderNumber, "order_cancelled");
-      return;
-    }
-
-    const sent = await this.prisma.notificationLog.findMany({
-      where: { orderId, templateKey: "order_broadcast_full", supplierId: { not: null } },
-      select: { supplierId: true },
-    });
-    const ids = [...new Set(sent.map((r) => r.supplierId!))];
-    if (ids.length === 0) return;
-
-    const suppliers = await this.prisma.supplierProfile.findMany({
-      where: { id: { in: ids } },
-      include: { user: true },
-    });
-
-    let delivered = 0;
-    for (const supplier of suppliers) {
-      const lang = toLang(supplier.user.preferredLanguage);
-      const text =
-        lang === "kk"
-          ? `№${orderNumber} өтінім жабылды — клиент орындаушы тапты.
-
-Жаңа өтінімдерді әдеттегідей жібереміз.`
-          : `Заявка №${orderNumber} закрыта — клиент нашёл исполнителя.
-
-Новые заявки пришлём как обычно.`;
-      try {
-        await this.whatsapp.sendText(supplier.user.phone, text);
-        delivered++;
-      } catch {
-        // Окно закрыто — молчим. См. ограничение в комментарии выше.
-      }
-    }
-    this.logger.log(`Заявка №${orderNumber}: о найденном исполнителе сообщено ${delivered} из ${suppliers.length}`);
+    await this.notifyDispatchedSuppliers(
+      orderId,
+      orderNumber,
+      kind === "found" ? "order_closed_found" : "order_cancelled",
+    );
   }
 
   private async closeOrderAsCancelled(
@@ -1241,7 +1225,11 @@ export class OrdersService {
    * по этой заявке. Он же покрывает случай, когда холодный контакт согласился
    * позже: в этот момент ему уходит та же полная заявка.
    */
-  async notifyDispatchedSuppliers(orderId: string, orderNumber: number, event: "order_cancelled") {
+  async notifyDispatchedSuppliers(
+    orderId: string,
+    orderNumber: number,
+    event: "order_cancelled" | "order_closed_found",
+  ) {
     const sent = await this.prisma.notificationLog.findMany({
       where: { orderId, templateKey: "order_broadcast_full", supplierId: { not: null } },
       select: { supplierId: true },

@@ -47,8 +47,16 @@ export class DailyReportService {
     const text = await this.build();
     if (env.dailyReportPhone) {
       try {
-        await this.whatsapp.sendText(env.dailyReportPhone, text);
-        this.logger.log(`Сводка отправлена на ${env.dailyReportPhone}`);
+        // Шаблоном, а не свободным текстом: сводка уходит вечером, когда
+        // владелец боту сегодня, скорее всего, не писал, и 24-часовое окно
+        // закрыто. Именно поэтому она доходила через раз.
+        //
+        // Полная сводка в шаблон не влезает — он несёт пять чисел, а разбор
+        // по заявкам остаётся в логе и в админке. Лучше короткая, которая
+        // приходит всегда, чем подробная, которая не приходит.
+        await this.whatsapp.sendTemplate(env.dailyReportPhone, "owner_daily_report_ru", "ru", this.buildParams(text));
+        this.logger.log(`Сводка отправлена на ${env.dailyReportPhone}
+${text}`);
       } catch (err) {
         // Свободный текст доходит только внутри 24-часового окна. Если
         // владелец сегодня боту не писал, отправка не пройдёт — но сводка
@@ -57,6 +65,26 @@ export class DailyReportService {
       }
     }
     return text;
+  }
+
+  /**
+   * Пять чисел для owner_daily_report_ru: дата, заявок, дошло до
+   * исполнителей, новых исполнителей, требуют внимания.
+   *
+   * Считаются из уже собранного текста, а не повторным запросом в базу:
+   * сводка строится один раз, и два независимых подсчёта рано или поздно
+   * разойдутся между собой.
+   */
+  private buildParams(text: string): string[] {
+    const pick = (re: RegExp) => text.match(re)?.[1] ?? "0";
+    const d = new Date();
+    return [
+      `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`,
+      pick(/Заявки:\s*(\d+)/),
+      pick(/дошло до исполнителей:\s*(\d+)/),
+      pick(/Новые исполнители:\s*(\d+)/),
+      pick(/Зависли[^:]*:\s*(\d+)/),
+    ];
   }
 
   private async build(): Promise<string> {

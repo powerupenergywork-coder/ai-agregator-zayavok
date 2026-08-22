@@ -29,6 +29,10 @@ export const WHATSAPP_TEMPLATE_EVENTS = [
   // окно давно закрыто. Без шаблона это сообщение просто не доходило, и
   // человек ехал на заявку, которую клиент уже закрыл.
   "order_cancelled",
+  // Тот же случай, что и отмена: доходит через часы после рассылки, когда
+  // окно давно закрыто. Без шаблона исполнитель не узнал бы, что заявка
+  // закрыта успешно, и поехал бы на занятую работу.
+  "order_closed_found",
 ] as const;
 export type WhatsAppTemplateEvent = (typeof WHATSAPP_TEMPLATE_EVENTS)[number];
 
@@ -58,6 +62,7 @@ const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = 
   supplier_cold_invite: { ru: "supplier_cold_invite_v2_ru", kk: "supplier_cold_invite_v2_kk" },
   order_confirm_request: { ru: "order_confirm_request_ru", kk: "order_confirm_request_kk" },
   order_cancelled: { ru: "order_cancelled_ru", kk: "order_cancelled_kk" },
+  order_closed_found: { ru: "order_closed_found_ru", kk: "order_closed_found_kk" },
   // One combined bilingual template (not split ru/kk) — see ТЗ_прогрев_поставщиков_v2
   // раздел 5: the recipient's language isn't known yet, so both language
   // blocks ship in one message and the tapped quick-reply button picks it.
@@ -142,6 +147,8 @@ export function buildWhatsAppTemplateParams(event: WhatsAppTemplateEvent, payloa
     // и город нужны, чтобы человек понял, о какой из полученных заявок речь:
     // одного номера для этого мало, их у активного поставщика десятки.
     case "order_cancelled":
+    // Тот же набор подстановок: номер, категория, город.
+    case "order_closed_found":
       return [String(payload.orderNumber), String(payload.categoryName), String(payload.city)];
   }
 }

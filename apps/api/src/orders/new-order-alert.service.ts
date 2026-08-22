@@ -37,6 +37,15 @@ export class NewOrderAlertService {
   async alert(orderId: string, firstMessage: string): Promise<void> {
     if (!this.recipient) return;
     try {
+      // Сначала шаблоном: свободный текст доходит до владельца только внутри
+      // 24-часового окна, то есть если он сегодня сам писал боту. Оповещение
+      // о заявке, которое приходит через раз, бесполезно — а именно за этим
+      // его и заводили.
+      const parts = await this.buildParams(orderId, firstMessage);
+      if (parts) {
+        await this.whatsapp.sendTemplate(this.recipient, "owner_new_order_ru", "ru", parts);
+        return;
+      }
       const text = await this.build(orderId, firstMessage);
       await this.whatsapp.sendText(this.recipient, text);
     } catch (err) {
@@ -66,6 +75,34 @@ export class NewOrderAlertService {
     } catch (err) {
       this.logger.error(`Оповещение о нуле просмотров не ушло: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * Пять подстановок утверждённого шаблона owner_new_order_ru:
+   * номер, категория, город, телефон клиента, первая фраза.
+   *
+   * Пусто — если заявку не нашли: тогда уходит свободный текст, он хотя бы
+   * попадёт в лог.
+   */
+  private async buildParams(orderId: string, firstMessage: string): Promise<string[] | null> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { category: true, client: { include: { user: true } } },
+    });
+    if (!order) return null;
+    const sessionPhone = await this.prisma.whatsAppSession
+      .findFirst({ where: { currentOrderId: orderId }, select: { phone: true } })
+      .then((r) => r?.phone);
+    const phone = order.client?.user.phone ?? sessionPhone ?? "с сайта, телефона пока нет";
+    // Переводы строк в подстановке Мета отклоняет — держим всё в одну строку.
+    const said = firstMessage.replace(/\s+/g, " ").slice(0, 200);
+    return [
+      String(order.number),
+      order.category ? (order.category.name as unknown as LocalizedText).ru : "категория не определена",
+      order.city ?? "город не указан",
+      phone,
+      said,
+    ];
   }
 
   private async build(orderId: string, firstMessage: string): Promise<string> {

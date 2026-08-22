@@ -16,6 +16,7 @@ export type NotificationEvent =
   | "order_broadcast_full"
   | "order_digest"
   | "order_cancelled"
+  | "order_closed_found"
   | "completion_checkin"
   | "complaint_received"
   | "needs_operator"
@@ -78,6 +79,15 @@ const templates: Record<NotificationEvent, (p: any, lang: Language) => string> =
   },
   order_cancelled: (p, lang) =>
     lang === "kk" ? `Өтінім №${p.orderNumber} клиент тарапынан бас тартылды.` : `Заявка №${p.orderNumber} отменена клиентом.`,
+  // Клиент нашёл исполнителя — рабочий финал, а не сбой. Отдельное событие,
+  // потому что прежде даже тот, кто заявку взял, получал «отменена, извините
+  // за беспокойство».
+  order_closed_found: (p, lang) =>
+    lang === "kk"
+      ? `№${p.orderNumber} өтінім жабылды — клиент орындаушы тапты.
+${p.categoryName}, ${p.city}`
+      : `Заявка №${p.orderNumber} закрыта — клиент нашёл исполнителя.
+${p.categoryName}, ${p.city}`,
   // Proactive check-in — nobody in the system tracks which supplier the
   // client ended up going with, so we have to ask instead of waiting for
   // the client to come back and close the order themselves. WhatsApp gets
