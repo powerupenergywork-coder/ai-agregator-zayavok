@@ -750,15 +750,32 @@ export class OrdersService {
       throw new BadRequestException("Завершить можно только активную заявку");
     }
 
-    if (outcome === "resolved") {
-      await this.prisma.order.update({ where: { id: orderId }, data: { clientRatingPositive: true, clientRatingComment: comment } });
+    // Исполнитель найден — неважно, наш или сторонний: для клиента задача
+    // решена, и заявка выполнена, а не отменена.
+    if (
+      outcome === "found_via_us" ||
+      outcome === "found_elsewhere" ||
+      outcome === "found_unknown" ||
+      outcome === "resolved"
+    ) {
+      const viaUs = outcome === "found_elsewhere" ? false : outcome === "found_unknown" ? null : true;
+      await this.prisma.order.update({
+        where: { id: orderId },
+        // Оценку ставим только когда человек прямо сказал, что нашёл через
+        // нас. Прежний код при закрытии проставлял отрицательную оценку —
+        // то есть жаловался на сервис от имени довольного клиента.
+        data: { clientRatingPositive: viaUs === true ? true : null, clientRatingComment: comment },
+      });
       await this.transitionStatus(orderId, "COMPLETED", "client");
       await this.prisma.order.update({ where: { id: orderId }, data: { completedAt: new Date() } });
-      await this.analytics.track("order_completed", { orderId, userId: user.sub });
-    } else if (outcome === "closed") {
-      await this.prisma.order.update({ where: { id: orderId }, data: { clientRatingPositive: false, clientRatingComment: comment } });
-      await this.closeOrderAsCancelled(orderId, order.number, "client", comment || "Клиент закрыл заявку — услугу не оказали");
-      await this.analytics.track("order_cancelled", { orderId, userId: user.sub, metadata: { reason: "client_closed_after_no_service" } });
+      await this.analytics.track("order_completed", { orderId, userId: user.sub, metadata: { viaUs } });
+      await this.notifySuppliersOrderClosed(orderId, order.number, "found");
+    } else if (outcome === "not_needed" || outcome === "closed") {
+      await this.closeOrderAsCancelled(orderId, order.number, "client", comment || "Клиенту больше не нужно", {
+        notifySuppliers: false,
+      });
+      await this.notifySuppliersOrderClosed(orderId, order.number, "cancelled");
+      await this.analytics.track("order_cancelled", { orderId, userId: user.sub, metadata: { reason: "not_needed" } });
     } else {
       await this.matchingQueue.add("start", { orderId });
       await this.analytics.track("order_redispatch_requested", { orderId, userId: user.sub });
@@ -1068,6 +1085,67 @@ export class OrdersService {
       { notifySuppliers: false, status: "CLOSED_NO_RESPONSE" },
     );
     this.realtime.emitOrderUpdated(orderId, await this.toDto(orderId));
+  }
+
+  /**
+   * Сообщить исполнителям, чем кончилась заявка.
+   *
+   * Два разных события, а не одно. «Клиент нашёл исполнителя» — нормальный
+   * рабочий финал, извиняться тут не за что. «Клиенту больше не нужно» —
+   * человека дёрнули зря, и извинение уместно.
+   *
+   * До сих пор во всех случаях уходило «Заявка отменена. Извините за
+   * беспокойство» — включая того исполнителя, который эту заявку и взял.
+   *
+   * ОГРАНИЧЕНИЕ. Правильный текст про найденного исполнителя уходит только
+   * свободным сообщением, а оно доходит лишь внутри 24-часового окна. У Меты
+   * утверждён единственный подходящий шаблон — про ОТМЕНУ, и его текст
+   * заморожен. Поэтому тем, у кого окно закрыто, мы в этом случае не пишем
+   * ничего: молчание нейтрально, а ложное «отменена» дезинформирует и бьёт
+   * по тому, кто сейчас едет к клиенту. Чтобы дошло до всех, нужен новый
+   * шаблон, утверждённый у Меты.
+   */
+  private async notifySuppliersOrderClosed(
+    orderId: string,
+    orderNumber: number,
+    kind: "found" | "cancelled",
+  ): Promise<void> {
+    if (kind === "cancelled") {
+      await this.notifyDispatchedSuppliers(orderId, orderNumber, "order_cancelled");
+      return;
+    }
+
+    const sent = await this.prisma.notificationLog.findMany({
+      where: { orderId, templateKey: "order_broadcast_full", supplierId: { not: null } },
+      select: { supplierId: true },
+    });
+    const ids = [...new Set(sent.map((r) => r.supplierId!))];
+    if (ids.length === 0) return;
+
+    const suppliers = await this.prisma.supplierProfile.findMany({
+      where: { id: { in: ids } },
+      include: { user: true },
+    });
+
+    let delivered = 0;
+    for (const supplier of suppliers) {
+      const lang = toLang(supplier.user.preferredLanguage);
+      const text =
+        lang === "kk"
+          ? `№${orderNumber} өтінім жабылды — клиент орындаушы тапты.
+
+Жаңа өтінімдерді әдеттегідей жібереміз.`
+          : `Заявка №${orderNumber} закрыта — клиент нашёл исполнителя.
+
+Новые заявки пришлём как обычно.`;
+      try {
+        await this.whatsapp.sendText(supplier.user.phone, text);
+        delivered++;
+      } catch {
+        // Окно закрыто — молчим. См. ограничение в комментарии выше.
+      }
+    }
+    this.logger.log(`Заявка №${orderNumber}: о найденном исполнителе сообщено ${delivered} из ${suppliers.length}`);
   }
 
   private async closeOrderAsCancelled(

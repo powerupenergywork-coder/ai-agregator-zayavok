@@ -299,6 +299,19 @@ const WHO_ARE_YOU_RE = new RegExp(
 const REVIEW_CONFIRM_RE =
   /^\s*(всё|все|всйо)?\s*(верно|правильно|так|точно|да|ок|окей|ok|подтверждаю|отправляй(те)?|отправить|публикуй(те)?|поехали|давай(те)?|согласен|согласна)\s*[.!]*\s*$|^\s*(иә|ия|дұрыс|солай|жіберіңіз|жібер|жарайды|болады)\s*[.!]*\s*$/i;
 
+/**
+ * «Уже нашёл исполнителя», «всё, спасибо, договорился» — заявка закрыта.
+ *
+ * Самая ценная фраза во всём сервисе: клиент сам сообщает исход, о котором мы
+ * иначе не узнаём никак. 22 августа по заявке №117 он написал ровно это — и
+ * получил в ответ вопрос «Услугу уже оказали?», причём дважды подряд.
+ *
+ * Отвечать на такое вопросом нельзя: человек прощается. Закрываем и говорим
+ * спасибо, ничего не переспрашивая.
+ */
+const FOUND_EXECUTOR_RE =
+  /(наш[её]л|нашли|найден|подобрал|определил)[а-яё]*\s*(уже\s*)?(исполнител|подрядчик|мастера|машину|технику|человека|бригаду)|уже\s*(наш[её]л|нашли|договорил|заказал|решил)|договорил[а-яё]*\s*(уже\s*)?(с|уже)?|вопрос\s*реш|всё\s*реш|все\s*реш|таптым|келістім|шештім/i;
+
 /** Речь о заявке: цена, созвон, клиент. Не про себя — см. looksLikeSelfInfo. */
 const ORDER_TALK_RE =
   /цен[аеуы]|ценом|стоимост|тенге|тг\b|договор|созвон|перезвон|клиент|заказчик|заявк|баға|келіс|хабарлас/i;
@@ -1672,6 +1685,17 @@ export class WhatsAppRouterService {
           await this.whatsapp.sendText(phone, lang === "kk" ? "Жарайды, жаңа өтінімнен бастайық. Не керек?" : "Хорошо, начнём новую заявку. Что вам нужно?");
         } else {
           const dto = await this.orders.toDto(session.currentOrderId);
+
+          // «Уже нашёл исполнителя» — исход, а не повод для вопроса.
+          //
+          // Заявка №117: человек написал это и получил в ответ «Услугу уже
+          // оказали?», причём дважды. Закрываем молча и благодарим — он
+          // прощается, а не начинает разговор.
+          if (dto.status === "PUBLISHED" && FOUND_EXECUTOR_RE.test(text)) {
+            await this.closeOrderAsFound(chatId, phone, session.currentOrderId, dto.number, lang);
+            return;
+          }
+
           if (dto.status === "PUBLISHED") {
             // Any message on an active order is a chance to close the loop —
             // the client may just be checking in, not tapping the original
@@ -1679,11 +1703,16 @@ export class WhatsAppRouterService {
             const body =
               lang === "kk"
                 ? `Өтінім №${dto.number}: ${dto.statusLabel.kk}. Қызмет көрсетілді ме?`
-                : `Заявка №${dto.number}: ${dto.statusLabel.ru}. Услугу уже оказали?`;
+                : `Заявка №${dto.number}, ${dto.category?.name.ru ?? "услуга"}. Что в итоге?`;
+            // Кнопки называют исход, а не действие. Прежняя «Закрыть заявку»
+            // означала в коде «услугу не оказали» — и люди жали её после
+            // успеха, отправляя исполнителям ложную отмену. Разница между
+            // первыми двумя даёт атрибуцию тем же нажатием: спрашивать
+            // клиента второй раз нельзя.
             await this.whatsapp.sendButtons(phone, body, [
-              { id: `complete|resolved|${session.currentOrderId}`, text: lang === "kk" ? "Қызмет көрсетілді" : "Услуга оказана" },
-              { id: `complete|redispatch|${session.currentOrderId}`, text: lang === "kk" ? "Басқасын ұсыну" : "Отправить повторно" },
-              { id: `complete|closed|${session.currentOrderId}`, text: lang === "kk" ? "Өтінімді жабу" : "Закрыть заявку" },
+              { id: `complete|found_via_us|${session.currentOrderId}`, text: lang === "kk" ? "Сіздер арқылы" : "Нашёл через вас" },
+              { id: `complete|found_elsewhere|${session.currentOrderId}`, text: lang === "kk" ? "Өзім таптым" : "Нашёл сам" },
+              { id: `complete|not_needed|${session.currentOrderId}`, text: lang === "kk" ? "Енді қажет емес" : "Уже не нужно" },
             ]);
           } else {
             await this.whatsapp.sendText(
@@ -1704,6 +1733,18 @@ export class WhatsAppRouterService {
     // ensureOrder() ниже перечитывает сессию из базы и увидит очищенное поле,
     // поэтому здесь достаточно локального значения для проверки.
     const currentOrderId = releasedStale ? null : session.currentOrderId;
+
+    // «Спасибо» без активной заявки — прощание, а не запрос.
+    //
+    // Раньше эта проверка стояла только в ветке исполнителя. У клиента же
+    // любое такое слово уходило дальше и заводило черновик: 22 августа
+    // человек написал «Уже нашел исполнителя.» и следом «Спасибо.» — и
+    // получил два одинаковых вопроса подряд. Теперь первое закрывает заявку,
+    // а второе не должно начинать новую.
+    if (!currentOrderId && isAcknowledgement(text)) {
+      this.logger.log(`${phone}: подтверждение прочтения без активной заявки, молчим`);
+      return;
+    }
 
     // A registered supplier saying "спасибо" or "сколько стоит подписка" was
     // being funnelled into drafting an order for themselves — the router
@@ -1992,6 +2033,40 @@ export class WhatsAppRouterService {
       { id: "who|supplier", text: lang === "kk" ? "Иә, қосыңыз" : "Да, подключите" },
       { id: "who|client", text: lang === "kk" ? "Жоқ, тапсырыс берем" : "Нет, я заказчик" },
     ]);
+  }
+
+  /**
+   * Клиент сказал, что нашёл исполнителя. Закрываем и не переспрашиваем.
+   *
+   * Атрибуцию не выясняем: спрашивать «через нас или сами?» человека, который
+   * уже попрощался, — это лишний вопрос ради цифры. Кто нажал кнопку в
+   * плановой проверке, там и отметит; кто написал словами, останется без
+   * атрибуции, и это осознанный размен.
+   */
+  private async closeOrderAsFound(
+    chatId: string,
+    phone: string,
+    orderId: string,
+    orderNumber: number,
+    lang: Language,
+  ): Promise<void> {
+    try {
+      const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
+      await this.orders.completeOrder(orderId, authUser, "found_unknown");
+      await this.sessions.clearOrder(chatId);
+    } catch (err) {
+      this.logger.warn(`Не удалось закрыть заявку №${orderNumber} по словам клиента: ${(err as Error).message}`);
+    }
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? `Түсіндім, №${orderNumber} өтінімді жаптым. Сәтті жұмыс!
+
+Техника қажет болса — осында жазыңыз.`
+        : `Понял, закрыл заявку №${orderNumber}. Удачной работы!
+
+Понадобится техника — просто напишите сюда.`,
+    );
   }
 
   /**
