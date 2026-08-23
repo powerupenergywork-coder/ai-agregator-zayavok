@@ -1671,8 +1671,28 @@ export class WhatsAppRouterService {
 
     const session = await this.sessions.findOrCreate(chatId, phone);
 
-    if (session.currentOrderId) {
-      const order = await this.orders.getRawOrThrow(session.currentOrderId);
+    // Заявка могла родиться на сайте — тогда переписка о ней не знает.
+    //
+    // Заявка №120: человек пришёл из поиска, заполнил форму на сайте,
+    // подтвердил кнопкой в шаблоне. Через десять минут написал в WhatsApp
+    // «Отмена» и следом «Я нашел уже» — и оба раза получил «не получилось
+    // определить категорию», потому что бот завёл новый черновик вместо
+    // того, чтобы понять, о какой заявке речь.
+    //
+    // Ищем по телефону: двух открытых заявок у человека одновременно не
+    // бывает, а если бывает — берём свежайшую, о ней и разговор.
+    //
+    // Но только если человек говорит О заявке, а не заказывает новое. Иначе
+    // клиент с ещё не закрытой прошлой заявкой на фразу «нужен манипулятор»
+    // получил бы карточку старого заказа вместо новой заявки.
+    const attached =
+      session.currentOrderId ??
+      (looksLikeServiceRequest(text) || NEW_ORDER_PHRASES.test(text)
+        ? null
+        : await this.attachActiveOrderByPhone(chatId, phone));
+
+    if (attached) {
+      const order = await this.orders.getRawOrThrow(attached);
       // A finished order has nothing left to say. Holding the session on it
       // turned every later message into a replay of its final status, with
       // the only escape being the exact phrase "новая заявка" — which nobody
@@ -1684,7 +1704,7 @@ export class WhatsAppRouterService {
           await this.sessions.clearOrder(chatId);
           await this.whatsapp.sendText(phone, lang === "kk" ? "Жарайды, жаңа өтінімнен бастайық. Не керек?" : "Хорошо, начнём новую заявку. Что вам нужно?");
         } else {
-          const dto = await this.orders.toDto(session.currentOrderId);
+          const dto = await this.orders.toDto(attached);
 
           // «Уже нашёл исполнителя» — исход, а не повод для вопроса.
           //
@@ -1692,7 +1712,7 @@ export class WhatsAppRouterService {
           // оказали?», причём дважды. Закрываем молча и благодарим — он
           // прощается, а не начинает разговор.
           if (dto.status === "PUBLISHED" && FOUND_EXECUTOR_RE.test(text)) {
-            await this.closeOrderAsFound(chatId, phone, session.currentOrderId, dto.number, lang);
+            await this.closeOrderAsFound(chatId, phone, attached, dto.number, lang);
             return;
           }
 
@@ -1710,9 +1730,9 @@ export class WhatsAppRouterService {
             // первыми двумя даёт атрибуцию тем же нажатием: спрашивать
             // клиента второй раз нельзя.
             await this.whatsapp.sendButtons(phone, body, [
-              { id: `complete|found_via_us|${session.currentOrderId}`, text: lang === "kk" ? "Сіздер арқылы" : "Нашёл через вас" },
-              { id: `complete|found_elsewhere|${session.currentOrderId}`, text: lang === "kk" ? "Өзім таптым" : "Нашёл сам" },
-              { id: `complete|not_needed|${session.currentOrderId}`, text: lang === "kk" ? "Енді қажет емес" : "Уже не нужно" },
+              { id: `complete|found_via_us|${attached}`, text: lang === "kk" ? "Сіздер арқылы" : "Нашёл через вас" },
+              { id: `complete|found_elsewhere|${attached}`, text: lang === "kk" ? "Өзім таптым" : "Нашёл сам" },
+              { id: `complete|not_needed|${attached}`, text: lang === "kk" ? "Енді қажет емес" : "Уже не нужно" },
             ]);
           } else {
             await this.whatsapp.sendText(
@@ -2033,6 +2053,37 @@ export class WhatsAppRouterService {
       { id: "who|supplier", text: lang === "kk" ? "Иә, қосыңыз" : "Да, подключите" },
       { id: "who|client", text: lang === "kk" ? "Жоқ, тапсырыс берем" : "Нет, я заказчик" },
     ]);
+  }
+
+  /**
+   * Найти живую заявку этого человека, если переписка о ней не знает.
+   *
+   * Заявка с сайта не привязана к чату: её создал браузер, а не бот. Клиент
+   * потом пишет «Отмена» или «я нашёл» в WhatsApp — и попадает в пустоту,
+   * из которой бот заводит новый черновик и спрашивает категорию.
+   *
+   * Берём только активные и только свежие: закрытая неделю назад заявка не
+   * должна оживать от случайного «спасибо».
+   */
+  private async attachActiveOrderByPhone(chatId: string, phone: string): Promise<string | null> {
+    try {
+      const order = await this.prisma.order.findFirst({
+        where: {
+          status: { in: ["PUBLISHED", "AWAITING_PHONE_CONFIRMATION"] },
+          createdAt: { gt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+          client: { user: { phone: normalizePhone(phone) } },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, number: true },
+      });
+      if (!order) return null;
+      await this.sessions.setCurrentOrder(chatId, order.id);
+      this.logger.log(`${phone}: разговор привязан к заявке №${order.number} (создана вне чата)`);
+      return order.id;
+    } catch (err) {
+      this.logger.warn(`Не удалось найти активную заявку по номеру: ${(err as Error).message}`);
+      return null;
+    }
   }
 
   /**
