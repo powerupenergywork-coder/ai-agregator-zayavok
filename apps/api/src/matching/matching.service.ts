@@ -301,7 +301,7 @@ export class MatchingService {
         categoryName: order.category ? (order.category.name as unknown as LocalizedText)[lang] : "",
         city: order.city ?? "",
         whenText: formatWhen(order, lang),
-        fullDescription: fullDescription(order.fieldsData, (order.category?.fields as unknown as CategoryField[]) ?? [], lang),
+        fullDescription: await this.describeForSupplier(order, lang),
         clientPhone: order.client?.user.phone ?? (lang === "kk" ? "көрсетілмеген" : "не указан"),
         orderUrl: `${env.webUrl}/s/${order.id}`,
       },
@@ -309,6 +309,50 @@ export class MatchingService {
       supplierId: supplier.id,
       orderId: order.id,
     });
+  }
+
+  /**
+   * Описание заявки для исполнителя — со словами самого клиента.
+   *
+   * Справочник полей описывает заявку плохо. Заявка №120: клиент написал
+   * «Вывезти неработающий холодильник со двора» — одна фраза, из которой
+   * исполнителю понятно всё: один предмет, не строймусор, со двора, значит
+   * без этажей и лифта, работы на полчаса. В рассылку ушло «Тип мусора:
+   * Другое» под заголовком «Вывоз строительного мусора». Исполнитель взял
+   * заявку, ожидая газель щебня, и не договорился.
+   *
+   * «Другое» — это 16 значений из 23 по этой категории: справочник просто не
+   * описывает то, что люди реально возят. Чинить перечень бесполезно, пока
+   * выбрасывается фраза, которая и так всё объясняет.
+   *
+   * Берём самую длинную реплику клиента: короткие — это ответы на вопросы
+   * («Астана», «23 августа»), они и так есть в полях. Порог в 15 знаков
+   * отсекает их, не срезая настоящих описаний.
+   */
+  private async describeForSupplier(
+    order: Awaited<ReturnType<MatchingService["loadOrderForDispatch"]>>,
+    lang: Language,
+  ): Promise<string> {
+    const fields = fullDescription(order.fieldsData, (order.category?.fields as unknown as CategoryField[]) ?? [], lang);
+    try {
+      const messages = await this.prisma.chatMessage.findMany({
+        where: { orderId: order.id, role: "USER" },
+        select: { content: true },
+      });
+      const own = messages
+        .map((m) => m.content.replace(/\s+/g, " ").trim())
+        .filter((t) => t.length >= 15)
+        .sort((a, b) => b.length - a.length)[0];
+      if (!own) return fields;
+      const label = lang === "kk" ? "Клиенттің сөзімен" : "Со слов клиента";
+      // Слова клиента ПЕРВЫМИ: их читают, а перечень полей пробегают глазами.
+      return `${label}: «${own.slice(0, 300)}»
+
+${fields}`;
+    } catch (err) {
+      this.logger.warn(`Не удалось добавить слова клиента в заявку: ${(err as Error).message}`);
+      return fields;
+    }
   }
 
   /** A cold supplier tapped "Интересно, беру" on the invite: record the
