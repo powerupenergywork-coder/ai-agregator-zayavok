@@ -1,7 +1,8 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { Language, citySuggestions, looksLikeQuestion, resolveCityList } from "@ai-zayavki/shared";
+import { Language, LocalizedText, citySuggestions, looksLikeQuestion, resolveCityList } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CategoriesService } from "../categories/categories.service";
+import { AI_PROVIDER, AiProvider, CLASSIFY_CONFIDENCE_THRESHOLD } from "../ai/ai.types";
 import { AuditLogService } from "../common/audit-log.service";
 import { normalizePhone } from "../common/phone.util";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
@@ -81,6 +82,7 @@ export class WhatsAppOnboardingService {
     private readonly sessions: WhatsAppSessionService,
     @Inject(WHATSAPP_PROVIDER) private readonly whatsapp: WhatsAppProvider,
     private readonly prospect: ProspectService,
+    @Inject(AI_PROVIDER) private readonly ai: AiProvider,
   ) {}
 
   async start(chatId: string, phone: string, lang: Language = "ru"): Promise<void> {
@@ -380,6 +382,29 @@ export class WhatsAppOnboardingService {
     lang: Language,
   ): Promise<void> {
     const wanted = text.trim().slice(0, 200);
+
+    // Сначала ищем среди своих. Кнопка стоит под каждым вопросом, и «Другое»
+    // читается как «у меня ДРУГАЯ техника», а не «моей нет в списке вовсе».
+    // 24 августа человек с манипулятором нажал её на вопросе про автокран,
+    // написал «Манипулятор» — и услышал, что такой категории у нас нет.
+    // Манипулятор у нас есть, это одна из шести.
+    const known = await this.matchKnownCategory(wanted);
+    if (known) {
+      if (!state.collected.categorySlugs.includes(known.slug)) {
+        state.collected.categorySlugs.push(known.slug);
+      }
+      state.step = "categories";
+      await this.saveState(chatId, state);
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? `Түсіндім: «${known.name}». Бұл санат бізде бар, қостым.`
+          : `Понял: «${known.name}». Такая категория у нас есть, добавил её вам.`,
+      );
+      await this.askNextCategory(chatId, phone, state, lang);
+      return;
+    }
+
     const normalized = normalizePhone(phone);
 
     const user = await this.prisma.user.upsert({
@@ -418,6 +443,41 @@ export class WhatsAppOnboardingService {
           "Как появится, напишем вам первым.\n\n" +
           "Если возите или делаете что-то ещё из нашего списка — напишите «поставщик», подберём категории.",
     );
+  }
+
+  /**
+   * Есть ли названное среди наших категорий.
+   *
+   * Сначала по названию — «манипулятор» совпадает с «Манипулятор» и этого
+   * достаточно в большинстве случаев. Если нет, спрашиваем классификатор: он
+   * знает, что «воровайка» и «кран-борт» — тот же манипулятор, а «бобкэт» —
+   * не из нашего списка.
+   */
+  private async matchKnownCategory(text: string): Promise<{ slug: string; name: string } | null> {
+    const all = await this.categories.findAllActive();
+    // По НАЧАЛУ слова, а не по вхождению: «минипогрузчик» содержит «грузчи»,
+    // и поиск подстрокой записал бы владельца техники в бригаду грузчиков —
+    // ровно в ту категорию, которой у него нет.
+    const words = text.toLowerCase().split(/[^a-zа-яё]+/i).filter(Boolean);
+    for (const c of all) {
+      const name = ((c.name as unknown as LocalizedText).ru ?? "").toLowerCase();
+      // Сравниваем по основе: «манипулятора», «манипуляторы» — то же самое.
+      const stem = name.split(/\s+/)[0].slice(0, 6);
+      if (stem.length >= 4 && words.some((w) => w.startsWith(stem))) {
+        return { slug: c.slug, name: (c.name as unknown as LocalizedText).ru };
+      }
+    }
+    try {
+      const options = await this.categories.listForClassification();
+      const guess = await this.ai.classify(text, options);
+      if (guess && guess.confidence >= CLASSIFY_CONFIDENCE_THRESHOLD) {
+        const hit = all.find((c) => c.slug === guess.slug);
+        if (hit) return { slug: hit.slug, name: (hit.name as unknown as LocalizedText).ru };
+      }
+    } catch {
+      // Классификатор необязателен: не ответил — считаем, что не нашли.
+    }
+    return null;
   }
 
   private async goToCategories(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {

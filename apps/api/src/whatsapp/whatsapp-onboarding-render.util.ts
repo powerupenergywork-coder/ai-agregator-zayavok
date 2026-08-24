@@ -37,7 +37,10 @@ export function renderCategoryQuestion(category: { slug: string; name: Localized
     buttons: [
       { id: `sup|cat|${category.slug}|true`, text: lang === "kk" ? "Иә" : "Да" },
       { id: `sup|cat|${category.slug}|false`, text: lang === "kk" ? "Жоқ" : "Нет" },
-      { id: "sup|catnone", text: lang === "kk" ? "Басқа" : "Другое" },
+      // Не «Другое»: под вопросом «Вы предоставляете услугу «Автокран»?»
+      // это читается как «у меня ДРУГАЯ техника», и владелец манипулятора
+      // жмёт её, хотя манипулятор в списке есть. Так и вышло 24 августа.
+      { id: "sup|catnone", text: lang === "kk" ? "Тізімде жоқ" : "Моей нет в списке" },
     ],
   };
 }
