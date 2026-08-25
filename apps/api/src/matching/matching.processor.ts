@@ -23,6 +23,10 @@ export class MatchingProcessor extends WorkerHost {
         await this.orders.sendCompletionCheckin(job.data.orderId);
       } else if (job.name === "checkin-escalate") {
         await this.orders.autoCloseStaleOrder(job.data.orderId);
+      } else if (job.name === "next-wave") {
+        // Следующая порция исполнителей. sendWave сам проверит, что заявка
+        // ещё открыта, — если клиент её закрыл, волна не уйдёт.
+        await this.matching.sendWave(job.data.orderId);
       } else if (job.name === "dispatch-progress") {
         await this.orders.sendDispatchProgress(job.data.orderId);
       }

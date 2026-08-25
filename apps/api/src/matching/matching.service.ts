@@ -67,7 +67,9 @@ export class MatchingService {
 
     const settings = await this.getSettings();
     const excludeIds = await this.getAlreadyNotifiedSupplierIds(orderId);
-    const candidates = await this.findCandidates(order, excludeIds, settings.waveSize);
+    // Берём с запасом: часть кандидатов отсеется квотой или исчерпанными
+    // приглашениями, и волну надо будет добрать следующими по очереди.
+    const candidates = await this.findCandidates(order, excludeIds, settings.waveSize * 5);
 
     if (candidates.length === 0) {
       if (excludeIds.length === 0) {
@@ -90,18 +92,51 @@ export class MatchingService {
     }
 
     const waveNumber = (await this.prisma.dispatchWave.count({ where: { orderId } })) + 1;
-    await this.prisma.dispatchWave.create({
-      data: { orderId, waveNumber, supplierIds: candidates.map((c) => c.id) },
-    });
 
+    // Идём по очереди и добираем волну до нужного числа РЕАЛЬНЫХ отправок.
+    //
+    // Прежде брались первые N кандидатов и записывались в волну целиком —
+    // включая тех, кого отсекла квота или исчерпанные приглашения. Они
+    // считались «уведомлёнными» и больше эту заявку не получали, хотя им
+    // ничего не ушло. При волне в тридцать это терялось в шуме; при волне в
+    // пять так можно раздать половину мест впустую.
+    const delivered: string[] = [];
     for (const supplier of candidates) {
-      await this.dispatchToSupplier(order, supplier, settings);
+      if (delivered.length >= settings.waveSize) break;
+      if (await this.dispatchToSupplier(order, supplier, settings)) {
+        delivered.push(supplier.id);
+      }
     }
+
+    if (delivered.length === 0) return;
+
+    await this.prisma.dispatchWave.create({
+      data: { orderId, waveNumber, supplierIds: delivered },
+    });
 
     await this.analytics.track("order_sent_to_suppliers", {
       orderId,
-      metadata: { waveNumber, count: candidates.length },
+      metadata: { waveNumber, count: delivered.length },
     });
+
+    // Следующая порция — через паузу, и только если заявка ещё нужна.
+    // Останавливаемся, когда клиент её закрыл (проверка в начале sendWave),
+    // когда очередь исчерпана или когда волн стало слишком много: если
+    // четыре волны никого не нашли, дело не в охвате.
+    const stillWaiting = candidates.length > delivered.length;
+    if (stillWaiting && waveNumber < env.dispatchMaxWaves) {
+      await this.matchingQueue.add(
+        "next-wave",
+        { orderId },
+        { delay: env.dispatchWaveIntervalMinutes * 60 * 1000 },
+      );
+      this.logger.log(
+        `Заявка №${order.number}: волна ${waveNumber} ушла ${delivered.length} исполнителям, ` +
+          `следующая через ${env.dispatchWaveIntervalMinutes} мин`,
+      );
+    } else if (waveNumber >= env.dispatchMaxWaves) {
+      this.logger.warn(`Заявка №${order.number}: ${waveNumber} волн и ни одного результата — рассылку останавливаем`);
+    }
 
     // Сколько именно и чего ждать — точным числом, сразу после рассылки.
     //
@@ -118,7 +153,7 @@ export class MatchingService {
     const reached = await this.prisma.notificationLog.count({
       where: { orderId, templateKey: "order_broadcast_full" },
     });
-    const shown = reached || candidates.length;
+    const shown = reached || delivered.length;
     const city = order.city ? ` в городе ${order.city}` : "";
     await this.tellClient(
       order,
@@ -126,12 +161,12 @@ export class MatchingService {
         ? `Отправили заявку №${order.number} ${shown} исполнителям${city}.\n\n` +
             "Они позвонят вам сами — обычно первые звонки приходят в течение 15–30 минут.\n" +
             "Если за час никто не позвонит — напишите нам, и мы разошлём заявку повторно."
-        : `Разослали заявку №${order.number} ещё ${candidates.length} исполнителям${city}. Ждите звонков.`,
+        : `Разослали заявку №${order.number} ещё ${delivered.length} исполнителям${city}. Ждите звонков.`,
       waveNumber === 1
         ? `№${order.number} өтінімін ${shown} орындаушыға жібердік${order.city ? ` (${order.city})` : ""}.\n\n` +
             "Олар сізге өздері қоңырау шалады — әдетте алғашқы қоңыраулар 15–30 минут ішінде.\n" +
             "Бір сағат ішінде ешкім қоңырау шалмаса — бізге жазыңыз, өтінімді қайта жібереміз."
-        : `№${order.number} өтінімін тағы ${candidates.length} орындаушыға жібердік. Қоңырауларды күтіңіз.`,
+        : `№${order.number} өтінімін тағы ${delivered.length} орындаушыға жібердік. Қоңырауларды күтіңіз.`,
     );
 
     this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
@@ -174,7 +209,7 @@ export class MatchingService {
       workingHoursEnd: string | null;
     },
     settings: { quietHoursStart: string | null; quietHoursEnd: string | null },
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Non-urgent orders respect the supplier's quiet hours — held here
     // instead of sent immediately, then batched into one digest message
     // per supplier by flushPendingDigests() once their window opens.
@@ -187,13 +222,14 @@ export class MatchingService {
       // must not reach someone who hasn't agreed to anything, and waking a
       // stranger with an unsolicited invitation at night is exactly how a
       // number earns blocks. They stay eligible for later orders.
-      if (!supplier.confirmedAt) return;
       await this.prisma.pendingSupplierNotification.upsert({
         where: { supplierId_orderId: { supplierId: supplier.id, orderId: order.id } },
         create: { supplierId: supplier.id, orderId: order.id },
         update: {},
       });
-      return;
+      // Отложено — но место в волне занято по делу: человек получит заявку,
+      // как только откроется его окно.
+      return true;
     }
 
     const lang = toLang(supplier.user.preferredLanguage);
@@ -203,7 +239,9 @@ export class MatchingService {
     // opt-in button instead of the real dispatch, and it costs them none of
     // their free quota: this is our invitation, not a lead they asked for.
     if (!supplier.confirmedAt) {
-      if (!(await this.mayInviteAgain(supplier.id))) return;
+      // Приглашения исчерпаны — место в волне не тратим, оно достанется
+      // следующему по очереди.
+      if (!(await this.mayInviteAgain(supplier.id))) return false;
       const categoryFields = (order.category?.fields as unknown as CategoryField[]) ?? [];
       await this.notifications.send({
         event: "supplier_cold_invite",
@@ -229,7 +267,7 @@ export class MatchingService {
           { id: `supconfirm|no|${order.id}`, text: lang === "kk" ? "Жазбаңыздар" : "Не писать мне" },
         ],
       });
-      return;
+      return true;
     }
 
     // Quota-blocked suppliers still count as "notified" for this order —
@@ -239,10 +277,15 @@ export class MatchingService {
     const canNotify = await this.billing.checkAndConsumeQuota(supplier.id);
     if (!canNotify) {
       await this.billing.maybeSendQuotaReminder(supplier.id, supplier.user.phone);
-      return;
+      // Квота кончилась — заявку он не получил, значит и слот занимать не
+      // должен. Раньше такой человек засчитывался «уведомлённым»: при волне в
+      // тридцать это терялось в шуме, при волне в пять каждый второй слот мог
+      // уйти в никуда.
+      return false;
     }
 
     await this.sendFullBroadcast(order, supplier, lang);
+    return true;
   }
 
   /**
@@ -591,21 +634,48 @@ ${fields}`;
   private async rotateFairly<T extends { id: string }>(candidates: T[], limit: number): Promise<T[]> {
     if (candidates.length <= limit) return candidates;
 
-    const lastSent = await this.prisma.notificationLog.groupBy({
-      by: ["supplierId"],
-      where: {
-        supplierId: { in: candidates.map((c) => c.id) },
-        templateKey: { in: ["order_broadcast_full", "order_digest", "supplier_cold_invite"] },
-      },
-      _max: { createdAt: true },
-    });
-    const lastBySupplier = new Map(
-      lastSent.map((r) => [r.supplierId as string, r._max.createdAt?.getTime() ?? 0]),
-    );
+    // Считаем ЗАЯВКИ за 30 дней, а не давность любого сообщения.
+    //
+    // Прежняя очередь строилась по времени последнего контакта, и в него
+    // входили приглашения с дайджестами. Получалось, что человек, которому
+    // вчера пришло приглашение, опускался в очереди наравне с тем, кто вчера
+    // получил настоящую заявку, — хотя заработать мог только второй.
+    //
+    // Ровнять надо возможность заработать. Кто получил меньше заявок за
+    // месяц, тот идёт первым; при равенстве — кто дольше не получал ничего;
+    // при полном равенстве решает случай, иначе порядок задавала бы база и
+    // не менялся бы никогда.
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const ids = candidates.map((c) => c.id);
+
+    const [leads, lastTouch] = await Promise.all([
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: {
+          supplierId: { in: ids },
+          templateKey: { in: ["order_broadcast_full", "order_digest"] },
+          createdAt: { gte: since },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.notificationLog.groupBy({
+        by: ["supplierId"],
+        where: { supplierId: { in: ids } },
+        _max: { createdAt: true },
+      }),
+    ]);
+
+    const leadsBy = new Map(leads.map((r) => [r.supplierId as string, r._count._all]));
+    const lastBy = new Map(lastTouch.map((r) => [r.supplierId as string, r._max.createdAt?.getTime() ?? 0]));
 
     return candidates
-      .map((c) => ({ c, last: lastBySupplier.get(c.id) ?? 0, jitter: Math.random() }))
-      .sort((a, b) => a.last - b.last || a.jitter - b.jitter)
+      .map((c) => ({
+        c,
+        leads: leadsBy.get(c.id) ?? 0,
+        last: lastBy.get(c.id) ?? 0,
+        jitter: Math.random(),
+      }))
+      .sort((a, b) => a.leads - b.leads || a.last - b.last || a.jitter - b.jitter)
       .slice(0, limit)
       .map((x) => x.c);
   }

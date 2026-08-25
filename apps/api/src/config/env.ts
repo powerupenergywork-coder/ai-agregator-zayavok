@@ -83,7 +83,15 @@ export const env = {
   // DispatchSettings, дальше размер волны живёт в базе и правится из админки.
   // Менять здесь у работающего сервиса бесполезно — легко принять за
   // действующую настройку и потом искать, почему она ни на что не влияет.
-  dispatchWaveSize: num("DISPATCH_WAVE_SIZE", 30),
+  dispatchWaveSize: num("DISPATCH_WAVE_SIZE", 5),
+  // Каскад вместо залпа: следующая порция исполнителей через столько минут,
+  // если заявка всё ещё открыта. Смысл не в нагрузке, а во внимании: когда из
+  // десяти полученных заявок не выгорает ни одна, человек перестаёт их
+  // открывать — и мы теряем канал, который сами построили.
+  dispatchWaveIntervalMinutes: num("DISPATCH_WAVE_INTERVAL_MINUTES", 7),
+  // Дальше рассылать бессмысленно: если четыре волны никого не нашли, дело не
+  // в охвате. Останавливаемся и сообщаем владельцу.
+  dispatchMaxWaves: num("DISPATCH_MAX_WAVES", 4),
   // Global default quiet-hours window for suppliers who haven't set their own
   // (DispatchSettings.quietHoursStart/End takes priority when set — this is
   // just the fallback). See matching/quiet-hours.util.ts.
