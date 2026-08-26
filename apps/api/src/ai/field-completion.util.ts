@@ -18,6 +18,17 @@ export function matchUnknownValueKeyword(text: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Значение-заглушка: «не знаю», «примерно», «нужна консультация».
+ *
+ * Отдельно от isValidFieldValue: там заглушка считается допустимой, а здесь
+ * нужно уметь её отличить, чтобы она не вытесняла настоящий ответ. Заявка
+ * №132: на «Сухие смеси, вес 70кг» экстрактор вернул «объём: не знаю».
+ */
+export function isUnknownValue(value: unknown): boolean {
+  return typeof value === "string" && UNKNOWN_VALUES.has(value);
+}
+
 /** Guards against a value that doesn't match its field's declared type —
  * reachable both from direct API calls and from AI extraction (an LLM isn't
  * guaranteed to return a clean number for a "number" field just because the

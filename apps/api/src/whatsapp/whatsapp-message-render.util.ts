@@ -141,7 +141,13 @@ export function renderReviewCard(order: OrderDto, lang: Language): OutgoingWhats
   const fieldLines = (order.category?.fields ?? [])
     .filter((f) => order.fieldsData[f.key] !== undefined)
     .map((f) => `${f.label[lang]}: ${formatFieldValue(order.fieldsData[f.key], f, lang)}`);
-  const lines = serviceLine ? [serviceLine, ...fieldLines] : fieldLines;
+  // Пояснение — последней строкой и целиком. Клиент должен увидеть в
+  // карточке ровно то, что уйдёт исполнителю: если бот понял его неверно,
+  // поправить это можно только здесь.
+  const noteLine = order.description
+    ? `${lang === "kk" ? "Түсіндірме" : "Пояснение"}: ${order.description}`
+    : undefined;
+  const lines = [serviceLine, ...fieldLines, noteLine].filter(Boolean) as string[];
   const body =
     lang === "kk"
       ? `Өтінімді тексеріңіз:\n\n${lines.join("\n")}\n\nБәрі дұрыс па?`

@@ -366,19 +366,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         question: { ru: "В каком городе нужна услуга?", kk: "Қызмет қай қалада керек?" },
       },
       {
-        key: "wasteType",
-        label: { ru: "Тип мусора", kk: "Қоқыс түрі" },
-        type: "enum",
-        required: false,
-        options: [
-          { value: "concrete", label: { ru: "Бетон", kk: "Бетон" } },
-          { value: "brick", label: { ru: "Кирпич", kk: "Кірпіш" } },
-          { value: "mixed", label: { ru: "Смешанный", kk: "Аралас" } },
-          { value: "other", label: { ru: "Другое", kk: "Басқа" } },
-        ],
-        question: { ru: "Какой тип мусора нужно вывезти?", kk: "Қандай қоқыс шығару керек?" },
-      },
-      {
         // Текст, а не число в кубометрах.
         //
         // Заявка №100: человек написал «Два бака с мусором», а в заявку ушло

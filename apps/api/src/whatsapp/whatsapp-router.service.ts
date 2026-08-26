@@ -2355,7 +2355,7 @@ export class WhatsAppRouterService {
       phone,
       (lang === "kk" ? "Фото қосылды. Суреттен көргенім: " : "Фото добавил. Вижу на нём: ") + described,
     );
-    const turn = await this.orders.chat(orderId, described, lang);
+    const turn = await this.orders.chat(orderId, described, lang, { fromPhoto: true });
     await this.sendTurn(chatId, phone, turn, lang);
   }
 

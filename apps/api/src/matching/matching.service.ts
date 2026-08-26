@@ -382,10 +382,15 @@ export class MatchingService {
         where: { orderId: order.id, role: "USER" },
         select: { content: true },
       });
-      const own = messages
-        .map((m) => m.content.replace(/\s+/g, " ").trim())
-        .filter((t) => t.length >= 15)
-        .sort((a, b) => b.length - a.length)[0];
+      // Пояснение собрано как раз из фраз, которые не легли в поля, — оно
+      // точнее любой эвристики по длине. Самая длинная реплика остаётся
+      // запасным вариантом для заявок, заведённых до появления пояснения.
+      const own =
+        order.description?.trim() ||
+        messages
+          .map((m) => m.content.replace(/\s+/g, " ").trim())
+          .filter((t) => t.length >= 15)
+          .sort((a, b) => b.length - a.length)[0];
       if (!own) return fields;
       const label = lang === "kk" ? "Клиенттің сөзімен" : "Со слов клиента";
       // Слова клиента ПЕРВЫМИ: их читают, а перечень полей пробегают глазами.

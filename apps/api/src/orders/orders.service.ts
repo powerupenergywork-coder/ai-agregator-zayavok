@@ -28,6 +28,7 @@ import {
   dropPastDateTimeFields,
   isValidFieldValue,
   matchUnknownValueKeyword,
+  isUnknownValue,
   missingRequiredFields,
   nextQuestionFields,
 } from "../ai/field-completion.util";
@@ -51,6 +52,23 @@ import { toLang } from "../common/language.util";
 import { normalizePhone, isValidPhone } from "../common/phone.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderCompletionOutcome } from "./dto/complete-order.dto";
+
+/**
+ * Стоит ли сохранять эту фразу как пояснение к заявке.
+ *
+ * Отсекаем служебные реплики: «да», «верно», «ок». Всё остальное, что человек
+ * написал сам, — содержание, даже если ни одно поле его не приняло.
+ */
+function looksInformative(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 6) return false;
+  const words = t.split(/\s+/).filter(Boolean);
+  return words.length >= 3 || /\d/.test(t);
+}
+
+/** Сколько пояснения храним. Исполнитель читает заявку с телефона, и простыня
+ *  из десяти реплик работает хуже, чем три строки по делу. */
+const MAX_DESCRIPTION_LENGTH = 500;
 
 /** Статусы, у которых исход ещё можно поправить вторым нажатием. */
 const REVISABLE_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT"];
@@ -148,7 +166,23 @@ export class OrdersService {
     return this.toDto(order.id);
   }
 
-  async chat(orderId: string, message: string, lang: Language = "ru"): Promise<ChatTurnResponse> {
+  /**
+   * fromPhoto меняет две вещи.
+   *
+   * Во-первых, описание снимка всегда идёт в пояснение: оно и есть рассказ о
+   * грузе, и исполнителю нужно именно оно.
+   *
+   * Во-вторых, поля-галочки из снимка не заполняются. Заявка №129: по фразе
+   * «подъезд и вынос без видимых сложностей» в заявку ушло «Нужны грузчики:
+   * нет» — вопрос клиенту не задавали, а грузчики это отдельная бригада и
+   * плюс 6–8 тыс. ₸. Что видно на фото и что человеку нужно — разные вещи.
+   */
+  async chat(
+    orderId: string,
+    message: string,
+    lang: Language = "ru",
+    opts: { fromPhoto?: boolean } = {},
+  ): Promise<ChatTurnResponse> {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
     await this.prisma.chatMessage.create({ data: { orderId, role: "USER", content: message } });
@@ -224,9 +258,64 @@ export class OrdersService {
       }
     }
 
+    // Заглушка не должна вытеснять содержательный ответ.
+    //
+    // Заявка №132: на «Сухие смеси, вес 70кг» экстрактор вернул «объём: не
+    // знаю». Вес и был ответом — он просто не помещался в перечень значений,
+    // которые поле умеет хранить. Записать вместо него «не знаю» значит
+    // потерять единственное, что клиент сказал о грузе.
+    if (opts.fromPhoto) {
+      const fieldByKey = new Map(fields.map((f) => [f.key, f]));
+      for (const key of Object.keys(extracted)) {
+        if (fieldByKey.get(key)?.type === "boolean") delete extracted[key];
+      }
+      await this.appendDescription(orderId, message);
+    }
+
+    const informative = looksInformative(message);
+    if (informative) {
+      for (const key of Object.keys(extracted)) {
+        if (isUnknownValue(extracted[key])) delete extracted[key];
+      }
+    }
+
+    // Фраза, которую не принял ни один справочник, идёт в пояснение и оттуда
+    // в рассылку исполнителям — вместо того чтобы пропасть.
+    const gained = Object.keys(extracted).filter((k) => extracted[k] !== knownFields[k]);
+    if (informative && gained.length === 0 && !opts.fromPhoto) {
+      await this.appendDescription(orderId, message);
+    }
+
     return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted }, lang, {
       previousFields: knownFields,
       categoryJustDetermined,
+    });
+  }
+
+  /**
+   * Дописать фразу клиента в пояснение к заявке.
+   *
+   * Заявка №132: человек ответил «Сухие смеси, вес 70кг», а в карточку ушло
+   * «Объём: не знаю» — экстрактор не смог уложить вес в перечень значений и
+   * записал заглушку. Заявка №129: «Тип мусора: Другое» под заголовком
+   * «Вывоз строительного мусора» — справочник просто не описывает то, что
+   * люди реально возят.
+   *
+   * Поэтому фразу, которую не принял ни один справочник, сохраняем как есть
+   * и показываем исполнителю. Она объясняет заказ лучше, чем перечень полей.
+   */
+  private async appendDescription(orderId: string, text: string): Promise<void> {
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (!clean) return;
+    const order = await this.prisma.order.findUnique({ where: { id: orderId }, select: { description: true } });
+    const current = order?.description ?? "";
+    // Повтор не дописываем: одну и ту же фразу человек может прислать дважды,
+    // а исполнителю она нужна один раз.
+    if (current.toLowerCase().includes(clean.toLowerCase())) return;
+    const merged = (current ? current + ". " : "") + clean;
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { description: merged.slice(0, MAX_DESCRIPTION_LENGTH) },
     });
   }
 
@@ -1522,6 +1611,7 @@ export class OrdersService {
           }
         : null,
       fieldsData: order.fieldsData as Record<string, unknown>,
+      description: order.description,
       progressPercent: order.progressPercent,
       addressFrom: order.addressFrom,
       addressTo: order.addressTo,

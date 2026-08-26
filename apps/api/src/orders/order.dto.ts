@@ -9,6 +9,15 @@ export interface OrderDto {
   urgent: boolean;
   category: { slug: string; name: LocalizedText; icon: string | null; fields: CategoryField[] } | null;
   fieldsData: Record<string, unknown>;
+  /**
+   * Слова клиента, которые не легли ни в одно поле.
+   *
+   * Заявка №132: на «Сухие смеси, вес 70кг» экстрактор записал «объём: не
+   * знаю» — вес и был ответом, но в перечень значений он не помещался.
+   * Справочник полей описывает заявку хуже, чем одна фраза заказчика,
+   * поэтому фразу больше не выбрасываем, а показываем исполнителю.
+   */
+  description: string | null;
   progressPercent: number;
   addressFrom: string | null;
   addressTo: string | null;
