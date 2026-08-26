@@ -78,6 +78,28 @@ export class NewOrderAlertService {
   }
 
   /**
+   * Человек попросил живого собеседника.
+   *
+   * Срочнее любой другой сводки: он уже не хочет разговаривать с автоматом,
+   * и каждая минута молчания — это ушедший клиент. Заявка №130: просьбу
+   * «передайте мои смс оператору» бот разобрал как название города, человек
+   * назвал город, дошёл до следующего вопроса и замолчал навсегда.
+   */
+  async alertWantsHuman(phone: string, text: string): Promise<void> {
+    if (!this.recipient) return;
+    try {
+      const said = text.replace(/\s+/g, " ").slice(0, 200);
+      await this.whatsapp.sendText(
+        this.recipient,
+        `🙋 Просят живого человека\n\n${phone}\nНаписал: «${said}»\n\n` +
+          `Написать: https://wa.me/${phone.replace(/\D/g, "")}`,
+      );
+    } catch (err) {
+      this.logger.error(`Оповещение о просьбе живого человека не ушло: ${(err as Error).message}`);
+    }
+  }
+
+  /**
    * Пять подстановок утверждённого шаблона owner_new_order_ru:
    * номер, категория, город, телефон клиента, первая фраза.
    *

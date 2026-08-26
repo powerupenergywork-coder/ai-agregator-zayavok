@@ -22,6 +22,6 @@ import { AuthOtpModule } from "../auth-otp/auth-otp.module";
   ],
   controllers: [OrdersController],
   providers: [OrdersService, NewOrderAlertService],
-  exports: [OrdersService],
+  exports: [OrdersService, NewOrderAlertService],
 })
 export class OrdersModule {}

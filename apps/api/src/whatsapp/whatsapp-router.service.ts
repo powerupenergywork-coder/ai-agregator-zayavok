@@ -12,6 +12,7 @@ import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
 import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
+import { NewOrderAlertService } from "../orders/new-order-alert.service";
 import { readyForReviewMessage } from "../orders/order-derive.util";
 import { MediaUnderstandingService } from "../ai/media-understanding.service";
 import {
@@ -242,7 +243,10 @@ function looksLikeServiceRequest(text: string): boolean {
  * требуем вопросительную форму или слово «сколько».
  */
 const PRICE_QUESTION_RE =
-  /скольк|почём|почем|(цена|стоимость|стоит|расценк|прайс)[^.]{0,20}\?|^\s*(цена|стоимость|прайс)\s*\??\s*$|қанша тұрады|бағасы қанша/i;
+  // Вопросительный знак почти никто не ставит. Заявка №129: клиент написал
+  // «Мне нужна цена» и получил в ответ ту же карточку заявки, потому что
+  // прежняя проверка требовала «?» либо сообщения ровно из слова «цена».
+  /скольк|почём|почем|(цена|стоимость|стоит|расценк|прайс)[^.]{0,20}\?|^\s*(цена|стоимость|прайс)\s*\??\s*$|(нужн[аоы]|скажите|назовите|подскажите|узнать|интересует|кака[яй]|какой)\s+(\S+\s+){0,2}(цен|стоимост|прайс|расценк)|цену\s+(скажите|назовите|подскажите|можно|надо|хочу)|қанша тұрады|бағасы қанша/i;
 
 /**
  * «Кто вы?», «что это такое?», «откуда у вас мой номер?»
@@ -311,6 +315,30 @@ const REVIEW_CONFIRM_RE =
  */
 const FOUND_EXECUTOR_RE =
   /(наш[её]л|нашли|найден|подобрал|определил)[а-яё]*\s*(уже\s*)?(исполнител|подрядчик|мастера|машину|технику|человека|бригаду)|уже\s*(наш[её]л|нашли|договорил|заказал|решил)|договорил[а-яё]*\s*(уже\s*)?(с|уже)?|вопрос\s*реш|всё\s*реш|все\s*реш|таптым|келістім|шештім/i;
+
+/**
+ * «Передайте оператору», «нужен живой человек» — просьба о человеке.
+ *
+ * Заявка №130, 26 августа: клиент из строительной лаборатории написал
+ * «передайте мои смс оператору» на шаге, где бот ждал город, — и получил в
+ * ответ «Не узнал город "передайте мои смс оператору"» со списком городов.
+ * Дальше он назвал город, дошёл до вопроса о дате и замолчал. Заявка так и
+ * не была разослана.
+ *
+ * Проверяется РАНЬШЕ всего остального и на любом шаге: человек, попросивший
+ * живого собеседника, не должен сначала дозаполнять анкету.
+ *
+ * Слово «оператор» само по себе не годится: это ещё и профессия — оператор
+ * крана, оператор экскаватора. Поэтому требуем просьбу: передайте, позовите,
+ * соедините, нужен, хочу.
+ *
+ * Классы букв выписаны явно вместо \w: в JavaScript \w — это латиница и
+ * цифры, кириллицу он не берёт. С ним «позовите оператора» не совпадало,
+ * потому что «ите» для него не буквы.
+ */
+const WANTS_HUMAN_RE =
+  // Стандартные классы слов кириллицу не видят — только явные [а-яё].
+  /(переда[йт][а-яё]*|позов[а-яё]+|соедин[а-яё]+|свяж[а-яё]+|нужен|нужна|нужно|хочу|дайте|можно)\s+(\S+\s+){0,2}(оператор[а-яё]*|менеджер[а-яё]*|живо[а-яё]+\s+человек[а-яё]*|человек[а-яё]*)|поговорить\s+с\s+(живым\s+)?человек[а-яё]*|оператор[а-яё]*\s*(есть|можно|дайте)|тірі\s+адам|оператор[а-яё]*\s+керек/i;
 
 /** Речь о заявке: цена, созвон, клиент. Не про себя — см. looksLikeSelfInfo. */
 const ORDER_TALK_RE =
@@ -404,6 +432,7 @@ export class WhatsAppRouterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
+    private readonly newOrderAlert: NewOrderAlertService,
     private readonly authOtp: AuthOtpService,
     private readonly sessions: WhatsAppSessionService,
     private readonly onboarding: WhatsAppOnboardingService,
@@ -532,6 +561,16 @@ export class WhatsAppRouterService {
           await this.sendSupplierProfile(msg.phone, lang);
           return;
         }
+      }
+
+      // Просьба о живом человеке — раньше всего остального.
+      //
+      // Она приходит посреди любого шага, и на каждом шаге бот занят своим:
+      // ждёт город, ждёт дату, ведёт регистрацию. Заявка №130 умерла именно
+      // так — просьбу разобрали как название города.
+      if (msg.text && WANTS_HUMAN_RE.test(msg.text)) {
+        await this.handOverToHuman(msg.phone, msg.text, lang);
+        return;
       }
 
       const session = await this.sessions.findOrCreate(msg.chatId, msg.phone);
@@ -2084,6 +2123,28 @@ export class WhatsAppRouterService {
       this.logger.warn(`Не удалось найти активную заявку по номеру: ${(err as Error).message}`);
       return null;
     }
+  }
+
+  /**
+   * Человек попросил живого собеседника — передаём и не спорим.
+   *
+   * Бот не пытается «ещё раз уточнить»: если человек просит оператора, любой
+   * следующий вопрос от автомата читается как отказ. Отвечаем, что передали,
+   * и зовём владельца — больше среагировать некому.
+   */
+  private async handOverToHuman(phone: string, text: string, lang: Language): Promise<void> {
+    this.logger.warn(`${phone}: просит живого человека — «${text.slice(0, 80)}»`);
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? `Хабарламаңызды бердім — сізбен адам байланысады.
+
+Жедел болса, қоңырау шалыңыз: ${env.supportPhone}`
+        : `Передал ваше сообщение — с вами свяжется человек.
+
+Если срочно, звоните напрямую: ${env.supportPhone}`,
+    );
+    await this.newOrderAlert.alertWantsHuman(phone, text);
   }
 
   /**
