@@ -14,6 +14,38 @@ const PROSPECT_STATUS_LABEL: Record<string, string> = {
   ignored: "Без ответа",
 };
 
+// Заявка, которая так и не дошла до исполнителей.
+//
+// Их 69 из 85, и в списке они выглядят как настоящие отмены: «Отменена
+// клиентом», хотя рассылки не было вовсе. Разница принципиальная — отмена
+// после рассылки это потерянная сделка, а брошенный черновик это потеря на
+// оформлении, и лечатся они разными вещами.
+//
+// Признак — publishedAt, а не число уведомлённых: рассылка могла уйти и
+// никого не найти, это всё равно опубликованная заявка.
+const FINISHED_STATUSES = new Set([
+  "COMPLETED",
+  "CANCELLED_BY_CLIENT",
+  "CANCELLED_BY_ADMIN",
+  "CLOSED_NO_RESPONSE",
+]);
+
+function wasAbandonedDraft(order: { publishedAt: string | null; status: string }): boolean {
+  return !order.publishedAt && FINISHED_STATUSES.has(order.status);
+}
+
+// Дата и время рядом: по одной дате нельзя отличить заявку, пришедшую утром,
+// от вечерней, а разбор переписок всегда начинается с «когда это было».
+function formatWhen(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 const ADMIN_TOKEN_KEY = "az_admin_token";
 
 const QUEUES = [
@@ -139,9 +171,18 @@ function OrdersTab({ token }: { token: string }) {
                     <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-600">
                       {o.channel === "WHATSAPP" ? "WhatsApp" : "сайт"}
                     </span>
+                    {wasAbandonedDraft(o) && (
+                      <span
+                        className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-700"
+                        title="Заявка не дошла до рассылки — потеря на оформлении, а не отказ исполнителей"
+                      >
+                        черновик
+                      </span>
+                    )}
                   </p>
                   <p className="pl-4 text-slate-500">
-                    {o.clientPhone ?? "нет телефона"} · уведомлено поставщиков: {o.notifiedSuppliersCount}
+                    {formatWhen(o.createdAt)} · {o.clientPhone ?? "нет телефона"} · уведомлено поставщиков:{" "}
+                    {o.notifiedSuppliersCount}
                   </p>
                 </button>
                 <div className="flex items-center gap-2">
