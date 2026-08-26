@@ -51,6 +51,15 @@ import { toLang } from "../common/language.util";
 import { normalizePhone, isValidPhone } from "../common/phone.util";
 import { CancelOrderDto } from "./dto/cancel-order.dto";
 import { OrderCompletionOutcome } from "./dto/complete-order.dto";
+
+/** Статусы, у которых исход ещё можно поправить вторым нажатием. */
+const REVISABLE_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT"];
+/**
+ * Сколько живёт поправка. Полчаса — это разговор, который ещё идёт:
+ * промахнулся по кнопке, увидел ответ, нажал соседнюю. Всё, что позже,
+ * приходит из чата, пролистанного назад, и закрытую заявку не описывает.
+ */
+const OUTCOME_REVISE_WINDOW_MINUTES = 30;
 import { OrderDto } from "./order.dto";
 
 /** Абзац с отбивкой, если строка непустая. Пустая вилка не должна оставлять
@@ -780,6 +789,81 @@ export class OrdersService {
       await this.matchingQueue.add("start", { orderId });
       await this.analytics.track("order_redispatch_requested", { orderId, userId: user.sub });
     }
+
+    const dto = await this.toDto(orderId);
+    this.realtime.emitOrderUpdated(orderId, dto);
+    return dto;
+  }
+
+  /** Когда клиента в последний раз спрашивали об исходе по его же сообщению. */
+  async outcomeAskedAt(orderId: string): Promise<Date | null> {
+    const row = await this.prisma.order.findUnique({ where: { id: orderId }, select: { outcomeAskedAt: true } });
+    return row?.outcomeAskedAt ?? null;
+  }
+
+  /** Отметка о заданном вопросе. Ошибка здесь не должна ронять ответ клиенту:
+   *  худшее последствие — лишний вопрос, лучшее — молчание вместо ответа. */
+  async markOutcomeAsked(orderId: string): Promise<void> {
+    await this.prisma.order
+      .update({ where: { id: orderId }, data: { outcomeAskedAt: new Date() } })
+      .catch((err) => this.logger.warn(`Не удалось отметить вопрос об исходе: ${(err as Error).message}`));
+  }
+
+  /**
+   * Клиент поправил себя вторым нажатием.
+   *
+   * Заявка №129: «Нашёл сам», через несколько секунд «Нашёл через вас».
+   * Первое записалось, второе упёрлось в «завершить можно только активную
+   * заявку» — и в статистике осталась ровно та атрибуция, которую человек
+   * пытался исправить. Кнопки лежат в чате рядом, промахнуться по соседней
+   * легко, и второе нажатие подряд это почти всегда поправка.
+   *
+   * Исполнителям повторно НЕ пишем: они уже получили «заявка закрыта», и
+   * второе сообщение о той же заявке ничего им не даёт, а рейтинг номера
+   * тратит. Меняется только то, что видим мы: выполнена заявка или отменена
+   * и чья это заслуга.
+   *
+   * Окно ограничено: нажатие через неделю — это уже не поправка, а случайный
+   * тык по старому сообщению, и переписывать по нему закрытую заявку нельзя.
+   *
+   * Возвращает null, если исправлять нечего — тогда вызывающий сам решит,
+   * что ответить.
+   */
+  async reviseOutcome(orderId: string, user: AuthUser, outcome: OrderCompletionOutcome): Promise<OrderDto | null> {
+    const order = await this.getRawOrThrow(orderId);
+    this.assertOwnership(order, user);
+    if (!REVISABLE_STATUSES.includes(order.status)) return null;
+
+    const closedAt = order.completedAt ?? order.updatedAt;
+    if (Date.now() - closedAt.getTime() > OUTCOME_REVISE_WINDOW_MINUTES * 60 * 1000) return null;
+
+    const found =
+      outcome === "found_via_us" || outcome === "found_elsewhere" || outcome === "found_unknown" || outcome === "resolved";
+    if (!found && outcome !== "not_needed" && outcome !== "closed") return null;
+
+    const viaUs = outcome === "found_elsewhere" ? false : outcome === "found_unknown" ? null : true;
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { clientRatingPositive: found && viaUs === true ? true : null },
+    });
+
+    // Статус меняем, только если он расходится с новым исходом: «нашёл» это
+    // выполненная заявка, «уже не нужно» — отменённая.
+    const target = found ? "COMPLETED" : "CANCELLED_BY_CLIENT";
+    if (order.status !== target) {
+      await this.transitionStatus(orderId, target, "client");
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: { completedAt: found ? new Date() : null },
+      });
+    }
+
+    await this.analytics.track("order_outcome_revised", {
+      orderId,
+      userId: user.sub,
+      metadata: { from: order.status, outcome, viaUs },
+    });
+    this.logger.log(`Заявка ${order.number}: исход исправлен клиентом на ${outcome}`);
 
     const dto = await this.toDto(orderId);
     this.realtime.emitOrderUpdated(orderId, dto);

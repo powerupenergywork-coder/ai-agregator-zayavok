@@ -13,6 +13,7 @@ import { normalizePhone } from "../common/phone.util";
 import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { NewOrderAlertService } from "../orders/new-order-alert.service";
+import { OrderCompletionOutcome } from "../orders/dto/complete-order.dto";
 import { readyForReviewMessage } from "../orders/order-derive.util";
 import { MediaUnderstandingService } from "../ai/media-understanding.service";
 import {
@@ -246,7 +247,23 @@ const PRICE_QUESTION_RE =
   // Вопросительный знак почти никто не ставит. Заявка №129: клиент написал
   // «Мне нужна цена» и получил в ответ ту же карточку заявки, потому что
   // прежняя проверка требовала «?» либо сообщения ровно из слова «цена».
-  /скольк|почём|почем|(цена|стоимость|стоит|расценк|прайс)[^.]{0,20}\?|^\s*(цена|стоимость|прайс)\s*\??\s*$|(нужн[аоы]|скажите|назовите|подскажите|узнать|интересует|кака[яй]|какой)\s+(\S+\s+){0,2}(цен|стоимост|прайс|расценк)|цену\s+(скажите|назовите|подскажите|можно|надо|хочу)|қанша тұрады|бағасы қанша/i;
+  //
+  // Он же следом спросил «Цену кто напишет» — и это тоже не совпало: слово
+  // «цена» стояло первым, а перечень ждал его после «скажите» или «нужна».
+  // Поэтому вопросительные слова учитываются с обеих сторон от корня.
+  new RegExp(
+    [
+      String.raw`скольк`,
+      String.raw`почём|почем`,
+      String.raw`(цена|стоимость|стоит|расценк|прайс)[^.]{0,20}\?`,
+      String.raw`^\s*(цена|стоимость|прайс)\s*\??\s*$`,
+      String.raw`(нужн[аоы]|скажите|назовите|подскажите|узнать|интересует|кака[яй]|какой)\s+(\S+\s+){0,2}(цен|стоимост|прайс|расценк)`,
+      String.raw`(кто|когда|где|как)\s+(\S+\s+){0,3}(цен|стоимост|прайс|расценк)`,
+      String.raw`(цен|стоимост|прайс|расценк)[а-яё]*\s+(\S+\s+){0,2}(кто|когда|напиш|скаж|назов|подскаж|будет|узна|говор)`,
+      String.raw`қанша тұрады|бағасы қанша`,
+    ].join(`|`),
+    `i`,
+  );
 
 /**
  * «Кто вы?», «что это такое?», «откуда у вас мой номер?»
@@ -336,6 +353,52 @@ const FOUND_EXECUTOR_RE =
  * цифры, кириллицу он не берёт. С ним «позовите оператора» не совпадало,
  * потому что «ите» для него не буквы.
  */
+/**
+ * Что отвечаем на кнопку плановой проверки.
+ *
+ * Набор обязан покрывать ВСЕ исходы, включая старые названия кнопок:
+ * сообщения в WhatsApp живут вечно, и нажатие месячной давности приходит с
+ * тем словом, которое было в кнопке тогда. Заявка №129: справочник знал
+ * только три старых ключа, клиент нажал новую «Нашёл сам» — и получил
+ * «Cannot read properties of undefined (reading 'ru')» вместо благодарности.
+ *
+ * Просьба сохранить номер — только там, где исполнитель нашёлся через нас.
+ * На «нашёл сам» и «уже не нужно» она звучала бы как навязчивость: человек
+ * ничего от нас не получил.
+ */
+function completionReply(outcome: OrderCompletionOutcome, lang: Language): string {
+  const keepNumber =
+    lang === "kk"
+      ? "\n\nНөмірімізді сақтап қойыңыз — келесі жолы «самосвал керек» немесе «тиеушілер керек» деп жазсаңыз жеткілікті, қалғанын өзім рәсімдеймін."
+      : "\n\nСохраните наш номер — в следующий раз достаточно написать «нужен самосвал» или «нужны грузчики», и я всё оформлю.";
+  switch (outcome) {
+    case "found_via_us":
+    case "resolved":
+      return (lang === "kk" ? "Керемет, рахмет! Өтінім жабылды." : "Отлично, спасибо! Заявка закрыта.") + keepNumber;
+    case "found_elsewhere":
+    case "found_unknown":
+      return lang === "kk"
+        ? "Түсіндім, рахмет! Өтінімді жаптым. Келесі жолы да жазыңыз."
+        : "Понял, спасибо! Заявку закрыл. Обращайтесь ещё.";
+    case "not_needed":
+    case "closed":
+      return lang === "kk" ? "Жарайды, өтінім жабылды." : "Хорошо, заявка закрыта.";
+    case "redispatch":
+      return lang === "kk" ? "Жарайды, сізге басқа орындаушыларды іздейміз." : "Хорошо, ищем других исполнителей для вас.";
+  }
+}
+
+/**
+ * Один вопрос об исходе на окно, а не на каждое сообщение.
+ *
+ * Заявка №129: за пятнадцать минут человек написал «Отмена», «Цену кто
+ * напишет» и «Да, благодарю. Выбираю исходя по цене» — и трижды получил
+ * дословно один и тот же вопрос с кнопками. Ни на один из них бот не
+ * ответил: у активной заявки любое сообщение считалось поводом спросить об
+ * исходе.
+ */
+const OUTCOME_ASK_WINDOW_HOURS = 6;
+
 const WANTS_HUMAN_RE =
   // Стандартные классы слов кириллицу не видят — только явные [а-яё].
   /(переда[йт][а-яё]*|позов[а-яё]+|соедин[а-яё]+|свяж[а-яё]+|нужен|нужна|нужно|хочу|дайте|можно)\s+(\S+\s+){0,2}(оператор[а-яё]*|менеджер[а-яё]*|живо[а-яё]+\s+человек[а-яё]*|человек[а-яё]*)|поговорить\s+с\s+(живым\s+)?человек[а-яё]*|оператор[а-яё]*\s*(есть|можно|дайте)|тірі\s+адам|оператор[а-яё]*\s+керек/i;
@@ -709,7 +772,7 @@ export class WhatsAppRouterService {
   }
 
   private async handleCompletionReply(phone: string, token: string, lang: Language): Promise<void> {
-    const [, outcome, orderId] = token.split("|") as [string, "resolved" | "redispatch" | "closed", string];
+    const [, outcome, orderId] = token.split("|") as [string, OrderCompletionOutcome, string];
     const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
     try {
       await this.orders.completeOrder(orderId, authUser, outcome);
@@ -726,21 +789,28 @@ export class WhatsAppRouterService {
       // На «отправить повторно» и «закрыть» не просим: в первом случае услуги
       // ещё не было, во втором человек чем-то недоволен, и просьба о любезности
       // прозвучала бы неуместно.
-      const replies: Record<"resolved" | "redispatch" | "closed", { ru: string; kk: string }> = {
-        resolved: {
-          ru:
-            "Отлично, спасибо! Заявка закрыта.\n\n" +
-            "Сохраните наш номер — в следующий раз достаточно написать «нужен самосвал» или «нужны грузчики», и я всё оформлю.",
-          kk:
-            "Керемет, рахмет! Өтінім жабылды.\n\n" +
-            "Нөмірімізді сақтап қойыңыз — келесі жолы «самосвал керек» немесе «тиеушілер керек» деп жазсаңыз жеткілікті, қалғанын өзім рәсімдеймін.",
-        },
-        redispatch: { ru: "Хорошо, ищем других исполнителей для вас.", kk: "Жарайды, сізге басқа орындаушыларды іздейміз." },
-        closed: { ru: "Хорошо, заявка закрыта.", kk: "Жарайды, өтінім жабылды." },
-      };
-      await this.whatsapp.sendText(phone, replies[outcome][lang]);
+      await this.whatsapp.sendText(phone, completionReply(outcome, lang));
     } catch (err) {
-      await this.whatsapp.sendText(phone, (err as Error).message);
+      // Заявка уже закрыта — почти всегда это ИСПРАВЛЕНИЕ, а не ошибка.
+      //
+      // Заявка №129: клиент нажал «Нашёл сам», через несколько секунд —
+      // «Нашёл через вас». Первое нажатие записалось, второе получило в ответ
+      // «Завершить можно только активную заявку», и в статистике осталась
+      // неверная атрибуция — ровно та, которую человек и пытался поправить.
+      const revised = await this.orders.reviseOutcome(orderId, authUser, outcome).catch(() => null);
+      if (revised) {
+        await this.whatsapp.sendText(phone, lang === "kk" ? "Түзеттім, рахмет!" : "Поправил, спасибо!");
+        return;
+      }
+      // Текст исключения клиенту не показываем: это внутреннее сообщение для
+      // журнала, а человек читает его как поломку сервиса.
+      this.logger.error(`${phone}: не удалось закрыть заявку ${orderId}: ${(err as Error).message}`);
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? "Жаздым, рахмет! Бірдеңе дұрыс болмаса — жазыңыз."
+          : "Записал, спасибо! Если что-то не так — напишите.",
+      );
     }
   }
 
@@ -1756,6 +1826,39 @@ export class WhatsAppRouterService {
           }
 
           if (dto.status === "PUBLISHED") {
+            // Вопрос о цене — отвечаем на него, а не спрашиваем об исходе.
+            //
+            // Заявка №129: «Цену кто напишет» получило в ответ «Заявка №129,
+            // Вывоз строительного мусора. Что в итоге?». Человек спросил, кто
+            // назовёт цену, — ему ответили вопросом про то, чем всё
+            // закончилось, хотя ещё ничего не начиналось.
+            if (PRICE_QUESTION_RE.test(text)) {
+              await this.answerPriceQuestion(phone, dto.category?.slug, lang, true);
+              return;
+            }
+
+            // Благодарность и «хорошо» — не повод для вопроса. Человек
+            // подтвердил, что всё идёт, а не подвёл итог.
+            if (isAcknowledgement(text)) {
+              await this.whatsapp.sendText(
+                phone,
+                lang === "kk" ? "Жақсы, күте беріңіз — қоңырау шалады." : "Хорошо, ждите звонков.",
+              );
+              return;
+            }
+
+            // Спросили недавно — второй раз не спрашиваем.
+            const askedAt = await this.orders.outcomeAskedAt(attached);
+            if (askedAt && Date.now() - askedAt.getTime() < OUTCOME_ASK_WINDOW_HOURS * 60 * 60 * 1000) {
+              await this.whatsapp.sendText(
+                phone,
+                lang === "kk"
+                  ? `№${dto.number} өтінім бойынша орындаушылар қоңырау шалады. Бірдеңе қажет болса — жазыңыз.`
+                  : `По заявке №${dto.number} исполнители перезвонят вам сами. Если что-то нужно — напишите.`,
+              );
+              return;
+            }
+
             // Any message on an active order is a chance to close the loop —
             // the client may just be checking in, not tapping the original
             // check-in buttons (which could be days old by now).
@@ -1773,6 +1876,7 @@ export class WhatsAppRouterService {
               { id: `complete|found_elsewhere|${attached}`, text: lang === "kk" ? "Өзім таптым" : "Нашёл сам" },
               { id: `complete|not_needed|${attached}`, text: lang === "kk" ? "Енді қажет емес" : "Уже не нужно" },
             ]);
+            await this.orders.markOutcomeAsked(attached);
           } else {
             await this.whatsapp.sendText(
               phone,
@@ -1891,21 +1995,8 @@ export class WhatsAppRouterService {
     }
 
     if (PRICE_QUESTION_RE.test(text)) {
-      // Если категория уже известна — называем порядок суммы. Без него ответ
-      // сводится к «узнаете потом», а именно после такого ответа ушли двое.
       const dto = currentOrderId ? await this.orders.toDto(currentOrderId).catch(() => null) : null;
-      const hint = priceHintSentence(dto?.category?.slug, lang);
-      await this.whatsapp.sendText(
-        phone,
-        hint
-          ? hint +
-            (lang === "kk"
-              ? "\n\nӨтінімді жібергеннен кейін олар қоңырау шалады — әдетте алғашқы қоңыраулар 15–30 минут ішінде."
-              : "\n\nКак отправим заявку, вам перезвонят — обычно первые звонки приходят в течение 15–30 минут.")
-          : lang === "kk"
-            ? "Бағаны орындаушының өзі айтады — әркімде әртүрлі. Өтінімді жібергеннен кейін олар қоңырау шалып, бағасын айтады. Әдетте алғашқы қоңыраулар 15–30 минут ішінде келеді."
-            : "Цену называет сам исполнитель — у всех она разная. Как отправим заявку, вам перезвонят и назовут. Обычно первые звонки приходят в течение 15–30 минут.",
-      );
+      await this.answerPriceQuestion(phone, dto?.category?.slug, lang, false);
     }
 
     // Карточка ждёт подтверждения, а человек ответил на её вопрос словами.
@@ -2123,6 +2214,37 @@ export class WhatsAppRouterService {
       this.logger.warn(`Не удалось найти активную заявку по номеру: ${(err as Error).message}`);
       return null;
     }
+  }
+
+  /**
+   * Ответ про цену.
+   *
+   * Если категория известна — называем порядок суммы. Без него ответ сводится
+   * к «узнаете потом», а именно после такого ушли двое.
+   *
+   * published меняет только время: у черновика звонки будут «как отправим
+   * заявку», у разосланной — они уже идут. Обещать «отправим» человеку,
+   * которому мы час назад написали «отправили десяти исполнителям», нельзя.
+   */
+  private async answerPriceQuestion(
+    phone: string,
+    slug: string | undefined,
+    lang: Language,
+    published: boolean,
+  ): Promise<void> {
+    const hint = priceHintSentence(slug, lang);
+    const when = published
+      ? lang === "kk"
+        ? "Өтінім орындаушыларға жіберілді — бағаны олар қоңырау шалғанда айтады."
+        : "Заявка уже у исполнителей — цену они назовут, когда позвонят."
+      : lang === "kk"
+        ? "Өтінімді жібергеннен кейін олар қоңырау шалады — әдетте алғашқы қоңыраулар 15–30 минут ішінде."
+        : "Как отправим заявку, вам перезвонят — обычно первые звонки приходят в течение 15–30 минут.";
+    const base =
+      lang === "kk"
+        ? "Бағаны орындаушының өзі айтады — әркімде әртүрлі."
+        : "Цену называет сам исполнитель — у всех она разная.";
+    await this.whatsapp.sendText(phone, (hint || base) + "\n\n" + when);
   }
 
   /**

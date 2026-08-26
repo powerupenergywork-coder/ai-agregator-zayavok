@@ -17,6 +17,9 @@ export type AnalyticsEventType =
   | "supplier_opened_order"
   | "order_cancelled"
   | "order_completed"
+  // Клиент поправил исход вторым нажатием: в статистике должно быть видно,
+  // что цифра менялась, иначе непонятно, откуда расхождение с журналом.
+  | "order_outcome_revised"
   | "order_redispatch_requested"
   | "repeat_order_created";
 
