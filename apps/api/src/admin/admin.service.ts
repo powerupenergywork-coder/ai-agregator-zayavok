@@ -31,6 +31,23 @@ const QUEUE_STATUS_MAP: Record<string, OrderStatus[]> = {
   active: ["PUBLISHED"],
 };
 
+/**
+ * Заявки, которые не дошли до исполнителей.
+ *
+ * Их 69 из 85, и в общем списке они неотличимы от настоящих отмен:
+ * «Отменена клиентом» стоит и там, и там. Разница принципиальная — отмена
+ * после рассылки это потерянная сделка, а брошенный черновик это потеря на
+ * оформлении, и лечатся они разными вещами. Пока они лежат вперемешку,
+ * кажется, что сервис отменяют, хотя до сервиса большинство не дошло.
+ *
+ * Отбор по publishedAt, а не по статусу и не по числу уведомлённых: рассылка
+ * могла уйти и никого не найти — это всё равно опубликованная заявка.
+ *
+ * Незакрытые черновики сюда тоже попадают, и намеренно: наверху списка
+ * (сортировка по дате) оказываются как раз те, кому ещё можно позвонить.
+ */
+const DRAFT_QUEUE = "drafts";
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -405,8 +422,14 @@ export class AdminService {
 
   async listOrders(filters: { status?: string; queue?: string }) {
     const statuses = filters.queue ? QUEUE_STATUS_MAP[filters.queue] : filters.status ? [filters.status] : undefined;
+    const where =
+      filters.queue === DRAFT_QUEUE
+        ? { publishedAt: null }
+        : statuses
+          ? { status: { in: statuses } }
+          : undefined;
     const orders = await this.prisma.order.findMany({
-      where: statuses ? { status: { in: statuses } } : undefined,
+      where,
       include: { category: true, dispatchWaves: true, client: { include: { user: true } } },
       orderBy: { createdAt: "desc" },
       take: 200,

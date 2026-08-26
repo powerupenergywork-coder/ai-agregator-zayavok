@@ -23,15 +23,8 @@ const PROSPECT_STATUS_LABEL: Record<string, string> = {
 //
 // Признак — publishedAt, а не число уведомлённых: рассылка могла уйти и
 // никого не найти, это всё равно опубликованная заявка.
-const FINISHED_STATUSES = new Set([
-  "COMPLETED",
-  "CANCELLED_BY_CLIENT",
-  "CANCELLED_BY_ADMIN",
-  "CLOSED_NO_RESPONSE",
-]);
-
-function wasAbandonedDraft(order: { publishedAt: string | null; status: string }): boolean {
-  return !order.publishedAt && FINISHED_STATUSES.has(order.status);
+function wasAbandonedDraft(order: { publishedAt: string | null }): boolean {
+  return !order.publishedAt;
 }
 
 // Дата и время рядом: по одной дате нельзя отличить заявку, пришедшую утром,
@@ -53,6 +46,9 @@ const QUEUES = [
   { value: "active", label: "Активные" },
   { value: "needs_review", label: "Требуют внимания" },
   { value: "cancelled", label: "Отменённые" },
+  // Отдельно от «Отменённых»: там лежат и настоящие отказы после рассылки, и
+  // брошенные черновики, а это разные проблемы с разным лечением.
+  { value: "drafts", label: "Черновики" },
 ];
 
 export default function AdminPage() {
