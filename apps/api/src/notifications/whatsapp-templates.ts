@@ -53,7 +53,14 @@ const TEMPLATE_NAMES: Record<WhatsAppTemplateEvent, Record<Language, string>> = 
   // v2 — the original had two buttons (Да/Нет), left over from when closing
   // an order was a yes/no question. It now has three outcomes, and sending
   // three button payloads against a two-button template is rejected by Meta.
-  completion_checkin: { ru: "completion_checkin_v2_ru", kk: "completion_checkin_v2_kk" },
+  // v3 — кнопки называют ИСХОД, а не действие. В v2 они назывались «Услуга
+  // оказана / Отправить повторно / Закрыть заявку», и клиент, у которого всё
+  // получилось, читал «Закрыть заявку» как «у меня всё» — а это означало
+  // отмену, и десяти исполнителям уходило «заявка отменена». Заявка №128.
+  //
+  // Разница между первыми двумя кнопками заодно даёт атрибуцию тем же
+  // нажатием: спрашивать клиента второй раз нельзя.
+  completion_checkin: { ru: "completion_checkin_v3_ru", kk: "completion_checkin_v3_kk" },
   // v2 — добавлена третья кнопка «Что это такое?». Холодное приглашение от
   // незнакомого номера читается как спам, и человеку негде спросить, что это,
   // не соглашаясь и не отказываясь: обе прежние кнопки были необратимыми.

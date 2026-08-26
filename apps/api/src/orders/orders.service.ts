@@ -1053,9 +1053,12 @@ export class OrdersService {
       recipientPhone: client.user.phone,
       orderId,
       buttons: [
-        { id: `complete|resolved|${orderId}`, text: lang === "kk" ? "Қызмет көрсетілді" : "Услуга оказана" },
-        { id: `complete|redispatch|${orderId}`, text: lang === "kk" ? "Басқасын ұсыну" : "Отправить повторно" },
-        { id: `complete|closed|${orderId}`, text: lang === "kk" ? "Өтінімді жабу" : "Закрыть заявку" },
+        // Порядок обязан совпадать с кнопками в утверждённом шаблоне
+        // completion_checkin_v3: Мета сопоставляет payload по позиции, а не
+        // по названию, и перепутанный порядок молча пришлёт не тот исход.
+        { id: `complete|found_via_us|${orderId}`, text: lang === "kk" ? "Сіздер арқылы" : "Нашёл через вас" },
+        { id: `complete|found_elsewhere|${orderId}`, text: lang === "kk" ? "Өзім таптым" : "Нашёл сам" },
+        { id: `complete|not_needed|${orderId}`, text: lang === "kk" ? "Енді қажет емес" : "Уже не нужно" },
       ],
     });
   }
