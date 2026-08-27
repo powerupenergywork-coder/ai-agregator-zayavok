@@ -39,6 +39,35 @@ model User {
 // One row per WhatsApp chat — WhatsApp has no browser-style session, so this
 // is what remembers "which order/onboarding step is this phone number
 // mid-way through" between messages.
+/// Клик по объявлению Google, дожидающийся своей заявки.
+///
+/// Google отдаёт gclid только в адресе посадочной страницы. Семь заявок из
+/// десяти оформляются в WhatsApp, куда адрес не переносится: человек нажимает
+/// кнопку, открывается чат — и связь с объявлением обрывается. Из-за этого в
+/// Google Ads стоял ноль конверсий, и система оптимизировала показы вслепую.
+///
+/// Идентификатор клика длинный, в предзаполненный текст его не вставить.
+/// Поэтому здесь он лежит целиком, а в текст уходит короткий код, который бот
+/// узнаёт в первой реплике и обменивает обратно на gclid.
+///
+/// Строка живёт и без заявки: клики, не дошедшие до обращения, — тоже данные.
+model AdClick {
+  id        String   @id @default(uuid())
+  /// Короткий код, который человек приносит в первом сообщении.
+  token     String   @unique
+  /// Идентификатор клика Google (gclid) или другой рекламной системы.
+  clickId   String
+  /// google | yandex — на случай второй системы.
+  source    String   @default("google")
+  /// Дополнительные метки с посадочной: utm_campaign, utm_term и прочие.
+  params    Json?
+  /// Когда код обменяли на источник. Пусто — клик до чата не дошёл.
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model WhatsAppSession {
   id             String   @id @default(uuid())
   chatId         String   @unique // Green API chatId, e.g. "77011234567@c.us"

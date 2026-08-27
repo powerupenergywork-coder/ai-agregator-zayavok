@@ -13,6 +13,7 @@ import { normalizePhone } from "../common/phone.util";
 import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { NewOrderAlertService } from "../orders/new-order-alert.service";
+import { AdClickService } from "../analytics/ad-click.service";
 import { OrderCompletionOutcome } from "../orders/dto/complete-order.dto";
 import { readyForReviewMessage } from "../orders/order-derive.util";
 import { MediaUnderstandingService } from "../ai/media-understanding.service";
@@ -378,6 +379,21 @@ const ENOUGH_CALLS_RE =
 const CLIENT_CANCEL_RE =
   /^(вс[её]\s+)?(уже\s+)?(я\s+|мне\s+)?(не\s*над[оа]|ненад[оа]|не\s*нужн[оаы]|ненужн[оаы]|отмен(а|ить|яю|яем)|отбой|передума[лн][а-яё]*|не\s*актуально|қажет\s*емес|керек\s*емес)([\s,.!]*(спасибо|рахмет|извините|сорри))?[\s.!)]*$/i;
 
+/**
+ * Код клика по объявлению в предзаполненном тексте.
+ *
+ * Google отдаёт gclid только в адресе посадочной страницы, а в WhatsApp
+ * адрес не переносится. Кнопка на сайте подставляет вместо него короткий код,
+ * и это единственное место, где он к нам приезжает.
+ *
+ * Алфавит без 0/1/I/O/L — тот же, что в AdClickService: код виден человеку и
+ * может быть набран руками с чужого экрана.
+ *
+ * Лукахед вместо \\b: после кода почти всегда идёт кириллица, а границу слова
+ * между латиницей и кириллицей JavaScript видит не там, где кажется.
+ */
+const AD_CLICK_TOKEN_RE = /#([A-HJ-NP-Z2-9]{5})(?![A-Za-z0-9])/i;
+
 const FOUND_EXECUTOR_RE =
   /(наш[её]л|нашли|найден|подобрал|определил)[а-яё]*\s*(уже\s*)?(исполнител|подрядчик|мастера|машину|технику|человека|бригаду)|уже\s*(наш[её]л|нашли|договорил|заказал|решил)|договорил[а-яё]*\s*(уже\s*)?(с|уже)?|вопрос\s*реш|всё\s*реш|все\s*реш|^\s*готово[\s.!]*$|таптым|келістім|шештім|^\s*дайын[\s.!]*$/i;
 
@@ -544,6 +560,7 @@ export class WhatsAppRouterService {
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly newOrderAlert: NewOrderAlertService,
+    private readonly adClicks: AdClickService,
     private readonly authOtp: AuthOtpService,
     private readonly sessions: WhatsAppSessionService,
     private readonly onboarding: WhatsAppOnboardingService,
@@ -602,6 +619,28 @@ export class WhatsAppRouterService {
     const lang = await this.resolveLanguage(msg.phone, msg.text);
 
     if (await this.isFlooding(msg.phone, lang)) return;
+
+    // Код клика из предзаполненного текста — тоже до разбора и тоже один
+    // раз. И сразу вырезаем его из сообщения: дальше по коду этот текст
+    // уходит в классификатор категории и в пояснение к заявке, где «#K7M2P»
+    // выглядит мусором и сбивает разбор.
+    if (msg.text) {
+      const found = msg.text.match(AD_CLICK_TOKEN_RE);
+      if (found) {
+        msg.text = msg.text.replace(AD_CLICK_TOKEN_RE, "").replace(/\s{2,}/g, " ").trim();
+        try {
+          await this.sessions.findOrCreate(msg.chatId, msg.phone);
+          const click = await this.adClicks.redeem(found[1]);
+          if (click) {
+            await this.sessions.recordAdClick(msg.chatId, click.source, click.params);
+            this.logger.log(`${msg.phone}: источник по коду ${found[1]} — ${click.source}`);
+          }
+        } catch (err) {
+          // Атрибуция не стоит потерянного разговора.
+          this.logger.warn(`Не удалось разобрать код клика: ${(err as Error).message}`);
+        }
+      }
+    }
 
     // Источник запоминаем до разбора сообщения: любая ветка ниже может
     // ответить и выйти, а клик по рекламе Meta пришлёт ровно один раз.

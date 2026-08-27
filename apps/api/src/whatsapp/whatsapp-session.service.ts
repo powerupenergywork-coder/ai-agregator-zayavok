@@ -51,6 +51,26 @@ export class WhatsAppSessionService {
    * Атрибуция для заявки, заводимой в этом чате: источник, если клик был
    * достаточно недавно, иначе ничего.
    */
+  /**
+   * Источник, пришедший кодом из предзаполненного текста.
+   *
+   * Отличается от recordAdReferral только происхождением: у Meta объект
+   * referral приезжает сам, у Google его приходится проносить через видимый
+   * текст сообщения. Дальше оба ложатся в те же три поля и одинаково
+   * доезжают до заявки через adAttribution().
+   *
+   * Не перезаписываем уже записанный источник: первое касание вернее
+   * последнего, а человек может вернуться по второй ссылке через неделю.
+   */
+  async recordAdClick(chatId: string, source: string, params: Record<string, string>) {
+    const session = await this.prisma.whatsAppSession.findUnique({ where: { chatId } });
+    if (session?.adSource) return;
+    await this.prisma.whatsAppSession.update({
+      where: { chatId },
+      data: { adSource: source, adParams: params as object, adAt: new Date() },
+    });
+  }
+
   adAttribution(session: { adSource: string | null; adParams: unknown; adAt: Date | null }):
     | { source: string; sourceParams: Record<string, string> }
     | undefined {

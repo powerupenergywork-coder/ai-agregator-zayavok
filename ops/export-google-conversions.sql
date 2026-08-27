@@ -1,0 +1,69 @@
+-- Выгрузка офлайн-конверсий для Google Ads.
+--
+-- Зачем не тег на сайте. Семь заявок из десяти оформляются в WhatsApp, куда
+-- javascript не дотягивается: человек нажал кнопку на сайте и ушёл в чат.
+-- Тег на странице увидел бы треть заявок и научил бы Google оптимизировать
+-- показы под ту треть, которая как раз хуже доходит до исполнителей.
+--
+-- Поэтому конверсия загружается задним числом по gclid. Идентификатор клика
+-- доезжает до чата коротким кодом в предзаполненном тексте (см. AdClick), и к
+-- моменту выгрузки лежит в заявке, в sourceParams.
+--
+-- ── Что сделать в Google Ads один раз ──────────────────────────────────────
+-- Инструменты → Конверсии → Создать → Импорт → Другие источники данных →
+-- Отслеживать конверсии по кликам. Создать два действия ровно с такими
+-- названиями:
+--     Заявка отправлена исполнителям
+--     Сделка состоялась
+-- Первое — рабочая цель для оптимизации: примерно одна в день, этого хватает
+-- для обучения. Второе — для отчётности: сделок пока единицы, оптимизировать
+-- по ним рано.
+--
+-- ── Запуск ─────────────────────────────────────────────────────────────────
+--   docker-compose -f docker-compose.prod.yml exec -T postgres \
+--     psql -U app -d ai_zayavki -At -f - < ops/export-google-conversions.sql \
+--     > conversions.csv
+--
+-- Затем: Инструменты → Конверсии → Загрузки → Загрузить файл.
+-- Время в файле — UTC, это объявлено в первой строке; часовой пояс аккаунта
+-- значения не имеет.
+--
+-- Загружать можно повторно: Google сам отбрасывает уже принятые пары
+-- «клик + действие», дубли не задваивают статистику.
+
+\pset format unaligned
+\pset tuples_only on
+
+SELECT 'Parameters:TimeZone=+0000'
+UNION ALL
+SELECT 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency'
+UNION ALL
+(
+  -- Заявка дошла до исполнителей. Черновик конверсией не считаем: половина
+  -- из них — люди, которые не закончили разговор, и учить Google искать
+  -- таких значит платить за них дороже.
+  SELECT o."sourceParams"->>'gclid'
+      || ',Заявка отправлена исполнителям,'
+      || to_char(o."publishedAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+      || ',0,KZT'
+  FROM "Order" o
+  WHERE NOT o.internal
+    AND o."publishedAt" IS NOT NULL
+    AND o."sourceParams"->>'gclid' IS NOT NULL
+  ORDER BY o."publishedAt"
+)
+UNION ALL
+(
+  -- Состоявшаяся сделка. Ценность 0: комиссию мы не берём, и выдумывать
+  -- сумму ради красивого отчёта нельзя — Google будет оптимизировать под
+  -- выдуманное число.
+  SELECT o."sourceParams"->>'gclid'
+      || ',Сделка состоялась,'
+      || to_char(coalesce(o."completedAt", o."updatedAt") AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+      || ',0,KZT'
+  FROM "Order" o
+  WHERE NOT o.internal
+    AND o.status = 'COMPLETED'
+    AND o."sourceParams"->>'gclid' IS NOT NULL
+  ORDER BY coalesce(o."completedAt", o."updatedAt")
+);

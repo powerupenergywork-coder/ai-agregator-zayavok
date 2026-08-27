@@ -5,6 +5,7 @@ import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { WhatsAppOnboardingService } from "./whatsapp-onboarding.service";
 import { TranscriptRetentionService } from "./transcript-retention.service";
 import { WhatsAppProviderModule } from "./whatsapp-provider.module";
+import { AnalyticsModule } from "../analytics/analytics.module";
 import { OrdersModule } from "../orders/orders.module";
 import { AuthOtpModule } from "../auth-otp/auth-otp.module";
 import { CategoriesModule } from "../categories/categories.module";
@@ -16,6 +17,7 @@ import { AuditLogService } from "../common/audit-log.service";
 
 @Module({
   imports: [
+    AnalyticsModule,
     WhatsAppProviderModule,
     OrdersModule,
     AuthOtpModule,

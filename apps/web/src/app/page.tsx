@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { categoriesApi, CategoryTemplateDto, ordersApi, analyticsApi, publicApi } from "@/lib/api";
 import { captureAttribution, getAttribution } from "@/lib/attribution";
+import { adClickToken, withAdToken } from "@/lib/ad-click";
 import Link from "next/link";
 import { useLocale } from "@/lib/i18n/context";
 import { Button, Chip, Spinner } from "@/components/ui";
@@ -18,7 +19,15 @@ export default function LandingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [listening, setListening] = useState(false);
   const [botPhone, setBotPhone] = useState<string | null>(null);
+  // Код клика по объявлению. Запрашиваем один раз при загрузке: к моменту,
+  // когда человек нажмёт кнопку, он уже должен быть в ссылке.
+  const [adToken, setAdToken] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    // Без gclid в адресе вернётся null, и ссылка останется прежней.
+    adClickToken().then(setAdToken);
+  }, []);
 
   useEffect(() => {
     captureAttribution();
@@ -134,7 +143,7 @@ export default function LandingPage() {
       {botPhone && (
         <div className="mt-6 flex flex-col items-center">
           <a
-            href={`https://wa.me/${botPhone}?text=${encodeURIComponent(t.landing.whatsappPrefill)}`}
+            href={`https://wa.me/${botPhone}?text=${encodeURIComponent(withAdToken(t.landing.whatsappPrefill, adToken))}`}
             className="inline-flex items-center gap-2 rounded-full bg-[#25D366] px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:brightness-95"
           >
             <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
