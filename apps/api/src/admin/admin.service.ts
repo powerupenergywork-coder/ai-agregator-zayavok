@@ -625,6 +625,9 @@ export class AdminService {
     } else if (order.status !== "PUBLISHED") {
       throw new BadRequestException("Повторная рассылка недоступна в текущем статусе заявки");
     }
+    // Клиент мог попросить «хватит звонков» — оператор, нажимающий
+    // «Повторить рассылку», это решение отменяет осознанно.
+    await this.orders.resumeDispatch(orderId);
     await this.matchingQueue.add("start", { orderId });
     await this.audit.log({
       actorType: admin.role === "ADMIN" ? "admin" : "operator",

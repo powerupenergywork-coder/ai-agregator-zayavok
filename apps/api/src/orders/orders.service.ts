@@ -884,6 +884,41 @@ export class OrdersService {
     return dto;
   }
 
+  /**
+   * «Хватит звонков» — останавливаем рассылку, заявку не трогаем.
+   *
+   * Заявка остаётся открытой намеренно. Те, кому уже отправили, звонят и
+   * договариваются — заявка вполне может закончиться сделкой. Закрыть её
+   * здесь значило бы повторить ту же ошибку, из-за которой «не надо»
+   * приходилось использовать как выключатель телефона.
+   */
+  async pauseDispatch(orderId: string): Promise<void> {
+    await this.prisma.order.update({ where: { id: orderId }, data: { dispatchPausedAt: new Date() } });
+  }
+
+  /**
+   * Снять паузу.
+   *
+   * Нужна там, где рассылку запускает не клиент, а оператор: он видит
+   * заявку целиком и решает осознанно, а без сброса кнопка «Повторить
+   * рассылку» молча ничего не делала бы — worker просто вышел бы на первой
+   * же проверке.
+   */
+  async resumeDispatch(orderId: string): Promise<void> {
+    await this.prisma.order.update({ where: { id: orderId }, data: { dispatchPausedAt: null } });
+  }
+
+  /** Скольким исполнителям заявка фактически ушла. Источник — журнал
+   *  отправок, а не список кандидатов волны: в волну попадают и те, кому не
+   *  доставили. */
+  async countDispatchedSuppliers(orderId: string): Promise<number> {
+    const rows = await this.prisma.notificationLog.findMany({
+      where: { orderId, templateKey: "order_broadcast_full", supplierId: { not: null } },
+      select: { supplierId: true },
+    });
+    return new Set(rows.map((r) => r.supplierId!)).size;
+  }
+
   /** Когда клиента в последний раз спрашивали об исходе по его же сообщению. */
   async outcomeAskedAt(orderId: string): Promise<Date | null> {
     const row = await this.prisma.order.findUnique({ where: { id: orderId }, select: { outcomeAskedAt: true } });
