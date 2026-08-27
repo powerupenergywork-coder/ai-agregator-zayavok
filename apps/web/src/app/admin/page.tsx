@@ -49,6 +49,9 @@ const QUEUES = [
   // Отдельно от «Отменённых»: там лежат и настоящие отказы после рассылки, и
   // брошенные черновики, а это разные проблемы с разным лечением.
   { value: "drafts", label: "Черновики" },
+  // Наши тесты и хвосты разговоров с исполнителями. Из остальных срезов они
+  // исключены — иначе искажают клиентскую статистику.
+  { value: "internal", label: "Служебные" },
 ];
 
 export default function AdminPage() {
@@ -167,6 +170,14 @@ function OrdersTab({ token }: { token: string }) {
                     <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-600">
                       {o.channel === "WHATSAPP" ? "WhatsApp" : "сайт"}
                     </span>
+                    {o.internal && (
+                      <span
+                        className="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-normal text-slate-600"
+                        title="Не клиентская заявка: наш тест или разговор, оказавшийся разговором с исполнителем"
+                      >
+                        служебная
+                      </span>
+                    )}
                     {wasAbandonedDraft(o) && (
                       <span
                         className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-700"

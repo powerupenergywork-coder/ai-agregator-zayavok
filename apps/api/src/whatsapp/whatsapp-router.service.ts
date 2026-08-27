@@ -692,6 +692,17 @@ export class WhatsAppRouterService {
       }
 
       if (msg.text && isOnboardingTrigger(msg.text)) {
+        // Тот же хвост, что и в switchToSupplier: человек мог начать с «нужен
+        // манипулятор», получить черновик заказа и только потом написать
+        // «поставщик».
+        const started = await this.sessions.findOrCreate(msg.chatId, msg.phone);
+        if (started.currentOrderId) {
+          await this.orders.discardDraftAsInternal(
+            started.currentOrderId,
+            "Разговор оказался разговором с исполнителем, а не заказом",
+          );
+          await this.sessions.clearOrder(msg.chatId);
+        }
         await this.onboarding.start(msg.chatId, msg.phone, lang);
         return;
       }
@@ -1451,6 +1462,16 @@ export class WhatsAppRouterService {
   private async switchToSupplier(chatId: string, phone: string, lang: Language): Promise<void> {
     const session = await this.sessions.findOrCreate(chatId, phone);
     if (session.currentOrderId) {
+      // Черновик, заведённый по первой реплике, оказался не заказом.
+      //
+      // Отвязать сессию мало: заявка остаётся в базе и через сутки закрывается
+      // по таймауту как брошенная клиентская. Заявки №123–126 — четыре таких
+      // за пять минут от одного человека, который пытался зарегистрироваться
+      // исполнителем.
+      await this.orders.discardDraftAsInternal(
+        session.currentOrderId,
+        "Разговор оказался разговором с исполнителем, а не заказом",
+      );
       await this.sessions.clearOrder(chatId);
     }
     const supplier = await this.findSupplier(phone);
@@ -2591,6 +2612,10 @@ export class WhatsAppRouterService {
     // рядом. Именно на таких и нужен оператор — доводить брошенное.
     const authUser = await this.authOtp.getOrCreateClientAuthUser(phone);
     await this.orders.attachClient(draft.id, authUser.profileId);
+    // Наш собственный номер и номера исполнителей — не клиенты. Пометка
+    // ставится сразу: потом отличить их от настоящих заявок можно только
+    // руками, и в отчётах это уже приводило к неверным выводам.
+    await this.orders.markInternalIfNotClient(draft.id, phone);
     await this.sessions.setCurrentOrder(chatId, draft.id);
     return draft.id;
   }

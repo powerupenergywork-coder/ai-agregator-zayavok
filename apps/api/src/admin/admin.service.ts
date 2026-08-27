@@ -48,6 +48,16 @@ const QUEUE_STATUS_MAP: Record<string, OrderStatus[]> = {
  */
 const DRAFT_QUEUE = "drafts";
 
+/**
+ * Служебные заявки — отдельной вкладкой, а не вперемешку.
+ *
+ * Наши тесты, health-check и хвосты разговоров с исполнителями. В общем
+ * списке они неотличимы от клиентских, и каждый отчёт приходилось чистить
+ * руками — а один раз я всё равно ошибся и назвал повторным клиентом
+ * человека, который просто четыре раза не смог зарегистрироваться.
+ */
+const INTERNAL_QUEUE = "internal";
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -422,12 +432,17 @@ export class AdminService {
 
   async listOrders(filters: { status?: string; queue?: string }) {
     const statuses = filters.queue ? QUEUE_STATUS_MAP[filters.queue] : filters.status ? [filters.status] : undefined;
+    // Служебные показываем только когда их прямо попросили: во всех
+    // остальных срезах они искажают картину.
+    const notInternal = { internal: false };
     const where =
-      filters.queue === DRAFT_QUEUE
-        ? { publishedAt: null }
-        : statuses
-          ? { status: { in: statuses } }
-          : undefined;
+      filters.queue === INTERNAL_QUEUE
+        ? { internal: true }
+        : filters.queue === DRAFT_QUEUE
+          ? { ...notInternal, publishedAt: null }
+          : statuses
+            ? { ...notInternal, status: { in: statuses } }
+            : notInternal;
     const orders = await this.prisma.order.findMany({
       where,
       include: { category: true, dispatchWaves: true, client: { include: { user: true } } },
@@ -447,6 +462,7 @@ export class AdminService {
       city: o.city,
       urgent: o.urgent,
       channel: o.channel,
+      internal: o.internal,
       notifiedSuppliersCount: new Set(o.dispatchWaves.flatMap((w) => w.supplierIds as string[])).size,
       clientPhone: o.client?.user.phone ?? null,
       createdAt: o.createdAt,

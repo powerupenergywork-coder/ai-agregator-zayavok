@@ -897,6 +897,68 @@ export class OrdersService {
   }
 
   /**
+   * Разговор оказался разговором с исполнителем — убираем черновик заявки.
+   *
+   * Человек, начавший со слова «Манипулятор», получает черновик заказа: с
+   * первой реплики не отличить «мне нужен манипулятор» от «я работаю на
+   * манипуляторе». Когда выясняется второе, черновик остаётся висеть и через
+   * сутки закрывается по таймауту как брошенная клиентская заявка.
+   *
+   * Заявки №123–126: четыре таких за пять минут от одного человека, пока бот
+   * четырежды его не понимал. В отчёте они выглядели как повторные обращения
+   * клиента.
+   *
+   * Не удаляем, а помечаем и закрываем: переписка остаётся — по ней и видно,
+   * где бот не понял, — но из клиентской статистики заявка уходит.
+   */
+  async discardDraftAsInternal(orderId: string, reason: string): Promise<void> {
+    try {
+      const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+      if (!order || order.publishedAt) return;
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          internal: true,
+          status: "CANCELLED_BY_CLIENT",
+          cancelledAt: new Date(),
+          cancelReason: reason,
+        },
+      });
+      await this.prisma.orderStatusEvent.create({
+        data: { orderId, fromStatus: order.status, toStatus: "CANCELLED_BY_CLIENT", actor: "system", note: reason },
+      });
+    } catch (err) {
+      this.logger.warn(`Не удалось убрать служебный черновик ${orderId}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Пометить заявку служебной, если её завёл не клиент.
+   *
+   * Два случая, различимых сразу при создании: номер владельца (его тесты —
+   * №97, 98, 112) и номер, уже лежащий в базе исполнителей. Третий случай —
+   * разговор, который окажется поставщицким позже, — ловится отдельно, см.
+   * discardDraftAsInternal.
+   */
+  async markInternalIfNotClient(orderId: string, phone: string): Promise<void> {
+    try {
+      const normalized = normalizePhone(phone);
+      const owner = env.newOrderAlertPhone || env.dailyReportPhone;
+      const isOwner = !!owner && normalizePhone(owner) === normalized;
+      const isSupplier = isOwner
+        ? false
+        : !!(await this.prisma.supplierProfile.findFirst({
+            where: { user: { phone: normalized } },
+            select: { id: true },
+          }));
+      if (!isOwner && !isSupplier) return;
+      await this.prisma.order.update({ where: { id: orderId }, data: { internal: true } });
+    } catch (err) {
+      this.logger.warn(`Не удалось пометить служебную заявку ${orderId}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
    * Снять паузу.
    *
    * Нужна там, где рассылку запускает не клиент, а оператор: он видит
