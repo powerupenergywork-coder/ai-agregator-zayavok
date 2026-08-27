@@ -25,12 +25,11 @@ export default function LandingPage() {
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
-    // Без gclid в адресе вернётся null, и ссылка останется прежней.
-    adClickToken().then(setAdToken);
-  }, []);
-
-  useEffect(() => {
     captureAttribution();
+    // Строго ПОСЛЕ captureAttribution: код клика читает то, что она
+    // только что достала из адреса. Отдельным эффектом выше он выполнялся
+    // раньше и всегда получал пустую атрибуцию.
+    adClickToken().then(setAdToken);
     categoriesApi.listActive().then(setCategories).catch(() => setCategories([]));
     analyticsApi.track("landing_view");
     publicApi.supplierStats().then((s) => setBotPhone(s.botPhone)).catch(() => setBotPhone(null));

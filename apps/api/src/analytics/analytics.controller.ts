@@ -39,6 +39,20 @@ class TrackEventDto {
   metadata?: Record<string, unknown>;
 }
 
+class AdClickDto {
+  @IsString()
+  @MaxLength(200)
+  clickId!: string;
+
+  @IsOptional()
+  @IsIn(["google", "yandex"])
+  source?: string;
+
+  @IsOptional()
+  @IsObject()
+  params?: Record<string, string>;
+}
+
 @Controller("analytics")
 export class AnalyticsController {
   constructor(private readonly analytics: AnalyticsService,
@@ -68,18 +82,4 @@ export class AnalyticsController {
     const token = await this.adClicks.issue(dto.clickId, dto.source ?? "google", dto.params);
     return { token };
   }
-}
-
-class AdClickDto {
-  @IsString()
-  @MaxLength(200)
-  clickId!: string;
-
-  @IsOptional()
-  @IsIn(["google", "yandex"])
-  source?: string;
-
-  @IsOptional()
-  @IsObject()
-  params?: Record<string, string>;
 }

@@ -350,6 +350,11 @@ model Order {
 
   @@index([status])
   @@index([categoryId, city, district])
+  // Оба индекса созданы миграциями, но в схеме их не было: prisma migrate
+  // diff показывал расхождение, а следующий migrate dev попытался бы их
+  // удалить. Объявляем — база уже такая.
+  @@index([source])
+  @@index([internal])
 }
 
 model ChatMessage {
