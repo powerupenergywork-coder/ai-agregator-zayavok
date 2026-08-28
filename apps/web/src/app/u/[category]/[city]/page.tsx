@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { LANDING_CATEGORIES, LANDING_CITIES, findLanding } from "@/lib/landing-pages";
-import { BOT_PHONE_PRETTY, whatsappLink } from "@/lib/site";
+import { BOT_PHONE_PRETTY } from "@/lib/site";
+import { WhatsAppButton } from "./whatsapp-button";
 import { LandingOrderForm } from "./order-form";
 
 /**
@@ -66,15 +67,7 @@ export default async function LandingCityPage({
        * Телефон рядом не для красоты: часть людей ссылкам не доверяет и
        * наберёт руками, а часть просто предпочитает голос. */}
       <div className="mb-8 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-        <a
-          href={whatsappLink(category.whatsappText(city))}
-          className="flex items-center justify-center gap-2 rounded-full bg-[#25D366] px-6 py-3.5 text-base font-semibold text-white shadow-sm transition hover:brightness-95"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
-            <path d="M12 2a10 10 0 0 0-8.7 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2Zm5.6 14.2c-.2.7-1.4 1.3-2 1.3-.5 0-1.1.2-3.7-.8-3.1-1.3-5-4.4-5.2-4.6-.1-.2-1.2-1.6-1.2-3s.8-2.1 1-2.4c.3-.3.6-.4.8-.4h.6c.2 0 .4 0 .6.5l.9 2.1c.1.2.1.4 0 .5l-.4.6-.3.3c-.1.2-.3.3-.1.6.1.3.7 1.2 1.5 1.9 1 .9 1.8 1.2 2.1 1.3.2.1.4.1.6-.1l.8-1c.2-.2.3-.2.6-.1l2 1c.3.1.5.2.5.3.1.2.1.8-.1 1.5Z" />
-          </svg>
-          Написать в WhatsApp
-        </a>
+        <WhatsAppButton text={category.whatsappText(city)} label="Написать в WhatsApp" />
         <p className="mt-3 text-center text-sm text-slate-600">
           или позвоните:{" "}
           <a href={`tel:+${BOT_PHONE_PRETTY.replace(/\D/g, "")}`} className="font-medium text-slate-900 underline">
