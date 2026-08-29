@@ -62,6 +62,9 @@ interface OnboardingState {
    * Yes/No button question per category instead of a numbered multi-select
    * list, see renderCategoryQuestion(). */
   categoryIndex?: number;
+  /** Сколько раз прошли весь список категорий, ничего не выбрав. Второй круг
+   *  последний: дальше спрашиваем словами, а не тем же перечнем. */
+  categoryPasses?: number;
   pendingOptions?: Record<string, string>;
   isNewSupplier: boolean;
 }
@@ -549,6 +552,27 @@ export class WhatsAppOnboardingService {
     const idx = state.categoryIndex ?? 0;
     if (idx >= allCategories.length) {
       if (state.collected.categorySlugs.length === 0) {
+        // Второй заход по кругу — последний.
+        //
+        // Человек, отказавшийся от всех шести категорий, отвечал на них снова
+        // и снова без конца: список кончался, ничего не выбрано, счётчик
+        // обнулялся — и так до бесконечности. Найдено прогоном автомата,
+        // до живого исполнителя не дошло.
+        //
+        // Смысл в том, что он уже ответил: его услуги в списке нет. Значит
+        // спрашивать надо не то же самое ещё раз, а чем он занимается.
+        if (state.categoryPasses ?? 0) {
+          state.step = "other_category";
+          await this.saveState(chatId, state);
+          await this.whatsapp.sendText(
+            phone,
+            lang === "kk"
+              ? "Түсіндім, тізімде сіздің қызметіңіз жоқ. Не істейтіңізді өз сөзіңізбен жазыңыз — бір хабарламамен."
+              : "Понял, вашей услуги в списке нет. Напишите своими словами, что у вас за техника или услуга — одним сообщением.",
+          );
+          return;
+        }
+        state.categoryPasses = (state.categoryPasses ?? 0) + 1;
         state.categoryIndex = 0;
         await this.saveState(chatId, state);
         await this.whatsapp.sendText(
