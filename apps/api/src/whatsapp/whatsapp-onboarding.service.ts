@@ -62,6 +62,10 @@ interface OnboardingState {
    * Yes/No button question per category instead of a numbered multi-select
    * list, see renderCategoryQuestion(). */
   categoryIndex?: number;
+  /** Телефон нужен на каждом сохранении: прогресс пишется в профиль, а тот
+   *  ищется по номеру. Кладём в состояние, чтобы не тащить его через десяток
+   *  вызовов saveState. */
+  phone?: string;
   /** Сколько раз прошли весь список категорий, ничего не выбрав. Второй круг
    *  последний: дальше спрашиваем словами, а не тем же перечнем. */
   categoryPasses?: number;
@@ -133,7 +137,7 @@ export class WhatsAppOnboardingService {
         }
       : { categorySlugs: [], cities: [] };
 
-    await this.saveState(chatId, { step: "company_name", collected, isNewSupplier: !existing });
+    await this.saveState(chatId, { step: "company_name", collected, isNewSupplier: !existing, phone: normalized });
     await this.whatsapp.sendText(
       phone,
       existing
@@ -696,6 +700,67 @@ export class WhatsAppOnboardingService {
 
   private async saveState(chatId: string, state: OnboardingState): Promise<void> {
     await this.sessions.setFlow(chatId, "supplier_onboarding", { onboarding: state });
+    await this.saveProgress(state);
+  }
+
+  /**
+   * Складывать ответы в профиль по мере разговора, а не в конце.
+   *
+   * Поставщик Жарбол, 28 августа: назвал имя, ответил на шесть вопросов о
+   * категориях — и остался с пустым профилем. Всё собранное жило в состоянии
+   * сессии, а её сбросило на последнем шаге. Владелец самосвала в Астане,
+   * ровно та техника, которой не хватает.
+   *
+   * Только для НОВЫХ профилей. Исполнитель, зашедший править существующий,
+   * получил бы обратное: бросил правку на середине — и категории, которые он
+   * успел отклонить, исчезли бы из работающего профиля. У него уже есть чем
+   * терять, у нового — нечего.
+   *
+   * confirmedAt не трогаем. Недорегистрированный — это ровно то, что значит
+   * «в базе, но согласия не дал»: полную заявку с телефоном клиента он не
+   * получит, только обезличенное приглашение с кнопкой. Согласием считается
+   * законченный разговор, и ставит его persist().
+   */
+  private async saveProgress(state: OnboardingState): Promise<void> {
+    if (!state.isNewSupplier || !state.phone) return;
+    // Пока не назвался — сохранять нечего, а пустой профиль на каждое
+    // «поставщик» засорил бы базу.
+    if (!state.collected.companyName) return;
+
+    try {
+      const user = await this.prisma.user.upsert({
+        where: { phone: state.phone },
+        create: { phone: state.phone, preferredChannel: "WHATSAPP" },
+        update: {},
+      });
+      const supplier = await this.prisma.supplierProfile.upsert({
+        where: { userId: user.id },
+        create: { userId: user.id, companyName: state.collected.companyName },
+        update: { companyName: state.collected.companyName },
+      });
+
+      if (state.collected.categorySlugs.length) {
+        const rows = await this.prisma.category.findMany({
+          where: { slug: { in: state.collected.categorySlugs } },
+        });
+        await this.prisma.supplierCategory.deleteMany({ where: { supplierId: supplier.id } });
+        await this.prisma.supplierCategory.createMany({
+          data: rows.map((c) => ({ supplierId: supplier.id, categoryId: c.id })),
+          skipDuplicates: true,
+        });
+      }
+      if (state.collected.cities.length) {
+        await this.prisma.serviceArea.deleteMany({ where: { supplierId: supplier.id } });
+        await this.prisma.serviceArea.createMany({
+          data: state.collected.cities.map((city) => ({ supplierId: supplier.id, city })),
+          skipDuplicates: true,
+        });
+      }
+    } catch (err) {
+      // Разговор важнее записи: не сохранилось — продолжаем, в конце
+      // persist() запишет всё разом, как и раньше.
+      this.logger.warn(`Не удалось сохранить прогресс регистрации: ${(err as Error).message}`);
+    }
   }
 
   private async loadState(chatId: string): Promise<OnboardingState | null> {
