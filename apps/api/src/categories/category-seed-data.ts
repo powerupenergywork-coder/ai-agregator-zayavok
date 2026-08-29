@@ -40,27 +40,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         question: { ru: "В какое время нужна машина?", kk: "Көлік қай уақытта керек?" },
       },
       {
-        key: "weightKg",
-        label: { ru: "Вес груза", kk: "Жүк салмағы" },
-        type: "number",
-        unit: "кг",
-        required: false,
-        allowUnknown: true,
-        question: { ru: "Какой примерный вес груза?", kk: "Жүктің шамамен салмағы қандай?" },
-      },
-      {
-        key: "volumeM3",
-        label: { ru: "Объём груза", kk: "Жүк көлемі" },
-        type: "number",
-        unit: "м³",
-        required: false,
-        allowUnknown: true,
-        question: {
-          ru: "Какой объём груза (в кубах или на глаз)?",
-          kk: "Жүк көлемі қандай (текше метрмен немесе шамамен)?",
-        },
-      },
-      {
         key: "needLoaders",
         label: { ru: "Нужны грузчики", kk: "Тиеушілер керек пе" },
         type: "boolean",
@@ -135,18 +114,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         },
       },
       {
-        key: "volumeM3",
-        label: { ru: "Объём", kk: "Көлемі" },
-        type: "number",
-        unit: "м³",
-        required: false,
-        allowUnknown: true,
-        question: {
-          ru: "Какой объём (в кубах или количество ходок)?",
-          kk: "Көлемі қандай (текше метрмен немесе рейс саны)?",
-        },
-      },
-      {
         key: "date",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
@@ -194,26 +161,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         type: "text",
         required: true,
         question: { ru: "В каком городе нужна услуга?", kk: "Қызмет қай қалада керек?" },
-      },
-      {
-        key: "weightTons",
-        label: { ru: "Вес груза", kk: "Жүк салмағы" },
-        type: "number",
-        unit: "т",
-        required: false,
-        allowUnknown: true,
-        question: {
-          ru: "Какой примерный вес груза (в тоннах)?",
-          kk: "Жүктің шамамен салмағы қанша тонна?",
-        },
-      },
-      {
-        key: "dimensions",
-        label: { ru: "Размеры груза", kk: "Жүк өлшемдері" },
-        type: "text",
-        required: false,
-        allowUnknown: true,
-        question: { ru: "Какие размеры груза?", kk: "Жүктің өлшемдері қандай?" },
       },
       {
         key: "date",
@@ -296,30 +243,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         },
       },
       {
-        key: "liftWeightTons",
-        label: { ru: "Вес груза", kk: "Жүк салмағы" },
-        type: "number",
-        unit: "т",
-        required: false,
-        allowUnknown: true,
-        question: {
-          ru: "Какой примерный вес груза для подъёма (в тоннах)?",
-          kk: "Көтерілетін жүктің шамамен салмағы қанша тонна?",
-        },
-      },
-      {
-        key: "liftHeightM",
-        label: { ru: "Высота/вылет", kk: "Биіктігі/жету қашықтығы" },
-        type: "number",
-        unit: "м",
-        required: false,
-        allowUnknown: true,
-        question: {
-          ru: "На какую высоту или вылет стрелы нужно поднять груз?",
-          kk: "Жүкті қандай биіктікке немесе кранның қай қашықтығына көтеру керек?",
-        },
-      },
-      {
         key: "date",
         label: { ru: "Дата", kk: "Күні" },
         type: "date",
@@ -364,26 +287,6 @@ export const CATEGORY_SEED_DATA: CategoryTemplate[] = [
         type: "text",
         required: true,
         question: { ru: "В каком городе нужна услуга?", kk: "Қызмет қай қалада керек?" },
-      },
-      {
-        // Текст, а не число в кубометрах.
-        //
-        // Заявка №100: человек написал «Два бака с мусором», а в заявку ушло
-        // «объём — не знаю», потому что в число это не превращается. Тридцать
-        // исполнителей получили заказ без главного параметра — по объёму они
-        // и считают цену.
-        //
-        // В кубах мусор меряет тот, кто его возит. Заказчик меряет мешками,
-        // баками и кузовами, и в таком виде исполнителю понятнее, чем «4 м³».
-        key: "volumeM3",
-        label: { ru: "Объём", kk: "Көлемі" },
-        type: "text",
-        required: false,
-        allowUnknown: true,
-        question: {
-          ru: "Сколько примерно мусора? Можно на глаз — мешки, баки, кузов газели.",
-          kk: "Қоқыс шамамен қанша? Шамалап айтыңыз — қаптар, бактар, газель шанағы.",
-        },
       },
       {
         key: "needLoaders",
