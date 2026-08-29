@@ -18,6 +18,33 @@ type Step = "company_name" | "categories" | "other_category" | "cities" | "urgen
  *  вопрос, а не название своей услуги. См. разбор шага «categories». */
 const YES_NO_WORDS = new Set(["да", "нет", "ага", "не", "иә", "ия", "жоқ", "жок"]);
 
+/** Слова, которыми отказываются. Отдельно от YES_NO_WORDS: там голые ответы,
+ *  а здесь части фразы вроде «нет не газель». */
+const DENIAL_WORDS = new Set(["нет", "не", "неа", "нету", "это", "у", "меня", "мой", "моя", "моей", "жоқ", "жок", "емес"]);
+
+/**
+ * «Нет не газель» — отказ от текущей категории, а не заявка на неё.
+ *
+ * Поставщик Жарбол, 28 августа: на вопрос «Вы предоставляете услугу
+ * "Газель"?» ответил «Нет не газель» — и получил «Понял: "Газель". Такая
+ * категория у нас есть, добавил её вам». Поиск по основе слова видел
+ * «газель» и не видел стоящего перед ней «не».
+ *
+ * Убираем название категории и знаки препинания: если не осталось ничего,
+ * кроме слов отказа, — это ответ «нет».
+ */
+// Казахские буквы в классе обязательны: без ә, ғ, қ, ң, ө, ұ, ү, һ, і
+// слово «жоқ» рассыпается на «жо» и перестаёт быть отказом. Та же семья
+// ошибок, что w и , не видящие кириллицу.
+function looksLikeDenial(text: string, categoryName?: string): boolean {
+  const stripped = (categoryName ? text.toLowerCase().split(categoryName.toLowerCase()).join(" ") : text.toLowerCase())
+    .split(/[^a-zа-яёәғқңөұүһі]+/i)
+    .filter(Boolean);
+  if (stripped.length === 0) return false;
+  const hasDenial = stripped.some((w) => w === "не" || w === "нет" || w === "неа" || w === "нету" || w === "жоқ" || w === "жок" || w === "емес");
+  return hasDenial && stripped.every((w) => DENIAL_WORDS.has(w));
+}
+
 interface Collected {
   companyName?: string;
   categorySlugs: string[];
@@ -186,6 +213,18 @@ export class WhatsAppOnboardingService {
         // словами, а не название своей услуги. Записать «Просит категорию:
         // да» — хуже, чем попросить нажать кнопку.
         const bare = msg.text?.trim().toLowerCase().replace(/[.!?]+$/, "") ?? "";
+        // Отказ словами — ответ на текущий вопрос, а не название своей
+        // техники. Иначе «нет не газель» добавляло ровно ту категорию, от
+        // которой человек отказался.
+        const asked = await this.categories.findAllActive();
+        const nowAsking = asked[state.categoryIndex ?? 0];
+        const askedName = nowAsking ? ((nowAsking.name as unknown as LocalizedText).ru ?? "") : "";
+        if (bare && looksLikeDenial(bare, askedName)) {
+          state.categoryIndex = (state.categoryIndex ?? 0) + 1;
+          await this.saveState(chatId, state);
+          await this.askNextCategory(chatId, phone, state, lang);
+          return;
+        }
         if (bare && !YES_NO_WORDS.has(bare)) {
           state.step = "other_category";
           await this.saveState(chatId, state);
@@ -394,6 +433,20 @@ export class WhatsAppOnboardingService {
         state.collected.categorySlugs.push(known.slug);
       }
       state.step = "categories";
+      // Счётчик обязан сдвинуться.
+      //
+      // Поставщик Жарбол, 28 августа: на вопросе про газель нажал «Моей нет в
+      // списке», написал «Самосвал 25 тонн» — самосвал добавился, и следом
+      // снова пришёл вопрос про газель. И так десять раз подряд: вопрос не
+      // двигался, потому что здесь вызывался askNextCategory без увеличения
+      // индекса. Человек сдался, написал «Добавите ?» — и получил «такой
+      // категории у нас нет». Владелец самосвала в Астане, ровно та техника,
+      // которой нам не хватает.
+      //
+      // Назвав свою технику, человек ответил и на текущий вопрос: она не та,
+      // о которой спрашивали (а если та — ответил «да»). В обоих случаях
+      // вопрос закрыт.
+      state.categoryIndex = (state.categoryIndex ?? 0) + 1;
       await this.saveState(chatId, state);
       await this.whatsapp.sendText(
         phone,
@@ -458,7 +511,7 @@ export class WhatsAppOnboardingService {
     // По НАЧАЛУ слова, а не по вхождению: «минипогрузчик» содержит «грузчи»,
     // и поиск подстрокой записал бы владельца техники в бригаду грузчиков —
     // ровно в ту категорию, которой у него нет.
-    const words = text.toLowerCase().split(/[^a-zа-яё]+/i).filter(Boolean);
+    const words = text.toLowerCase().split(/[^a-zа-яёәғқңөұүһі]+/i).filter(Boolean);
     for (const c of all) {
       const name = ((c.name as unknown as LocalizedText).ru ?? "").toLowerCase();
       // Сравниваем по основе: «манипулятора», «манипуляторы» — то же самое.
@@ -513,6 +566,15 @@ export class WhatsAppOnboardingService {
         phone,
         lang === "kk" ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз." : "В каких городах вы работаете? Перечислите через запятую.",
       );
+      return;
+    }
+    // Уже добавленное не переспрашиваем: человек назвал самосвал текстом, и
+    // спрашивать через три вопроса «вы предоставляете услугу "Самосвал"?»
+    // значит показать, что его не услышали.
+    if (state.collected.categorySlugs.includes(allCategories[idx].slug)) {
+      state.categoryIndex = idx + 1;
+      await this.saveState(chatId, state);
+      await this.askNextCategory(chatId, phone, state, lang);
       return;
     }
     const rendered = renderCategoryQuestion(allCategories[idx], lang);
