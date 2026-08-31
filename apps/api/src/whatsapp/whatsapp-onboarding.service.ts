@@ -106,6 +106,43 @@ export function isOnboardingTrigger(text: string): boolean {
   return TRIGGER_PHRASES.has(text.trim().toLowerCase());
 }
 
+/**
+ * Вопрос о самом сервисе — на любом шаге регистрации.
+ *
+ * Отличается от looksLikeQuestion() принципиально: тот ловит вопросительный
+ * знак, а на шаге категорий «Манипулятор?» — это ответ. Здесь ловится ТЕМА:
+ * наём, деньги, устройство сервиса.
+ *
+ * 30 августа, +7 708 889 1256: «У меня категории B и C. Мне нужна работа. Вам
+ * нужен водитель?» — человек спрашивал про наём, а его переспрашивали про
+ * имя. На шаге имени это чинилось широкой проверкой; на остальных шагах его
+ * реплика ушла бы в разбор как название техники или города.
+ *
+ * Явные классы букв с казахскими: см. класс ошибок А.
+ */
+const SERVICE_QUESTION_RE = new RegExp(
+  [
+    // Про наём
+    "нужен\\s+(ли\\s+)?водител",
+    "нужны\\s+(ли\\s+)?водител",
+    "требу[а-яё]*\\s+водител",
+    "берёте\\s+на\\s+работу|берете\\s+на\\s+работу",
+    "нанима[а-яё]+|трудоустр[а-яё]+|ваканси[а-яё]+|устроит[ьс][а-яё]*\\s+на\\s+работ",
+    "зарплат[а-яё]*|оклад[а-яё]*|ставк[а-яё]*\\s+в\\s+(день|месяц)",
+    "жұмысқа\\s+ала",
+    // Про деньги сервиса
+    "комисси[а-яё]*|процент[а-яё]*\\s+бер|сколько\\s+бер[а-яё]+|это\\s+платно|платно\\s+ли|бесплатно\\s+ли",
+    "нужно\\s+(ли\\s+)?плат[а-яё]+|надо\\s+(ли\\s+)?плат[а-яё]+",
+    // Про устройство
+    "что\\s+(это\\s+)?за\\s+(сервис|компани|фирм|сайт)",
+    "что\\s+это\\s+такое|кто\\s+вы\\s|вы\\s+кто",
+    "как\\s+(это\\s+)?работает|как\\s+вы\\s+работает|как\\s+(это\\s+)?устроен",
+    "откуда\\s+(у\\s+вас\\s+)?(заявк|заказ)",
+    "қалай\\s+жұмыс\\s+істей",
+  ].join("|"),
+  "i",
+);
+
 @Injectable()
 export class WhatsAppOnboardingService {
   private readonly logger = new Logger(WhatsAppOnboardingService.name);
@@ -170,6 +207,17 @@ export class WhatsAppOnboardingService {
     let token = msg.buttonReplyId;
     if (!token && msg.text && /^\d+$/.test(msg.text.trim())) {
       token = state.pendingOptions?.[msg.text.trim()];
+    }
+
+    // Вопрос о сервисе — на любом шаге, до разбора ответа.
+    //
+    // Иначе на шаге категорий «Вам нужен водитель?» уходит в подбор категории,
+    // а на шаге городов — в список городов. Отвечаем и повторяем тот вопрос,
+    // на котором стоим: человек не терял место в разговоре.
+    if (msg.text && SERVICE_QUESTION_RE.test(msg.text)) {
+      await this.whatsapp.sendText(phone, renderServiceExplainer(lang));
+      await this.repeatCurrentQuestion(chatId, phone, state, lang);
+      return;
     }
 
     if (state.step === "company_name") {
@@ -705,6 +753,74 @@ export class WhatsAppOnboardingService {
     // registration/edit, not just brand-new ones, since a re-run through
     // this same trigger-phrase flow is how editing works too.
     await this.prospect.markConverted(phone, supplier.id);
+  }
+
+  /**
+   * Повторить вопрос того шага, на котором человек стоит.
+   *
+   * Нужен после пояснения: ответить и замолчать — значит бросить разговор на
+   * полпути. Тексты те же, что задаются при переходе на шаг, иначе человек
+   * увидит два разных вопроса об одном и решит, что его не поняли.
+   */
+  private async repeatCurrentQuestion(
+    chatId: string,
+    phone: string,
+    state: OnboardingState,
+    lang: Language,
+  ): Promise<void> {
+    switch (state.step) {
+      case "company_name":
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Сізді қалай жазайық? Жеке жұмыс істесеңіз, жай атыңызды жазсаңыз болады."
+            : "Как вас записать? Можно просто имя, если работаете сами.",
+        );
+        return;
+      case "categories":
+        await this.askNextCategory(chatId, phone, state, lang);
+        return;
+      case "other_category":
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Не істейтіңізді өз сөзіңізбен жазыңыз — бір хабарламамен."
+            : "Напишите, что у вас за техника или услуга. Одним сообщением, своими словами.",
+        );
+        return;
+      case "cities":
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз."
+            : "В каких городах вы работаете? Перечислите через запятую.",
+        );
+        return;
+      case "urgent": {
+        const rendered = renderYesNo(
+          lang === "kk" ? "Жедел тапсырыстарды қабылдайсыз ба?" : "Принимаете срочные заказы?",
+          "sup|urgent",
+          lang,
+        );
+        await this.whatsapp.sendButtons(phone, rendered.body, rendered.buttons!);
+        return;
+      }
+      case "hours":
+        await this.whatsapp.sendButtons(
+          phone,
+          lang === "kk"
+            ? "Өтінімдерді тәулік бойы алғыңыз келе ме, әлде тек жұмыс сағаттарында ма (08:00–21:00)?"
+            : "Получать заявки в любое время суток или только в рабочие часы (08:00–21:00)?",
+          [
+            { id: "sup|hours|true", text: lang === "kk" ? "Тәулік бойы" : "Круглосуточно" },
+            { id: "sup|hours|false", text: lang === "kk" ? "Тек 08:00–21:00" : "Только 08:00–21:00" },
+          ],
+        );
+        return;
+      case "confirm":
+        await this.sendConfirm(phone, state, lang);
+        return;
+    }
   }
 
   private async saveState(chatId: string, state: OnboardingState): Promise<void> {
