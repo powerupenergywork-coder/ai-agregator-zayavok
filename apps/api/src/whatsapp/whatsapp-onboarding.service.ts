@@ -8,7 +8,8 @@ import { normalizePhone } from "../common/phone.util";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interface";
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { phoneToChatId } from "./whatsapp.util";
-import { renderCategoryQuestion, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
+import { renderCategoryQuestion,
+  renderServiceExplainer, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
 import { ProspectService } from "../prospect/prospect.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 
@@ -186,6 +187,14 @@ export class WhatsAppOnboardingService {
       // Переспрашиваем один раз: имя записывается в карточку заявки, которую
       // увидит клиент, и мусор там дороже лишнего вопроса.
       if (isOnboardingTrigger(name) || looksLikeQuestion(name)) {
+        // Сначала ответить, потом переспросить.
+        //
+        // Повтор команды («поставщик») — не вопрос, объяснять там нечего. А на
+        // настоящий вопрос человек ждёт ответа: без него переспрашивание
+        // выглядит так, будто его не слышат.
+        if (!isOnboardingTrigger(name)) {
+          await this.whatsapp.sendText(phone, renderServiceExplainer(lang));
+        }
         await this.whatsapp.sendText(
           phone,
           lang === "kk"
