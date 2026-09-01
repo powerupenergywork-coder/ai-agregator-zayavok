@@ -394,6 +394,20 @@ const CLIENT_CANCEL_RE =
  */
 const AD_CLICK_TOKEN_RE = /#([A-HJ-NP-Z2-9]{5})(?![A-Za-z0-9])/i;
 
+/**
+ * Прощание посреди оформления: «Всё, спасибо», «рахмет вам».
+ *
+ * Заявка №155, 1 сентября: через час после начала человек прислал голосовое
+ * «Все, спасибо, рахмет вам!» — попрощался. Бот расшифровал, показал текст и
+ * спросил «На какую дату нужен вывоз?». Попрощавшегося переспросили.
+ *
+ * Голое «спасибо» сюда НЕ попадает намеренно: посреди разговора это
+ * вежливость после ответа, а не конец. Нужен признак завершения — «всё»
+ * впереди или слово прощания рядом.
+ */
+const FAREWELL_RE =
+  /^\s*вс[её][\s,.!]*(большое\s*)?(спасибо|спасиб|благодар[а-яё]*|рахмет|рақмет)|до\s*свидания|всего\s*(доброго|хорошего)|сау\s*бол[а-яё]*|қош\s*бол[а-яё]*|(спасибо|рахмет|рақмет)[\s,.!]*(вам|сізге)[\s,.!]*$/i;
+
 const FOUND_EXECUTOR_RE =
   /(наш[её]л|нашли|найден|подобрал|определил)[а-яё]*\s*(уже\s*)?(исполнител|подрядчик|мастера|машину|технику|человека|бригаду)|уже\s*(наш[её]л|нашли|договорил|заказал|решил)|договорил[а-яё]*\s*(уже\s*)?(с|уже)?|вопрос\s*реш|всё\s*реш|все\s*реш|^\s*готово[\s.!]*$|таптым|келістім|шештім|^\s*дайын[\s.!]*$/i;
 
@@ -538,6 +552,21 @@ const PLEASANTRIES = new Set([
 // supplier-onboarding trigger phrases below, checked before auto-detection.
 const RU_TRIGGER_PHRASES = new Set(["по-русски", "на русском", "русский"]);
 const KK_TRIGGER_PHRASES = new Set(["қазақша", "қазақ тілінде", "қазақша сөйлесейік"]);
+
+/**
+ * Просьба перейти на другой язык — своими словами, а не точной фразой.
+ *
+ * 1 сентября, +7 778 373 0583: «Можна по казахский?» Списки выше ждут
+ * дословных «қазақша» или «на русском», и просьба прошла мимо: человек
+ * остался на русском и получил вопрос про имя.
+ *
+ * Просят обычно на том языке, с которого хотят уйти, и с ошибками — поэтому
+ * ловим и «казахский», и «қазақша», и «казакша».
+ */
+const WANTS_KK_RE =
+  /(мож(на|но)|давай(те)?|перейд[а-яё]*|говор[а-яё]*|пиши(те)?|можем)?\s*(по[\s-]*)?каз[ае]?[хқ]?ш?[аи][а-яё]*|қазақ\s*тілінде|қазақша|қазақ\s*тілі/i;
+const WANTS_RU_RE =
+  /(мож(на|но)|давай(те)?|перейд[а-яё]*|говор[а-яё]*|пиши(те)?|можем)?\s*(по[\s-]*)?рус(ски|ском|ский|ша)[а-яё]*|орыс\s*тілінде|орысша/i;
 
 @Injectable()
 export class WhatsAppRouterService {
@@ -885,11 +914,20 @@ export class WhatsAppRouterService {
   private async resolveLanguage(phone: string, text: string | undefined): Promise<Language> {
     const normalized = normalizePhone(phone);
     const trimmed = text?.trim().toLowerCase();
+    // Сначала точные фразы, потом свободная форма: точное совпадение
+    // надёжнее, а выражение ниже намеренно широкое и может задеть лишнее в
+    // длинном тексте. Поэтому применяем его только к коротким репликам —
+    // просьба о языке длинной не бывает.
+    const short = !!trimmed && trimmed.split(/\s+/).length <= 5;
     const override: Language | null = trimmed && RU_TRIGGER_PHRASES.has(trimmed)
       ? "ru"
       : trimmed && KK_TRIGGER_PHRASES.has(trimmed)
         ? "kk"
-        : null;
+        : short && WANTS_KK_RE.test(trimmed!)
+          ? "kk"
+          : short && WANTS_RU_RE.test(trimmed!)
+            ? "ru"
+            : null;
     // Приветствие язык не определяет. Реальный случай: человек написал
     // «Салеметсізбе», разговор целиком переехал на казахский, а следующие два
     // его сообщения были по-русски — но в русском тексте нет букв, по которым
@@ -2021,12 +2059,25 @@ export class WhatsAppRouterService {
             // Спросили недавно — второй раз не спрашиваем.
             const askedAt = await this.orders.outcomeAskedAt(attached);
             if (askedAt && Date.now() - askedAt.getTime() < OUTCOME_ASK_WINDOW_HOURS * 60 * 60 * 1000) {
-              await this.whatsapp.sendText(
-                phone,
+              // Дежурная фраза — ровно один раз.
+              //
+              // Заявка №158, 1 сентября: клиент дал второй номер, потом
+              // спросил, есть ли кто приедет на час, — и трижды подряд
+              // получил «исполнители перезвонят вам сами». После третьего
+              // раза закрыл заявку.
+              //
+              // Если это уже было последним, что мы сказали, — молчим.
+              // Человек написал не для того, чтобы услышать то же самое, а
+              // сказать нам нечего: заявка у исполнителей, ждём звонков.
+              const reassurance =
                 lang === "kk"
                   ? `№${dto.number} өтінім бойынша орындаушылар қоңырау шалады. Бірдеңе қажет болса — жазыңыз.`
-                  : `По заявке №${dto.number} исполнители перезвонят вам сами. Если что-то нужно — напишите.`,
-              );
+                  : `По заявке №${dto.number} исполнители перезвонят вам сами. Если что-то нужно — напишите.`;
+              if (!(await this.alreadySaid(phone, reassurance))) {
+                await this.whatsapp.sendText(phone, reassurance);
+              } else {
+                this.logger.log(`${phone}: дежурная фраза по заявке №${dto.number} уже отправлена, молчим`);
+              }
               return;
             }
 
@@ -2168,6 +2219,24 @@ export class WhatsAppRouterService {
     if (PRICE_QUESTION_RE.test(text)) {
       const dto = currentOrderId ? await this.orders.toDto(currentOrderId).catch(() => null) : null;
       await this.answerPriceQuestion(phone, dto?.category?.slug, lang, false);
+    }
+
+    // Человек попрощался, не закончив заявку.
+    //
+    // Заявка №155, 1 сентября: через час после начала пришло голосовое «Все,
+    // спасибо, рахмет вам!», а в ответ — «На какую дату нужен вывоз?».
+    // Попрощавшегося переспрашивать нельзя: он уже ушёл, и вопрос читается
+    // как «тебя не слушают».
+    //
+    // Черновик закрываем молча и коротко благодарим. Ничего не спрашиваем:
+    // выяснять у прощающегося, почему он передумал, — это ещё один вопрос
+    // человеку, который только что сказал «всё».
+    // Только черновик. По разосланной заявке «Всё, спасибо» означает
+    // «нашёл исполнителя» — это исход, его разбирает ветка выше, и
+    // перехватывать его здесь значит терять результат.
+    if (currentOrderId && FAREWELL_RE.test(text) && (await this.isDraftOrder(currentOrderId))) {
+      await this.closeDraftOnFarewell(chatId, phone, currentOrderId, lang);
+      return;
     }
 
     // Карточка ждёт подтверждения, а человек ответил на её вопрос словами.
@@ -2491,6 +2560,66 @@ export class WhatsAppRouterService {
       lang === "kk"
         ? `Түсіндім, енді жібермеймін.\n${already}\n\nКелісіп алсаңыз — «дайын» деп жазыңыз, өтінімді жабамын.`
         : `Понял, больше рассылать не буду.\n${already}\n\nКак договоритесь — напишите «готово», и я закрою заявку.`,
+    );
+  }
+
+  /**
+   * Попрощался, не закончив оформление. Закрываем черновик.
+   *
+   * Исполнителям ничего не уходит: заявка до них и не доезжала. Клиенту —
+   * одна короткая фраза и открытая дверь, без вопросов и без уговоров.
+   */
+  /**
+   * Мы уже говорили это последним сообщением?
+   *
+   * Дословный повтор — самое заметное проявление «бота, который не слушает».
+   * Смотрим только ПОСЛЕДНЕЕ исходящее: если между ними было что-то другое,
+   * повтор уместен, человек мог забыть.
+   */
+  private async alreadySaid(phone: string, text: string): Promise<boolean> {
+    try {
+      const last = await this.prisma.whatsAppMessage.findFirst({
+        where: { phone: normalizePhone(phone), direction: "OUT" },
+        orderBy: { createdAt: "desc" },
+        select: { text: true },
+      });
+      return (last?.text ?? "").trim() === text.trim();
+    } catch {
+      // Не смогли посмотреть — лучше ответить, чем промолчать.
+      return false;
+    }
+  }
+
+  /** Заявка ещё не ушла исполнителям? */
+  private async isDraftOrder(orderId: string): Promise<boolean> {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        select: { status: true, publishedAt: true },
+      });
+      return !!order && !order.publishedAt && DRAFT_STATUSES.includes(order.status);
+    } catch {
+      return false;
+    }
+  }
+
+  private async closeDraftOnFarewell(
+    chatId: string,
+    phone: string,
+    orderId: string,
+    lang: Language,
+  ): Promise<void> {
+    try {
+      await this.orders.discardDraftAsInternal(orderId, "Клиент попрощался, не закончив оформление");
+      await this.sessions.clearOrder(chatId);
+    } catch (err) {
+      this.logger.warn(`Не удалось закрыть черновик по прощанию: ${(err as Error).message}`);
+    }
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Рахмет сізге! Техника қажет болса — осында жазыңыз."
+        : "И вам спасибо! Понадобится техника — просто напишите сюда.",
     );
   }
 
