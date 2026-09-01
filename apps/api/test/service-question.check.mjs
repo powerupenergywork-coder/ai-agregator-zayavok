@@ -96,22 +96,17 @@ async function askAtStep(stepName, warmup) {
   return { out, questionBefore, joined: out.join("\n---\n") };
 }
 
+// Маршрут регистрации со 2 сентября: после имени спрашиваем словами, и
+// только неразобранный ответ уводит на перебор кнопками.
 const cases = [
   ["имя", []],
-  ["категории", [text("Асхат")]],
-  ["своя техника словами", [text("Асхат"), button("sup|catnone")]],
-  [
-    "города",
-    [
-      text("Асхат"),
-      button("sup|cat|avtokran|false"),
-      button("sup|cat|gazelle|false"),
-      button("sup|cat|gruzchiki|false"),
-      button("sup|cat|manipulyator|false"),
-      button("sup|cat|samosval|true"),
-      button("sup|cat|construction-waste|false"),
-    ],
-  ],
+  ["чем занимаетесь", [text("Асхат")]],
+  // «Спецтехника» — не название категории: ни по имени, ни классификатором.
+  // Отсюда начинается прежний перебор кнопками.
+  ["категории кнопками", [text("Асхат"), text("Спецтехника")]],
+  ["своя техника словами", [text("Асхат"), text("Спецтехника"), button("sup|catnone")]],
+  // А здесь слова сработали — до кнопок дело не дошло вовсе.
+  ["города", [text("Асхат"), text("Самосвал"), button("sup|svc|done")]],
 ];
 
 /**

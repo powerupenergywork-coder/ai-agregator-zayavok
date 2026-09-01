@@ -9,11 +9,20 @@ import { WHATSAPP_PROVIDER, WhatsAppProvider } from "./whatsapp-provider.interfa
 import { WhatsAppSessionService } from "./whatsapp-session.service";
 import { phoneToChatId } from "./whatsapp.util";
 import { renderCategoryQuestion,
+  renderServicesConfirm,
   renderServiceExplainer, renderOnboardingConfirm, renderYesNo } from "./whatsapp-onboarding-render.util";
 import { ProspectService } from "../prospect/prospect.service";
 import { IncomingWhatsAppMessage } from "./whatsapp.types";
 
-type Step = "company_name" | "categories" | "other_category" | "cities" | "urgent" | "hours" | "confirm";
+type Step =
+  | "company_name"
+  | "services"
+  | "categories"
+  | "other_category"
+  | "cities"
+  | "urgent"
+  | "hours"
+  | "confirm";
 
 /** Голые «да»/«нет» на шаге категорий — попытка ответить словами на текущий
  *  вопрос, а не название своей услуги. См. разбор шага «categories». */
@@ -70,6 +79,10 @@ interface OnboardingState {
   /** Сколько раз прошли весь список категорий, ничего не выбрав. Второй круг
    *  последний: дальше спрашиваем словами, а не тем же перечнем. */
   categoryPasses?: number;
+  /** Сколько раз спросили «чем занимаетесь» свободным текстом.
+   *  Две попытки, дальше кнопки: круг вопросов, из которого нет выхода, мы
+   *  уже проходили — см. categoryPasses. */
+  serviceAsks?: number;
   pendingOptions?: Record<string, string>;
   isNewSupplier: boolean;
 }
@@ -258,6 +271,77 @@ export class WhatsAppOnboardingService {
       }
       state.collected.companyName = name;
       await this.goToCategories(chatId, phone, state, lang);
+      return;
+    }
+
+    if (state.step === "services") {
+      // Кнопки под подтверждением: «это всё» / «есть ещё».
+      if (token === "sup|svc|done") {
+        await this.goToCities(chatId, phone, state, lang);
+        return;
+      }
+      if (token === "sup|svc|more") {
+        state.serviceAsks = (state.serviceAsks ?? 1) + 1;
+        await this.saveState(chatId, state);
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk" ? "Тағы не істейсіз? Жазыңыз." : "Что ещё делаете? Напишите.",
+        );
+        return;
+      }
+      const said = msg.text?.trim() ?? "";
+      if (!said) {
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Не істейтіңізді мәтінмен жазыңыз — мысалы «самосвал» немесе «қоқыс шығару»."
+            : "Напишите текстом, чем занимаетесь — например «самосвал» или «вывоз мусора».",
+        );
+        return;
+      }
+
+      const { slugs, names, unmatched } = await this.matchServices(said);
+      for (const slug of slugs) {
+        if (!state.collected.categorySlugs.includes(slug)) state.collected.categorySlugs.push(slug);
+      }
+
+      if (slugs.length === 0) {
+        // Слова не сработали — переходим на кнопки. Это и есть их место.
+        //
+        // Сказанное не выбрасываем: человек уже описал себя, и заставлять его
+        // повторяться, пока он не угадает наше слово, — то же самое, что не
+        // слушать. Кладём в заметку профиля.
+        await this.noteAside(phone, said);
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk"
+            ? "Түсінікті, жазып алдым. Нақтылау үшін бірнеше сұрақ қоямын — «Иә» немесе «Жоқ» деп жауап беріңіз."
+            : "Понял, записал. Уточню парой вопросов — отвечайте «Да» или «Нет».",
+        );
+        await this.goToCategoryButtons(chatId, phone, state, lang);
+        return;
+      }
+
+      // Непонятый остаток тоже сохраняем: «самосвал, вывоз снега» — самосвал
+      // распознан, вывоз снега нет, и терять его нельзя.
+      if (unmatched.length > 0) await this.noteAside(phone, unmatched.join(", "));
+
+      state.serviceAsks = (state.serviceAsks ?? 1) + 1;
+      await this.saveState(chatId, state);
+
+      // Третий заход — хватит. Дальше человек уже отвечает по кругу, а нам
+      // остаётся спросить только «всё ли», и то кнопкой.
+      if ((state.serviceAsks ?? 0) > 2) {
+        await this.whatsapp.sendText(
+          phone,
+          lang === "kk" ? `Жазып алдым: ${names.join(", ")}.` : `Записал: ${names.join(", ")}.`,
+        );
+        await this.goToCities(chatId, phone, state, lang);
+        return;
+      }
+
+      const rendered = renderServicesConfirm(state.collected.categorySlugs.length, names, lang);
+      await this.whatsapp.sendButtons(phone, rendered.body, rendered.buttons!);
       return;
     }
 
@@ -602,11 +686,92 @@ export class WhatsAppOnboardingService {
     return null;
   }
 
+  /**
+   * Сначала спрашиваем словами, кнопками добираем только непонятое.
+   *
+   * Раньше здесь начинался перебор: один вопрос «Да/Нет» на каждую категорию.
+   * На шести это девять шагов анкеты, на девяти — двенадцать, а человек к
+   * тому времени уже назвал свою технику в первом же сообщении. 2 сентября
+   * категорий стало девять, и перебор перестал быть приемлемым.
+   *
+   * Кто ответит «самосвал и погрузчик» — не увидит ни одной кнопки. Кто
+   * напишет «спецтехника» — попадёт на прежний перебор, и это правильно:
+   * кнопки нужны ровно там, где слова не сработали.
+   */
   private async goToCategories(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
+    state.step = "services";
+    state.serviceAsks = 1;
+    await this.saveState(chatId, state);
+    await this.whatsapp.sendText(phone, this.servicesQuestion(lang));
+  }
+
+  /** Вопрос «чем занимаетесь» — один и тот же и при входе, и при повторе. */
+  private servicesQuestion(lang: Language): string {
+    return lang === "kk"
+      ? "Не істейсіз? Өз сөзіңізбен жазыңыз — қандай техника немесе қызмет.\nБірнешеу болса — үтір арқылы: «самосвал, тиегіш»."
+      : "Чем занимаетесь? Напишите своими словами — какая у вас техника или услуга.\nЕсли несколько — через запятую: «самосвал, погрузчик».";
+  }
+
+  /** Вопрос про города. Раньше в него вёл один путь, теперь два. */
+  private async goToCities(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
+    state.step = "cities";
+    await this.saveState(chatId, state);
+    await this.whatsapp.sendText(
+      phone,
+      lang === "kk"
+        ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз."
+        : "В каких городах вы работаете? Перечислите через запятую.",
+    );
+  }
+
+  /** Перебор кнопками — прежний путь, теперь запасной. */
+  private async goToCategoryButtons(chatId: string, phone: string, state: OnboardingState, lang: Language): Promise<void> {
     state.step = "categories";
     state.categoryIndex = 0;
     await this.saveState(chatId, state);
     await this.askNextCategory(chatId, phone, state, lang);
+  }
+
+  /**
+   * Разобрать свободный ответ: что из названного есть у нас.
+   *
+   * Делим по запятым и «и»: «самосвал и погрузчик» — две услуги, а не одна
+   * непонятная строка. Каждый кусок ищем отдельно, порядок сохраняем.
+   *
+   * Кусков берём не больше шести: за этим числом начинается не перечень
+   * услуг, а рассказ о себе, и разбирать его по запятым бессмысленно.
+   */
+  private async matchServices(text: string): Promise<{ slugs: string[]; names: string[]; unmatched: string[] }> {
+    const chunks = text
+      .split(/[,;\n]+|\s+и\s+|\s\+\s/i)
+      .map((c) => c.trim())
+      .filter((c) => c.length >= 3)
+      .slice(0, 6);
+    const slugs: string[] = [];
+    const names: string[] = [];
+    const unmatched: string[] = [];
+    for (const chunk of chunks) {
+      const hit = await this.matchKnownCategory(chunk);
+      if (!hit) {
+        unmatched.push(chunk);
+        continue;
+      }
+      if (!slugs.includes(hit.slug)) {
+        slugs.push(hit.slug);
+        names.push(hit.name);
+      }
+    }
+    // Ни один кусок не подошёл — попробуем фразу целиком: «занимаюсь вывозом
+    // строительного мусора» рубится по словам плохо, а целиком читается.
+    if (slugs.length === 0) {
+      const whole = await this.matchKnownCategory(text);
+      if (whole) {
+        slugs.push(whole.slug);
+        names.push(whole.name);
+        unmatched.length = 0;
+      }
+    }
+    return { slugs, names, unmatched };
   }
 
   /** One Yes/No button question per category (see renderCategoryQuestion) —
@@ -650,12 +815,7 @@ export class WhatsAppOnboardingService {
         await this.askNextCategory(chatId, phone, state, lang);
         return;
       }
-      state.step = "cities";
-      await this.saveState(chatId, state);
-      await this.whatsapp.sendText(
-        phone,
-        lang === "kk" ? "Қай қалаларда жұмыс істейсіз? Үтір арқылы тізіп жазыңыз." : "В каких городах вы работаете? Перечислите через запятую.",
-      );
+      await this.goToCities(chatId, phone, state, lang);
       return;
     }
     // Уже добавленное не переспрашиваем: человек назвал самосвал текстом, и
@@ -782,6 +942,9 @@ export class WhatsAppOnboardingService {
             : "Как вас записать? Можно просто имя, если работаете сами.",
         );
         return;
+      case "services":
+        await this.whatsapp.sendText(phone, this.servicesQuestion(lang));
+        return;
       case "categories":
         await this.askNextCategory(chatId, phone, state, lang);
         return;
@@ -825,6 +988,10 @@ export class WhatsAppOnboardingService {
       case "confirm":
         await this.sendConfirm(phone, state, lang);
         return;
+      default: {
+        const forgotten: never = state.step;
+        throw new Error(`шаг регистрации без вопроса: ${String(forgotten)}`);
+      }
     }
   }
 

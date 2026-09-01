@@ -76,6 +76,32 @@ export function renderCategoryQuestion(category: { slug: string; name: Localized
   };
 }
 
+/**
+ * Что записали со слов человека — и вопрос, всё ли это.
+ *
+ * Названия перечисляем полностью, а не числом: «Записал 2 услуги» человек
+ * проверить не может, а «Самосвал, Фронтальный погрузчик» — может, и сразу
+ * увидит, если мы поняли не то.
+ *
+ * Кнопка «Есть ещё» стоит первой не случайно: она дороже для нас. Пропущенная
+ * категория — это заявки, которые исполнителю никогда не придут, и узнает он
+ * об этом только по тишине.
+ */
+export function renderServicesConfirm(total: number, names: string[], lang: Language): OutgoingWhatsAppMessage {
+  const list = names.join(", ");
+  const body =
+    lang === "kk"
+      ? `Жазып алдым: ${list}.\nТағы бірдеңе істейсіз бе?`
+      : `Записал: ${list}.\nДелаете что-то ещё?`;
+  return {
+    body,
+    buttons: [
+      { id: "sup|svc|more", text: lang === "kk" ? "Иә, тағы бар" : "Да, есть ещё" },
+      { id: "sup|svc|done", text: lang === "kk" ? "Жоқ, болды" : "Нет, это всё" },
+    ],
+  };
+}
+
 export function renderYesNo(body: string, tokenPrefix: string, lang: Language): OutgoingWhatsAppMessage {
   return {
     body,
