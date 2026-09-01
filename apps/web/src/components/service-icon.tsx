@@ -63,6 +63,38 @@ const ICONS: Record<string, React.ReactNode> = {
       <rect x="8.5" y="9" width="7" height="5.5" rx="0.8" />
     </>
   ),
+  // Автовышка: борт с наклонной стрелой и люлькой наверху. От автокрана
+  // отличается именно люлькой — там крюк на тросе, здесь площадка с человеком.
+  aerial_platform: (
+    <>
+      <path d="M2 17h9v-4H2z" />
+      <path d="M6.5 13v-2l8-5.5" />
+      <rect x="13.8" y="3" width="4.2" height="3" rx="0.6" />
+      <circle cx="4.5" cy="18.7" r="1.5" />
+      <circle cx="9" cy="18.7" r="1.5" />
+    </>
+  ),
+  // Фронтальный погрузчик: ковш впереди внизу, кабина сзади. Ковш и есть
+  // всё отличие от прочей техники в этом ряду.
+  front_loader: (
+    <>
+      <path d="M11 15.5V10h3.5L17 13v2.5" />
+      <path d="M11 11.5L6.5 14.5" />
+      <path d="M2 18.5h5.5v-3.5H2z" />
+      <circle cx="12" cy="17.6" r="1.9" />
+      <circle cx="18" cy="17.8" r="1.4" />
+    </>
+  ),
+  // Дезинфекция: баллон с распылителем и струя. Единственная услуга в ряду
+  // без колёс — так она и читается как «не техника».
+  spray: (
+    <>
+      <path d="M8.5 20.5h5.5V10H8.5z" />
+      <path d="M10 10V6.5h3V10" />
+      <path d="M13 5h3.5v2" />
+      <path d="M18.5 4.5h1.5M18.5 8h1.5M20 6.2h1.5" />
+    </>
+  ),
   // Вывоз мусора: контейнер
   waste: (
     <>
@@ -73,7 +105,22 @@ const ICONS: Record<string, React.ReactNode> = {
   ),
 };
 
-export const SERVICE_ICON_KEYS = ["crane_truck", "crane", "dump_truck", "van", "loaders", "waste"] as const;
+/**
+ * Порядок ЖЁСТКО совпадает с t.landing.services в словарях ru/kk: иконка
+ * берётся по тому же индексу. Добавляя услугу, добавьте её в оба словаря и
+ * сюда — в одно и то же место, иначе у карточек разъедутся картинки.
+ */
+export const SERVICE_ICON_KEYS = [
+  "crane_truck",
+  "crane",
+  "dump_truck",
+  "van",
+  "loaders",
+  "waste",
+  "aerial_platform",
+  "front_loader",
+  "spray",
+] as const;
 
 export function ServiceIcon({ name, className = "" }: { name: string; className?: string }) {
   return (
