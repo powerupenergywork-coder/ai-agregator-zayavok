@@ -22,6 +22,18 @@ import { CategoryField, Language, LocalizedText, citiesServing } from "@ai-zayav
 const UNDELIVERABLE_ERROR_CODE = "131026";
 
 /**
+ * Чем закончилась отправка одному исполнителю.
+ *
+ * «sent» — сообщение ушло сейчас. «deferred» — у человека нерабочее время,
+ * заявка ждёт утреннего дайджеста. null — место в волне не занято вовсе
+ * (исчерпаны приглашения, квота, номер недоступен).
+ *
+ * Различать первые два обязательно: место в волне они занимают одинаково, а
+ * клиенту означают совершенно разное.
+ */
+type DispatchOutcome = "sent" | "deferred" | null;
+
+/**
  * Исполнитель должен знать, что заявка ушла не ему одному.
  *
  * В рассылке об этом не было ни слова: «Новая заявка… Позвоните и
@@ -125,12 +137,18 @@ export class MatchingService {
     // считались «уведомлёнными» и больше эту заявку не получали, хотя им
     // ничего не ушло. При волне в тридцать это терялось в шуме; при волне в
     // пять так можно раздать половину мест впустую.
+    // delivered — занятые места в волне; sentNow — кому ушло прямо сейчас;
+    // deferred — кто получит утром. Место занимают и те и другие, а клиенту
+    // называем только первых.
     const delivered: string[] = [];
+    const sentNow: string[] = [];
+    const deferred: string[] = [];
     for (const supplier of candidates) {
       if (delivered.length >= settings.waveSize) break;
-      if (await this.dispatchToSupplier(order, supplier, settings)) {
-        delivered.push(supplier.id);
-      }
+      const outcome = await this.dispatchToSupplier(order, supplier, settings);
+      if (!outcome) continue;
+      delivered.push(supplier.id);
+      (outcome === "sent" ? sentNow : deferred).push(supplier.id);
     }
 
     if (delivered.length === 0) return;
@@ -156,7 +174,8 @@ export class MatchingService {
         { delay: env.dispatchWaveIntervalMinutes * 60 * 1000 },
       );
       this.logger.log(
-        `Заявка №${order.number}: волна ${waveNumber} ушла ${delivered.length} исполнителям, ` +
+        `Заявка №${order.number}: волна ${waveNumber} — отправлено ${sentNow.length}, ` +
+          `отложено до утра ${deferred.length}, ` +
           `следующая через ${env.dispatchWaveIntervalMinutes} мин`,
       );
     } else if (waveNumber >= env.dispatchMaxWaves) {
@@ -178,8 +197,44 @@ export class MatchingService {
     const reached = await this.prisma.notificationLog.count({
       where: { orderId, templateKey: "order_broadcast_full" },
     });
-    const shown = reached || delivered.length;
+    const shown = reached || sentNow.length;
     const city = order.city ? ` в городе ${order.city}` : "";
+
+    // Отложенных называем отдельной фразой и только когда они есть.
+    //
+    // «Утром» без часа намеренно: окно у каждого своё, обещать «в 8:00» мы не
+    // можем. Важно другое — человек должен понимать, что эти звонки будут не
+    // сегодня, и решить, ждать ли.
+    const later =
+      deferred.length > 0
+        ? `\n\nЕщё ${deferred.length} получат заявку утром — у них сейчас нерабочее время.`
+        : "";
+    const laterKk =
+      deferred.length > 0
+        ? `\n\nТағы ${deferred.length} орындаушы өтінімді таңертең алады — қазір олардың жұмыс уақыты емес.`
+        : "";
+
+    // Никому не ушло, все отложены. Молчать нельзя — человек ждёт звонков,
+    // которых сегодня не будет.
+    if (sentNow.length === 0 && deferred.length > 0) {
+      if (waveNumber === 1) {
+        await this.tellClient(
+          order,
+          `Заявку №${order.number} принял${city}.\n\n` +
+            `Сейчас у исполнителей нерабочее время — заявку получат утром, ${deferred.length} человек. ` +
+            "Первые звонки будут после восьми.\n\n" +
+            "Если передумаете — напишите «не надо», и я закрою заявку.",
+          `№${order.number} өтінімді қабылдадым.\n\n` +
+            `Қазір орындаушылардың жұмыс уақыты емес — өтінімді таңертең ${deferred.length} адам алады. ` +
+            "Алғашқы қоңыраулар сегізден кейін болады.\n\n" +
+            "Ойыңыз өзгерсе — «керек емес» деп жазыңыз, өтінімді жабамын.",
+        );
+      }
+      // На второй и следующих волнах молчим: про утро клиент уже знает из
+      // первого сообщения, а повторять нечего — ничего не произошло.
+      this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
+      return;
+    }
     await this.tellClient(
       order,
       waveNumber === 1
@@ -190,15 +245,15 @@ export class MatchingService {
             "Позвонят в ближайшие 15–30 минут. Звонков будет несколько — это нормально: " +
             "сравните цены и выберите, кто устроит.\n\n" +
             "Договорились — напишите «готово», и я закрою заявку.\n" +
-            "Хватит звонков — напишите «хватит», и я перестану рассылать."
-        : `Разослали заявку №${order.number} ещё ${delivered.length} исполнителям${city}. Ждите звонков.`,
+            "Хватит звонков — напишите «хватит», и я перестану рассылать." + later
+        : `Разослали заявку №${order.number} ещё ${sentNow.length} исполнителям${city}. Ждите звонков.` + later,
       waveNumber === 1
         ? `№${order.number} өтінімін ${shown} орындаушыға жібердім${order.city ? ` (${order.city})` : ""}.\n\n` +
             "Олар 15–30 минут ішінде қоңырау шалады. Бірнеше қоңырау болады — бұл қалыпты жағдай: " +
             "бағаларын салыстырып, қайсысы ыңғайлы, соны таңдаңыз.\n\n" +
             "Келісіп алсаңыз — «дайын» деп жазыңыз, өтінімді жабамын.\n" +
-            "Қоңырау жетеді десеңіз — «болды» деп жазыңыз, жіберуді тоқтатамын."
-        : `№${order.number} өтінімін тағы ${delivered.length} орындаушыға жібердік. Қоңырауларды күтіңіз.`,
+            "Қоңырау жетеді десеңіз — «болды» деп жазыңыз, жіберуді тоқтатамын." + laterKk
+        : `№${order.number} өтінімін тағы ${sentNow.length} орындаушыға жібердік. Қоңырауларды күтіңіз.` + laterKk,
     );
 
     this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
@@ -241,7 +296,7 @@ export class MatchingService {
       workingHoursEnd: string | null;
     },
     settings: { quietHoursStart: string | null; quietHoursEnd: string | null },
-  ): Promise<boolean> {
+  ): Promise<DispatchOutcome> {
     // Non-urgent orders respect the supplier's quiet hours — held here
     // instead of sent immediately, then batched into one digest message
     // per supplier by flushPendingDigests() once their window opens.
@@ -261,7 +316,12 @@ export class MatchingService {
       });
       // Отложено — но место в волне занято по делу: человек получит заявку,
       // как только откроется его окно.
-      return true;
+      //
+      // Отличать «отложено» от «ушло» обязательно: клиенту нельзя писать
+      // «разослали», когда девять человек получат заявку утром. Заявка №158,
+      // 1 сентября, 21:41 — кран нужен был «сейчас», а бот отчитался о
+      // рассылке пятерым, которым ничего не отправлялось.
+      return "deferred";
     }
 
     const lang = toLang(supplier.user.preferredLanguage);
@@ -273,7 +333,7 @@ export class MatchingService {
     if (!supplier.confirmedAt) {
       // Приглашения исчерпаны — место в волне не тратим, оно достанется
       // следующему по очереди.
-      if (!(await this.mayInviteAgain(supplier.id))) return false;
+      if (!(await this.mayInviteAgain(supplier.id))) return null;
       const categoryFields = (order.category?.fields as unknown as CategoryField[]) ?? [];
       await this.notifications.send({
         event: "supplier_cold_invite",
@@ -299,7 +359,7 @@ export class MatchingService {
           { id: `supconfirm|no|${order.id}`, text: lang === "kk" ? "Жазбаңыздар" : "Не писать мне" },
         ],
       });
-      return true;
+      return "sent";
     }
 
     // Quota-blocked suppliers still count as "notified" for this order —
@@ -313,11 +373,11 @@ export class MatchingService {
       // должен. Раньше такой человек засчитывался «уведомлённым»: при волне в
       // тридцать это терялось в шуме, при волне в пять каждый второй слот мог
       // уйти в никуда.
-      return false;
+      return null;
     }
 
     await this.sendFullBroadcast(order, supplier, lang);
-    return true;
+    return "sent";
   }
 
   /**
