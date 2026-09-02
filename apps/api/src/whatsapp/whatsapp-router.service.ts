@@ -2305,13 +2305,28 @@ export class WhatsAppRouterService {
     // То же самое, но от клиента: он мог прийти по объявлению и не понимать,
     // куда попал. Отвечаем и не прерываем опрос — следом уйдёт тот же вопрос,
     // на котором остановились.
+    // Ответили ли мы человеку прямо здесь. Ниже это уходит в orders.chat:
+    // отброшенный вопрос не должен вызвать «я его не понял» после того, как
+    // мы на него ответили.
+    let questionAnswered = false;
+
     if (WHO_ARE_YOU_RE.test(text)) {
       await this.explainService(phone, lang, "client");
+      questionAnswered = true;
     }
 
     if (PRICE_QUESTION_RE.test(text)) {
       const dto = currentOrderId ? await this.orders.toDto(currentOrderId).catch(() => null) : null;
       await this.answerPriceQuestion(phone, dto?.category?.slug, lang, false);
+      questionAnswered = true;
+    }
+
+    // Просьба о языке — тоже вопрос, на который ответ уже дан: следующая
+    // реплика уходит на нужном языке, и это и есть ответ.
+    {
+      const trimmed = text.trim().toLowerCase();
+      const short = trimmed.split(/\s+/).length <= 5;
+      if (short && (WANTS_KK_RE.test(trimmed) || WANTS_RU_RE.test(trimmed))) questionAnswered = true;
     }
 
     // Человек попрощался, не закончив заявку.
@@ -2343,7 +2358,7 @@ export class WhatsAppRouterService {
     }
 
     const orderId = await this.ensureOrder(chatId, phone);
-    const turn = await this.orders.chat(orderId, text, lang);
+    const turn = await this.orders.chat(orderId, text, lang, { questionAnswered });
     // Третий одинаковый вопрос подряд — это не диалог, а стена. Человек уже
     // дважды показал, что не понимает, чего от него хотят; повторить в третий
     // раз то же самое значит потерять его окончательно.

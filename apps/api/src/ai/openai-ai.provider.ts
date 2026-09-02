@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { CategoryField } from "@ai-zayavki/shared";
 import { env } from "../config/env";
 import { AiCategoryOption, AiProvider, AiUnavailableError, ClassifyResult, IntentResult } from "./ai.types";
+import { isoDateInTimezone } from "../common/local-date.util";
 
 // Real provider — talks to OpenAI with a short timeout so a slow/unavailable
 // API degrades to AiUnavailableError instead of blowing past the ≤5s NFR;
@@ -89,7 +90,9 @@ export class OpenAiProvider implements AiProvider {
       "если он просит совета или оценки исполнителя — верни строку \"needs_consultation\". " +
       "Не оставляй такое поле пустым, если клиент вообще что-то ответил по существу этого вопроса. " +
       "Отвечай строго JSON без пояснений — объект {ключ: значение}, без лишних ключей.";
-    const user = `Сегодняшняя дата: ${new Date().toISOString().slice(0, 10)}\n\nПоля:\n${fieldsDoc}\n\nСообщение клиента: "${message}"`;
+    // Дата местная: модель считает от неё «завтра», и ночью по Гринвичу она
+    // отставала на сутки — вместе со всеми «завтра» в заявках.
+    const user = `Сегодняшняя дата: ${isoDateInTimezone()}\n\nПоля:\n${fieldsDoc}\n\nСообщение клиента: "${message}"`;
 
     try {
       const completion = await this.client.chat.completions.create({

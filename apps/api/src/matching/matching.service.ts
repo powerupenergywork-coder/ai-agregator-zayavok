@@ -24,14 +24,21 @@ const UNDELIVERABLE_ERROR_CODE = "131026";
 /**
  * Чем закончилась отправка одному исполнителю.
  *
- * «sent» — сообщение ушло сейчас. «deferred» — у человека нерабочее время,
- * заявка ждёт утреннего дайджеста. null — место в волне не занято вовсе
- * (исчерпаны приглашения, квота, номер недоступен).
+ * «sent» — заявка ушла сейчас. «invited» — человек ещё не подключён, ему
+ * ушло приглашение без телефона клиента. «deferred» — у человека нерабочее
+ * время, заявка ждёт утреннего дайджеста. null — место в волне не занято
+ * вовсе (исчерпаны приглашения, квота, номер недоступен).
  *
- * Различать первые два обязательно: место в волне они занимают одинаково, а
- * клиенту означают совершенно разное.
+ * Различать обязательно: место в волне они занимают одинаково, а клиенту
+ * означают совершенно разное.
+ *
+ * «invited» отделён от «sent» после прогона 2 сентября: клиенту сказали
+ * «Отправил заявку 10 исполнителям. Позвонят в ближайшие 15–30 минут», тогда
+ * как настоящую заявку получили семеро, а остальные — приглашение «интересно
+ * ли». Приглашённый позвонит, только если сначала согласится, и обещать его
+ * звонок нельзя.
  */
-type DispatchOutcome = "sent" | "deferred" | null;
+type DispatchOutcome = "sent" | "invited" | "deferred" | null;
 
 /**
  * Исполнитель должен знать, что заявка ушла не ему одному.
@@ -143,12 +150,15 @@ export class MatchingService {
     const delivered: string[] = [];
     const sentNow: string[] = [];
     const deferred: string[] = [];
+    const invited: string[] = [];
     for (const supplier of candidates) {
       if (delivered.length >= settings.waveSize) break;
       const outcome = await this.dispatchToSupplier(order, supplier, settings);
       if (!outcome) continue;
       delivered.push(supplier.id);
-      (outcome === "sent" ? sentNow : deferred).push(supplier.id);
+      if (outcome === "sent") sentNow.push(supplier.id);
+      else if (outcome === "invited") invited.push(supplier.id);
+      else deferred.push(supplier.id);
     }
 
     if (delivered.length === 0) return;
@@ -175,7 +185,7 @@ export class MatchingService {
       );
       this.logger.log(
         `Заявка №${order.number}: волна ${waveNumber} — отправлено ${sentNow.length}, ` +
-          `отложено до утра ${deferred.length}, ` +
+          `приглашено ${invited.length}, отложено до утра ${deferred.length}, ` +
           `следующая через ${env.dispatchWaveIntervalMinutes} мин`,
       );
     } else if (waveNumber >= env.dispatchMaxWaves) {
@@ -197,6 +207,9 @@ export class MatchingService {
     const reached = await this.prisma.notificationLog.count({
       where: { orderId, templateKey: "order_broadcast_full" },
     });
+    // Считаем по факту этой волны, а не запросом к журналу: запись в него
+    // идёт своим чередом, и на момент подсчёта её может ещё не быть — тогда
+    // число подменялось размером волны вместе с приглашёнными.
     const shown = reached || sentNow.length;
     const city = order.city ? ` в городе ${order.city}` : "";
 
@@ -213,6 +226,27 @@ export class MatchingService {
       deferred.length > 0
         ? `\n\nТағы ${deferred.length} орындаушы өтінімді таңертең алады — қазір олардың жұмыс уақыты емес.`
         : "";
+
+    // Заявка не ушла никому: все получатели волны — ещё не подключённые
+    // исполнители, им ушло приглашение. Обещать звонки в ближайшие полчаса
+    // нельзя: сначала человек должен согласиться работать с нами.
+    if (sentNow.length === 0 && deferred.length === 0 && invited.length > 0) {
+      if (waveNumber === 1) {
+        await this.tellClient(
+          order,
+          `Заявку №${order.number} принял${city}.\n\n` +
+            "Сейчас подбираем исполнителей — как только откликнутся, они позвонят вам сами. " +
+            "Это может занять некоторое время.\n\n" +
+            "Если передумаете — напишите «не надо», и я закрою заявку.",
+          `№${order.number} өтінімді қабылдадым.\n\n` +
+            "Қазір орындаушыларды іздеп жатырмыз — жауап бергенде өздері қоңырау шалады. " +
+            "Бұл біраз уақыт алуы мүмкін.\n\n" +
+            "Ойыңыз өзгерсе — «керек емес» деп жазыңыз, өтінімді жабамын.",
+        );
+      }
+      this.realtime.emitOrderUpdated(orderId, await this.orders.toDto(orderId));
+      return;
+    }
 
     // Никому не ушло, все отложены. Молчать нельзя — человек ждёт звонков,
     // которых сегодня не будет.
@@ -359,7 +393,7 @@ export class MatchingService {
           { id: `supconfirm|no|${order.id}`, text: lang === "kk" ? "Жазбаңыздар" : "Не писать мне" },
         ],
       });
-      return "sent";
+      return "invited";
     }
 
     // Quota-blocked suppliers still count as "notified" for this order —

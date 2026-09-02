@@ -17,7 +17,9 @@ import {
   ORDER_STATUS_TRANSITIONS,
   OrderStatus,
   citySuggestions,
+  findCitiesInText,
   isQuestionNotAnswer,
+  looksLikeCityAnswer,
   resolveCity,
 } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
@@ -181,7 +183,7 @@ export class OrdersService {
     orderId: string,
     message: string,
     lang: Language = "ru",
-    opts: { fromPhoto?: boolean } = {},
+    opts: { fromPhoto?: boolean; questionAnswered?: boolean } = {},
   ): Promise<ChatTurnResponse> {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
@@ -289,6 +291,7 @@ export class OrdersService {
     return this.applyFieldUpdate(orderId, categoryRow, { ...knownFields, ...extracted }, lang, {
       previousFields: knownFields,
       categoryJustDetermined,
+      questionAnswered: opts.questionAnswered,
     });
   }
 
@@ -415,6 +418,9 @@ export class OrdersService {
       /** Категорию определили именно этой репликой — значит самое время
        *  назвать порядок цены, см. priceNotice ниже. */
       categoryJustDetermined?: boolean;
+      /** На вопрос человека уже ответили выше по цепочке — значит говорить
+       *  «я его не понял» нельзя, см. questionNotice. */
+      questionAnswered?: boolean;
     } = {},
   ): Promise<ChatTurnResponse> {
     const fields = category.fields as unknown as CategoryField[];
@@ -454,11 +460,22 @@ export class OrdersService {
     const validatedFields = { ...dateChecked };
     let unknownCity: string | undefined;
     if (typeof validatedFields.city === "string") {
-      const resolved = resolveCity(validatedFields.city);
+      // Сначала целиком, потом поиском внутри фразы: «г Семей область Абай»
+      // как единое название не разбирается, а город там назван.
+      const resolved = resolveCity(validatedFields.city) ?? findCitiesInText(validatedFields.city)[0] ?? null;
       if (resolved) {
         validatedFields.city = resolved.name.ru;
       } else {
-        unknownCity = validatedFields.city;
+        // Жалуемся, только если человек действительно называл город.
+        //
+        // В поле города оседает первое сообщение целиком — «на фото кроме
+        // шкафов все разобрано», «передайте мои смс оператору», — и человек
+        // получал в ответ список городов. Он описывал задачу, а не отвечал
+        // про город; список читается как «тебя не слушают».
+        //
+        // Когда непонятно, город это или нет, — молчим и просто задаём
+        // вопрос про город: он всё равно идёт следующим.
+        unknownCity = looksLikeCityAnswer(validatedFields.city) ? validatedFields.city : undefined;
         delete validatedFields.city;
       }
     }
@@ -512,8 +529,18 @@ export class OrdersService {
     // Отброшенный вопрос нельзя проглотить молча: тот же вопрос, заданный
     // заново без единого слова объяснения, выглядит так, будто бот не читает
     // собеседника — а человек и так уже написал, что не понимает происходящего.
+    // Молчим, если на вопрос уже ответили.
+    //
+    // Прогон 2 сентября: «Можна по казахский?» — бот переключил язык, то
+    // есть просьбу понял, и в том же сообщении сказал «мен оны түсінбедім».
+    // То же на «Сколько стоит?» и «А вы кто такие?»: сначала содержательный
+    // ответ, следом «я его не понял». Человек, которому ответили и тут же
+    // сказали «не понял», верит второму.
+    //
+    // Отвечает роутер, а жалуется этот метод — они друг о друге не знали.
+    // Теперь знают: questionAnswered приходит оттуда, где ответили.
     const questionNotice =
-      droppedQuestions.length === 0
+      droppedQuestions.length === 0 || context.questionAnswered
         ? ""
         : lang === "kk"
           ? `Бұл жауап емес, сұрақ сияқты — мен оны түсінбедім. Қайта сұраймын, ал тірі адам керек болса: ${env.supportPhone}\n\n`

@@ -2,6 +2,7 @@ import { CategoryField, Language } from "@ai-zayavki/shared";
 import { WhatsAppButton } from "./whatsapp-provider.interface";
 import { OrderDto } from "../orders/order.dto";
 import { formatFieldValue } from "../common/field-format.util";
+import { isoDateInTimezone } from "../common/local-date.util";
 
 // Mirrors the web chip UI (components/field-input.tsx) but for a chat
 // medium: WhatsApp only allows 3 reply buttons per message (platform limit,
@@ -26,8 +27,9 @@ interface OptionItem {
   label: string;
 }
 
+/** Дата для кнопки — по времени города, см. isoDateInTimezone. */
 function fmtDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return isoDateInTimezone(d);
 }
 
 function buildOptionItems(fields: CategoryField[], lang: Language): OptionItem[] {

@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { CategoryField } from "@ai-zayavki/shared";
 import { AiCategoryOption, AiProvider, ClassifyResult } from "./ai.types";
 import { matchUnknownValueKeyword } from "./field-completion.util";
+import { isoDateInTimezone, isoDatePlusDays } from "../common/local-date.util";
 
 // Deterministic offline stand-in for the OpenAI provider — no network calls,
 // so `AI_PROVIDER=mock` (the default) lets the whole order flow be exercised
@@ -161,8 +162,24 @@ export class MockAiProvider implements AiProvider {
           break;
         }
         case "boolean": {
-          if (/без грузчик/.test(text)) out[field.key] = false;
-          else if (/с грузчик|нужны грузчик|лифт есть|есть лифт/.test(text)) out[field.key] = true;
+          // Правило смотрит НА КАКОЕ поле отвечает, а не только на текст.
+          //
+          // Прогон 2 сентября: «Нужны грузчики на переезд» записало у
+          // категории «Грузчики» поле «есть лифт: да». Про лифт человек не
+          // говорил — сработало правило, писавшееся для «нужны ли грузчики»
+          // у газели, а применялось оно к любому полю «да/нет». Исполнитель
+          // приехал бы, рассчитывая на лифт, которого может не быть.
+          const key = field.key.toLowerCase();
+          const about = (re: RegExp) => re.test(key);
+          if (about(/loader|gruzchik|грузчик/)) {
+            if (/без грузчик/.test(text)) out[field.key] = false;
+            else if (/с грузчик|нужны грузчик|нужен грузчик/.test(text)) out[field.key] = true;
+          } else if (about(/elevator|lift|лифт/)) {
+            if (/без лифта|нет лифта|лифта нет/.test(text)) out[field.key] = false;
+            else if (/лифт есть|есть лифт|с лифтом/.test(text)) out[field.key] = true;
+          }
+          // Для прочих полей «да/нет» молчим: угаданное значение человек не
+          // увидит в вопросе и не поправит, а исполнителю оно уедет как факт.
           break;
         }
         case "address": {
@@ -211,17 +228,11 @@ function extractTime(text: string): string | null {
 
 function extractDate(text: string): string | null {
   const today = new Date();
-  if (/сегодня/.test(text)) return today.toISOString().slice(0, 10);
-  if (/завтра/.test(text)) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
-  }
-  if (/послезавтра/.test(text)) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + 2);
-    return d.toISOString().slice(0, 10);
-  }
+  // «Послезавтра» проверяем ПЕРВЫМ: слово содержит «завтра», и при обратном
+  // порядке послезавтрашняя заявка получала завтрашнюю дату.
+  if (/послезавтра/.test(text)) return isoDatePlusDays(2);
+  if (/сегодня/.test(text)) return isoDateInTimezone();
+  if (/завтра/.test(text)) return isoDatePlusDays(1);
   const dmy = text.match(/(\d{1,2})[.\/](\d{1,2})(?:[.\/](\d{2,4}))?/);
   if (dmy) {
     const [, d, m, y] = dmy;
