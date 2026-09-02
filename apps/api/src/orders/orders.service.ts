@@ -993,6 +993,16 @@ export class OrdersService {
    * рассылку» молча ничего не делала бы — worker просто вышел бы на первой
    * же проверке.
    */
+  /** Стоит ли рассылка на паузе. Нужно, чтобы не обещать звонков, которых
+   *  не будет: клиент №159 полночи ждал их после собственного «хватит». */
+  async isDispatchPaused(orderId: string): Promise<boolean> {
+    const row = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { dispatchPausedAt: true },
+    });
+    return !!row?.dispatchPausedAt;
+  }
+
   async resumeDispatch(orderId: string): Promise<void> {
     await this.prisma.order.update({ where: { id: orderId }, data: { dispatchPausedAt: null } });
   }
