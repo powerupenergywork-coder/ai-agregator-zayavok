@@ -29,6 +29,10 @@ const SLUGS = [
   "aerial-platform",
   "front-loader",
   "disinfection",
+  "electrician",
+  "plumber",
+  "cleaning",
+  "tow-truck",
 ];
 
 const provider = new MockAiProvider();
@@ -75,6 +79,31 @@ await expect("Нужна газель перевезти мебель", "gazelle
 await expect("Нужен самосвал вывезти грунт", "dump-truck");
 await expect("Нужен манипулятор", "crane-truck");
 await expect("Вывезти строительный мусор", "construction-waste");
+
+// ── Четыре бытовые услуги, добавлены 4 сентября ────────────────────────────
+await expect("Нужен электрик поменять розетки", "electrician");
+await expect("Не работает свет, нет света в квартире", "electrician");
+await expect("Нужен сантехник", "plumber");
+await expect("Засор в трубе на кухне", "plumber");
+await expect("Нужна уборка квартиры после ремонта", "cleaning");
+await expect("Помыть окна в офисе", "cleaning");
+await expect("Нужен эвакуатор, машина не заводится", "tow-truck");
+await expect("Отбуксировать авто в сервис", "tow-truck");
+
+// ── Два места, где новые категории спорят со старыми ───────────────────────
+//
+// «Кран» принадлежит автокрану и весит там больше. Сантехнический кран
+// узнаётся только в связке — иначе «течёт кран» уехало бы к крановщикам.
+await expect("Течёт кран на кухне", "plumber");
+await expect("течет кран", "plumber");
+await expect("Нужен автокран", "crane");
+await expect("Нужен кран поднять груз", "crane");
+
+// «Уборк» есть и у клининга, и у снега. Без связок «уборка снега» уходила бы
+// к мойщикам окон, а трактор ждал бы напрасно.
+await expect("Уборка снега во дворе", "front-loader");
+await expect("Убрать снег с территории базы", "front-loader");
+await expect("Генеральная уборка офиса", "cleaning");
 
 // ── Ни на что не похоже — лучше ничего, чем наугад ─────────────────────────
 await expect("Здравствуйте", null);
