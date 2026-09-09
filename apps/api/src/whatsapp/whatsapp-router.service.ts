@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import {
   CITIES,
+  cityLeftover,
   detectLanguage,
   findCitiesInText,
   Language,
@@ -49,6 +50,25 @@ const DRAFT_STATUSES = ["DRAFT", "CLARIFYING"];
 // operator queue behind it. See handleText().
 const FINISHED_STATUSES = ["COMPLETED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_ADMIN", "CLOSED_NO_RESPONSE", "NEEDS_OPERATOR"];
 const BALANCE_TRIGGER_PHRASES = new Set(["баланс", "мой баланс", "подписка"]);
+
+/**
+ * Прямая просьба о счёте: «счёт», «хочу оплатить», «как оплатить».
+ *
+ * Нужна, потому что сам «баланс» счёт больше не печатает, пока бесплатные
+ * заявки далеко не кончились, — а человеку, решившему заплатить заранее,
+ * номер всё равно нужен.
+ */
+const WANTS_INVOICE_RE =
+  /^\s*(сч[её]т|шот)\s*$|хочу\s*(оплат|заплат)|как\s*(оплат|заплат)|дайте\s*сч[её]т|выстав[а-яё]*\s*сч[её]т|оплатить\s*подписк|т[өо]леу\s*керек|шот\s*керек/i;
+
+/**
+ * Когда бесплатных заявок остаётся столько, счёт в ответе на «баланс» уместен.
+ *
+ * До этого порога он читается как требование денег: Бердижан, 9 сентября,
+ * подключился в 16:52, взял первую заявку, а в 17:12 на «Баланс» получил счёт
+ * на 10 000 ₸ — израсходовав одну заявку из пятидесяти.
+ */
+const INVOICE_HINT_THRESHOLD = 10;
 // A supplier who can't stop the messages reports them as spam instead, and
 // spam reports cost the number's quality rating — so opting out has to work
 // on a plain word, at any moment, without a menu to find first.
@@ -505,6 +525,21 @@ const WANTS_HUMAN_RE =
  */
 const SUPPLIER_SCOPE_RE = /заказ|заявк|тапсырыс|өтінім|категор|услуг/i;
 
+/**
+ * Исполнитель не может связаться с клиентом.
+ *
+ * Отдельно от остальных реплик по заявке, потому что это единственный исход,
+ * который бот разрешить не может: телефон клиента у исполнителя уже есть, и
+ * дальше нужен человек. Бердижан, 9 сентября, заявка №173: «Не берут
+ * телефон» — и никакого движения ни по заявке, ни у владельца.
+ *
+ * Слово «клиент» намеренно необязательно: пишут коротко, «не берут трубку»,
+ * — и подлежащее в такой фразе очевидно из контекста заявки.
+ */
+const CLIENT_UNREACHABLE_RE =
+  // Стандартные классы слов кириллицу не видят — только явные [а-яё].
+  /не\s*(бер[а-яё]*|отвеча[а-яё]*|подход[а-яё]*|дозвон[а-яё]*|беру[а-яё]*)\s*(трубк[а-яё]*|телефон[а-яё]*)?|(трубк[а-яё]*|телефон[а-яё]*)\s*не\s*бер|недоступен|не\s*доступен|вне\s*зоны|телефон\s*выключен|сбрасыва[а-яё]*|не\s*могу\s*(до)?звон[а-яё]*|номер\s*не\s*(верн|прав)[а-яё]*|телефон\s*алма[а-яё]*|жауап\s*берм[а-яё]*|қол\s*жетімсіз|хабарласа\s*алма[а-яё]*/i;
+
 /** Речь о заявке: цена, созвон, клиент. Не про себя — см. looksLikeSelfInfo. */
 const ORDER_TALK_RE =
   /цен[аеуы]|ценом|стоимост|тенге|тг\b|договор|созвон|перезвон|клиент|заказчик|заявк|баға|келіс|хабарлас/i;
@@ -787,6 +822,10 @@ export class WhatsAppRouterService {
         return;
       }
 
+      if (msg.text && WANTS_INVOICE_RE.test(msg.text.trim())) {
+        await this.handleBalanceCommand(msg.phone, lang, { wantsInvoice: true });
+        return;
+      }
       if (msg.text && BALANCE_TRIGGER_PHRASES.has(msg.text.trim().toLowerCase())) {
         await this.handleBalanceCommand(msg.phone, lang);
         return;
@@ -1161,7 +1200,11 @@ export class WhatsAppRouterService {
     }
   }
 
-  private async handleBalanceCommand(phone: string, lang: Language): Promise<void> {
+  private async handleBalanceCommand(
+    phone: string,
+    lang: Language,
+    opts: { wantsInvoice?: boolean } = {},
+  ): Promise<void> {
     const authUser = await this.authOtp.getOrCreateSupplierAuthUser(phone);
     const status = await this.billing.getStatus(authUser.profileId);
     // Пока оплаты нет, не называем цену и не показываем кнопку: обещать тариф,
@@ -1178,10 +1221,16 @@ export class WhatsAppRouterService {
         : lang === "kk"
           ? `Лимит таусылса — бізге жазыңыз: ${env.supportPhone}`
           : `Если лимит закончится — напишите нам: ${env.supportPhone}`;
+    // Формулировка одна и та же здесь и в карточке профиля.
+    //
+    // Было по-разному: профиль печатал «Уведомлений за месяц: 1 из 50»
+    // (израсходовано), баланс — «Бесплатных заявок: 49 из 50» (осталось).
+    // Одинаковая форма, противоположный смысл: человек не понимал, у него
+    // одна заявка или сорок девять.
     const body = [
       lang === "kk"
-        ? `Осы айда тегін өтінімдер: ${status.remainingFree} / ${status.freeQuota}`
-        : `Бесплатных заявок в этом месяце: ${status.remainingFree} из ${status.freeQuota}`,
+        ? `Тегін өтінімдер: осы айда ${status.notificationsUsedThisMonth} / ${status.freeQuota} жұмсалды`
+        : `Бесплатные заявки: использовано ${status.notificationsUsedThisMonth} из ${status.freeQuota}`,
       secondLine,
     ].join("\n");
 
@@ -1189,11 +1238,29 @@ export class WhatsAppRouterService {
     // приложении банка. Вместо неё — номер счёта прямо здесь, чтобы человеку
     // не приходилось искать старое сообщение о лимите.
     //
-    // Счёт выдаём и действующему подписчику: он может захотеть продлиться
-    // заранее, а дни при оплате прибавляются к остатку, а не съедают его
-    // (см. extendSubscription). Раньше здесь стояла проверка на активную
-    // подписку, и человек, решивший заплатить за неделю до конца, просто не
-    // мог получить номер счёта.
+    // Но не всегда. Счёт уместен, когда бесплатные заявки на исходе, когда
+    // подписка уже оформлена (продлевают заранее — дни при оплате
+    // прибавляются к остатку, а не съедают его, см. extendSubscription) и
+    // когда человек прямо попросил. В остальных случаях номер счёта в ответе
+    // на «баланс» читается как «плати», хотя платить ещё не за что: Бердижан,
+    // 9 сентября, подключился в 16:52 и в 17:12 на «Баланс» получил счёт на
+    // 10 000 ₸, израсходовав одну заявку из пятидесяти.
+    const invoiceIsWelcome =
+      opts.wantsInvoice === true ||
+      status.subscriptionActive ||
+      status.remainingFree <= INVOICE_HINT_THRESHOLD;
+
+    if (kaspiBillerActive() && !invoiceIsWelcome) {
+      await this.whatsapp.sendText(
+        phone,
+        `${body}\n\n` +
+          (lang === "kk"
+            ? "Лимит таусылғанда шотты өзіміз жібереміз. Ертерек төлегіңіз келсе — «шот» деп жазыңыз."
+            : "Когда бесплатные закончатся, счёт пришлём сами. Захотите оплатить заранее — напишите «счёт»."),
+      );
+      return;
+    }
+
     if (kaspiBillerActive()) {
       const invoice = await this.billing.issueInvoice(authUser.profileId);
       const url = kaspiPayUrl(invoice.number, invoice.amountTenge);
@@ -1687,20 +1754,37 @@ export class WhatsAppRouterService {
     text: string,
     lang: Language,
   ): Promise<boolean> {
-    if (looksLikeQuestion(text) && !AGREED_RE.test(text) && !DECLINED_RE.test(text)) return false;
+    // Жалоба на недозвон проходит проверку на вопрос: «почему клиент не
+    // берёт трубку?» — это ровно та же ситуация, что и утвердительное «не
+    // берут телефон», и отвечать на неё общими словами нельзя.
+    const unreachable = CLIENT_UNREACHABLE_RE.test(text);
+    if (looksLikeQuestion(text) && !unreachable && !AGREED_RE.test(text) && !DECLINED_RE.test(text)) return false;
 
     const order = await this.openOrderFor(supplier.id);
     if (!order) return false;
 
-    const agreed = AGREED_RE.test(text);
-    const declined = !agreed && DECLINED_RE.test(text);
-    const outcome = agreed ? "agreed" : declined ? "declined" : "comment";
+    // Недозвон важнее согласия: «взял, но не берут телефон» — это не сделка,
+    // а просьба о помощи, и владельцу нужно узнать о ней сегодня.
+    const agreed = !unreachable && AGREED_RE.test(text);
+    const declined = !unreachable && !agreed && DECLINED_RE.test(text);
+    const outcome = unreachable ? "unreachable" : agreed ? "agreed" : declined ? "declined" : "comment";
 
     await this.prisma.supplierOrderReply.create({
       data: { orderId: order.id, supplierId: supplier.id, text: text.trim(), outcome },
     });
 
     const n = order.number;
+    if (unreachable) {
+      await this.newOrderAlert.alertOrderProblem(order.id, n, phone, text);
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? `№${n} өтінім бойынша клиент жауап бермейтінін жазып алдым. Иесіне бердім — клиентпен байланысып, сізге жазамыз.`
+          : `Записал по заявке №${n}: клиент не отвечает. Передал владельцу — свяжемся с клиентом и напишем вам.`,
+      );
+      return true;
+    }
+
     const reply = agreed
       ? lang === "kk"
         ? `Жақсы, №${n} өтінім бойынша белгіледім. Бірдеңе өзгерсе — жазыңыз.`
@@ -1809,6 +1893,34 @@ export class WhatsAppRouterService {
     lang: Language,
   ): Promise<void> {
     const clean = text.trim();
+
+    // «Астана» человеку, у которого Астана уже указана.
+    //
+    // Заметка профиля для того, чего мы ещё не знаем. Город, который и так
+    // стоит в зоне работы, добавляет к профилю ноль, но человек получает
+    // «Записал» и «учтём при подборе» — и справедливо решает, что его зону
+    // работы только что изменили. Бердижан, 9 сентября, написал город,
+    // указанный при регистрации получасом раньше.
+    //
+    // Проверяем именно остаток фразы: «Астана, есть манипулятор» несёт новое
+    // и должно сохраниться целиком.
+    const already = new Set(supplier.serviceAreas.map((a) => a.city.toLowerCase()));
+    const mentioned = findCitiesInText(clean);
+    if (
+      mentioned.length > 0 &&
+      mentioned.every((c) => already.has(c.name.ru.toLowerCase())) &&
+      !cityLeftover(clean, mentioned)
+    ) {
+      const names = mentioned.map((c) => c.name[lang]).join(", ");
+      await this.whatsapp.sendText(
+        phone,
+        lang === "kk"
+          ? `${names} сіздің профиліңізде тұр — сол жақтағы өтінімдер сізге келеді.\nҚала қосу үшін «профиль» деп жазыңыз.`
+          : `${names} у вас уже указан — заявки оттуда вам приходят.\nЧтобы добавить ещё город, напишите «профиль».`,
+      );
+      return;
+    }
+
     // Накапливаем: люди пишут о себе в несколько сообщений подряд, и второе
     // не должно затирать первое. Ограничение — чтобы одна залипшая клавиатура
     // не превратила поле в мегабайт текста.
@@ -2039,7 +2151,7 @@ export class WhatsAppRouterService {
           `Категории: ${cats || "не выбраны"}\n` +
           `Города: ${cities || "не указаны"}\n` +
           aboutLine +
-          `Уведомлений за месяц: ${used} из ${free} бесплатных\n` +
+          `Бесплатные заявки: использовано ${used} из ${free}\n` +
           `Рассылка: ${paused ? "отключена" : "включена"}\n\n` +
           `«поставщик» — изменить категории и города\n` +
           `«баланс» — подписка\n` +
@@ -2306,6 +2418,16 @@ export class WhatsAppRouterService {
             await this.replyAboutOpenOrders(phone, supplier, lang);
             return;
           }
+
+          // Ответ по конкретной заявке — исход сделки. Самое ценное, что
+          // сервис слышит от исполнителя, и единственный способ понять,
+          // закрылась ли заявка.
+          //
+          // Вызов пропал 2 сентября (cc90cda): ветку вопроса о заявках
+          // вставили НА его место, а не рядом. С тех пор ни один ответ по
+          // заявке не записывался — Бердижан, 9 сентября, «Не берут телефон»
+          // по заявке №173 ушло в описание техники, заявка осталась висеть.
+          if (await this.recordOrderReply(phone, supplier, text, lang)) return;
 
           // Спросил про заявки — отвечаем, а не записываем в профиль.
           //

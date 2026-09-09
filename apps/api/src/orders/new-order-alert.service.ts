@@ -100,6 +100,53 @@ export class NewOrderAlertService {
   }
 
   /**
+   * Исполнитель не может дозвониться до клиента.
+   *
+   * Единственный участник, который может это разрешить, — владелец: у бота
+   * нет способа заставить клиента взять трубку, а исполнитель уже сделал всё,
+   * что мог. Бердижан, 9 сентября, заявка №173: «Не берут телефон» — и тишина
+   * в ответ, потому что реплика осела в описании техники.
+   *
+   * Телефон клиента достаём так же, как в build(): у заявки из WhatsApp он
+   * появляется только при публикации, а до этого лежит в сессии.
+   */
+  async alertOrderProblem(
+    orderId: string,
+    orderNumber: number,
+    supplierPhone: string,
+    text: string,
+  ): Promise<void> {
+    if (!this.recipient) return;
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        include: { client: { include: { user: true } } },
+      });
+      const sessionPhone = await this.prisma.whatsAppSession
+        .findFirst({ where: { currentOrderId: orderId }, select: { phone: true } })
+        .then((s) => s?.phone);
+      const clientPhone = order?.client?.user.phone ?? sessionPhone ?? null;
+      const said = text.replace(/\ns+/g, " ").slice(0, 200);
+
+      const lines = [`📵 Заявка №${orderNumber}: исполнитель не может связаться с клиентом`, ""];
+      lines.push(`Исполнитель: ${supplierPhone}`);
+      lines.push(`Написал: «${said}»`);
+      lines.push("");
+      if (clientPhone) {
+        lines.push(`Клиент: ${clientPhone}`);
+        lines.push(`Позвонить: https://wa.me/${clientPhone.replace(/\nD/g, "")}`);
+      } else {
+        lines.push("Телефона клиента в заявке нет — смотрите в админке.");
+      }
+      lines.push("");
+      lines.push("Исполнителю ответили, что передали вам. Заявка остаётся опубликованной.");
+      await this.whatsapp.sendText(this.recipient, lines.join("\n"));
+    } catch (err) {
+      this.logger.error(`Оповещение о недозвоне не ушло: ${(err as Error).message}`);
+    }
+  }
+
+  /**
    * Пять подстановок утверждённого шаблона owner_new_order_ru:
    * номер, категория, город, телефон клиента, первая фраза.
    *

@@ -145,7 +145,7 @@ const CITY_MARKERS = new Set([
 ]);
 
 /** Слово из фразы, оставшееся после того, как из неё вынули найденный город. */
-function cityLeftover(chunk: string, found: CityEntry[]): string {
+export function cityLeftover(chunk: string, found: CityEntry[]): string {
   const heads = found.flatMap((c) => [c.name.ru, c.name.kk, ...c.aliases]).map((f) => normalizeCityInput(f).slice(0, 4));
   const rest = chunk
     .split(/[\s,]+/)
