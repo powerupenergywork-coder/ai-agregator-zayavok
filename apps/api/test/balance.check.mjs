@@ -70,11 +70,20 @@ const src = readCompiled("whatsapp/whatsapp-router.service.js");
     svc.whatsapp = { sendText: async (_p, body) => sent.push(body) };
     svc.logger = { log() {}, warn() {}, error() {} };
     svc.authOtp = { getOrCreateSupplierAuthUser: async () => ({ profileId: "p1" }) };
+    // invoicePayload — единственная точка, где счёт выставляется и (при
+    // включённом Tole) уходит человеку. Считаем её вызовы: счёт, которого не
+    // должно быть, здесь и не появится.
     svc.billing = {
       getStatus: async () => status,
-      issueInvoice: async () => {
+      invoicePayload: async () => {
         issued.push(1);
-        return { number: "KT-1", amountTenge: 10000, expiresAt: new Date("2026-09-16") };
+        return {
+          invoiceNumber: "12345678",
+          priceTenge: 10000,
+          periodDays: 30,
+          kaspiServiceName: "KerekTap",
+          supportPhone: "+7 778 709 8251",
+        };
       },
     };
     return { svc, sent, issued };

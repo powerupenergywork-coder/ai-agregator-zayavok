@@ -3,8 +3,9 @@ import { Cron } from "@nestjs/schedule";
 import { randomInt, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
+import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled, toleActive } from "../config/env";
 import { PAYMENT_PROVIDER, PaymentProvider } from "./payment-provider.interface";
+import { ToleBillerService } from "./tole-biller.service";
 
 interface SubscriptionLike {
   status: string;
@@ -18,6 +19,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly toleBiller: ToleBillerService,
     @Inject(PAYMENT_PROVIDER) private readonly payment: PaymentProvider,
   ) {}
 
@@ -109,6 +111,132 @@ export class BillingService {
         expiresAt: new Date(now.getTime() + env.invoiceValidDays * 24 * 60 * 60 * 1000),
       },
     });
+  }
+
+  /**
+   * Счёт и способ его оплаты — одним куском для шаблона сообщения.
+   *
+   * Три места шлют человеку счёт: лимит исчерпан, подписка заканчивается,
+   * подписка закончилась. Способ оплаты у них обязан быть один и тот же, а
+   * был переписан заново в каждом — поэтому он здесь, а не там.
+   *
+   * Когда включён Tole, счёт ещё и уходит в приложение Kaspi исполнителя
+   * прямо отсюда. Если выставить не удалось, в сообщении останется телефон
+   * поддержки: номер счёта, который нигде не оплатить, хуже, чем его
+   * отсутствие — ровно это сейчас и происходит у биллера, которого Kaspi
+   * так и не запустил.
+   */
+  async invoicePayload(supplierId: string, phone: string): Promise<Record<string, unknown>> {
+    const invoice = await this.issueInvoice(supplierId);
+
+    if (toleActive()) {
+      const delivered = await this.toleBiller.deliverInvoice(invoice, phone);
+      return delivered
+        ? {
+            toleInvoice: true,
+            priceTenge: invoice.amountTenge,
+            periodDays: invoice.periodDays,
+            supportPhone: env.supportPhone,
+          }
+        : { supportPhone: env.supportPhone };
+    }
+
+    return {
+      invoiceNumber: invoice.number,
+      payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
+      kaspiServiceName: env.kaspiServiceName,
+      priceTenge: invoice.amountTenge,
+      periodDays: invoice.periodDays,
+      supportPhone: env.supportPhone,
+    };
+  }
+
+  /**
+   * Событие вебхука Tole.
+   *
+   * Идентификатора платежа в теле события нет — по их же схеме, — поэтому
+   * событие здесь только повод сверить открытые счета. Повтор отбивается
+   * первичным ключом: Tole доставляет событие, пока не получит 2xx.
+   */
+  async handleToleEvent(event: { id: string; type: string; data: unknown }): Promise<void> {
+    const seen = await this.prisma.tolePaymentEvent.findUnique({ where: { id: event.id } });
+    if (seen) {
+      this.logger.log(`Событие Tole ${event.id} уже обработано, пропускаю`);
+      return;
+    }
+    await this.prisma.tolePaymentEvent.create({
+      data: { id: event.id, type: event.type, payload: (event.data ?? {}) as never },
+    });
+    // Возвраты и отмены сверка тоже увидит, но подписку по ним не трогаем:
+    // деньги вернулись — разбирается человек, а не автомат.
+    if (!event.type.startsWith("payment.")) return;
+    await this.reconcileToleInvoices();
+  }
+
+  /**
+   * Сверка открытых счетов Tole: кто заплатил, пока мы не смотрели.
+   *
+   * Это основной путь зачисления, а не запасной. Вебхук — только сигнал
+   * «пора посмотреть»; потерянный вебхук означает задержку до следующей
+   * сверки, а не потерянные деньги.
+   */
+  @Cron("*/10 * * * *")
+  async reconcileToleInvoices(): Promise<number> {
+    // Условие про ключ, а не про TOLE_ENABLED. Флаг решает, выставлять ли НОВЫЕ
+    // счета; уже выставленный человек может оплатить и на следующий день после
+    // того, как мы вернулись к биллеру, — эти деньги обязаны дойти.
+    if (!env.toleApiKey) return 0;
+
+    const open = await this.prisma.subscriptionInvoice.findMany({
+      where: { provider: "tole", status: "PENDING", expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+
+    let paid = 0;
+    for (const invoice of open) {
+      try {
+        // Счёт, про который Tole ответил «ещё выполняется»: сначала узнаём,
+        // чем кончилось, иначе сверять нечего.
+        const externalId = invoice.externalId ?? (await this.toleBiller.resolveCommand(invoice));
+        if (!externalId) continue;
+
+        const state = await this.toleBiller.paymentStatus(externalId);
+        if (!state?.paid) continue;
+        if (await this.applyTolePayment(invoice, state.amountTenge)) paid++;
+      } catch (err) {
+        this.logger.error(`Сверка счёта №${invoice.number} не удалась: ${(err as Error).message}`);
+      }
+    }
+    if (paid) this.logger.log(`Сверка Tole: зачтено платежей — ${paid}`);
+    return paid;
+  }
+
+  /**
+   * Зачесть оплаченный счёт Tole.
+   *
+   * Условие `status: "PENDING"` в updateMany — это замок, а не проверка
+   * перед записью: сверка по расписанию и сверка по вебхуку могут идти
+   * одновременно, и без него один платёж продлил бы подписку дважды.
+   */
+  private async applyTolePayment(
+    invoice: { id: string; number: string; supplierId: string; amountTenge: number; periodDays: number },
+    paidTenge: number,
+  ): Promise<boolean> {
+    const claimed = await this.prisma.subscriptionInvoice.updateMany({
+      where: { id: invoice.id, status: "PENDING" },
+      data: { status: "PAID", paidAt: new Date(), paidAmountTenge: paidTenge },
+    });
+    if (claimed.count === 0) return false;
+
+    // Дней столько, за сколько заплатили — как у биллера. Сумму называем мы,
+    // но если дойдёт другая, оба простых варианта плохи: отказать после
+    // списания или подарить полный период за половину денег.
+    const perDay = invoice.amountTenge / invoice.periodDays;
+    const days = Math.max(1, Math.floor(paidTenge / perDay));
+    await this.extendSubscription(invoice.supplierId, days, "tole");
+    this.logger.log(`Счёт №${invoice.number} оплачен через Tole: ${paidTenge} ₸, ${days} дн.`);
+    return true;
   }
 
   /**
@@ -206,18 +334,12 @@ export class BillingService {
     // Ссылка остаётся для провайдеров со шлюзом. А пока оплаты нет совсем,
     // не шлём ни того ни другого: единственная существующая ссылка ведёт на
     // /billing/mock-confirm, то есть раздаёт платную подписку даром.
-    if (kaspiBillerActive()) {
-      const invoice = await this.issueInvoice(supplierId);
+    if (kaspiBillerActive() || toleActive()) {
       await this.notifications.send({
         event: "quota_exceeded",
         payload: {
           freeQuota: env.freeNotificationsPerMonth,
-          invoiceNumber: invoice.number,
-          payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
-          kaspiServiceName: env.kaspiServiceName,
-          priceTenge: invoice.amountTenge,
-          periodDays: invoice.periodDays,
-          supportPhone: env.supportPhone,
+          ...(await this.invoicePayload(supplierId, phone)),
         },
         recipientPhone: phone,
         supplierId,
@@ -268,7 +390,6 @@ export class BillingService {
     });
     for (const sub of expiring) {
       try {
-        const invoice = await this.issueInvoice(sub.supplierId);
         await this.prisma.supplierSubscription.update({
           where: { id: sub.id },
           data: { expiryNoticeAt: now },
@@ -277,12 +398,7 @@ export class BillingService {
           event: "subscription_expiring",
           payload: {
             expiresAt: sub.currentPeriodEnd!.toLocaleDateString("ru-RU"),
-            invoiceNumber: invoice.number,
-            payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
-            kaspiServiceName: env.kaspiServiceName,
-            priceTenge: invoice.amountTenge,
-            periodDays: invoice.periodDays,
-            supportPhone: env.supportPhone,
+            ...(await this.invoicePayload(sub.supplierId, sub.supplier.user.phone)),
           },
           recipientPhone: sub.supplier.user.phone,
           supplierId: sub.supplierId,
@@ -304,17 +420,11 @@ export class BillingService {
           where: { id: sub.id },
           data: { status: "EXPIRED" },
         });
-        const invoice = await this.issueInvoice(sub.supplierId);
         await this.notifications.send({
           event: "subscription_expired",
           payload: {
             freeQuota: env.freeNotificationsPerMonth,
-            invoiceNumber: invoice.number,
-            payUrl: kaspiPayUrl(invoice.number, invoice.amountTenge),
-            kaspiServiceName: env.kaspiServiceName,
-            priceTenge: invoice.amountTenge,
-            periodDays: invoice.periodDays,
-            supportPhone: env.supportPhone,
+            ...(await this.invoicePayload(sub.supplierId, sub.supplier.user.phone)),
           },
           recipientPhone: sub.supplier.user.phone,
           supplierId: sub.supplierId,

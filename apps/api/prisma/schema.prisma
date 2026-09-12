@@ -630,10 +630,43 @@ model SubscriptionInvoice {
   /// платёж по счёту годичной давности с давно неактуальной ценой.
   expiresAt   DateTime
   paidAt      DateTime?
+  /// Сколько реально заплатили. У биллера сумма приходит в платеже, у Tole —
+  /// в платёжном намерении; в обоих случаях она может отличаться от счёта.
+  paidAmountTenge Int?
+  /// Кто выставил счёт: kaspi — номер счёта в «Платежах», tole — счёт сам
+  /// прилетел в приложение Kaspi на телефон исполнителя.
+  provider    String          @default("kaspi")
+  /// Идентификатор операции в Tole. По нему сверяется оплата.
+  externalId  String?         @unique
+  /// Команда Tole, ответившая 202. Нужна, чтобы довести до конца создание
+  /// счёта, про которое неизвестно, состоялось оно или нет.
+  externalCommandId String?
   createdAt   DateTime        @default(now())
   payments    KaspiPayment[]
+  toleEvents  TolePaymentEvent[]
 
   @@index([supplierId, status])
+  @@index([provider, status])
+}
+
+/// Событие вебхука Tole.
+///
+/// Хранится ради идемпотентности: Tole повторяет доставку, пока не получит
+/// 2xx, и одно и то же событие приходит не раз. Идентификатор события — наш
+/// первичный ключ, поэтому повтор отбивается базой, а не проверкой в коде.
+///
+/// Тело события по схеме Tole не содержит идентификатора платежа, поэтому
+/// событие здесь — только сигнал «пора сверить», а истина берётся из
+/// платёжного намерения.
+model TolePaymentEvent {
+  id          String               @id
+  type        String
+  invoiceId   String?
+  invoice     SubscriptionInvoice? @relation(fields: [invoiceId], references: [id])
+  payload     Json
+  createdAt   DateTime             @default(now())
+
+  @@index([createdAt])
 }
 
 /// Что поставщик написал про конкретную заявку после того, как получил её.

@@ -11,9 +11,10 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { toLang } from "../common/language.util";
 import { normalizePhone } from "../common/phone.util";
-import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled } from "../config/env";
+import { env, kaspiBillerActive, paymentsEnabled, toleActive } from "../config/env";
 import { OrdersService, ChatTurnResponse } from "../orders/orders.service";
 import { NewOrderAlertService } from "../orders/new-order-alert.service";
+import { howToPay } from "../notifications/notification-templates";
 import { AdClickService } from "../analytics/ad-click.service";
 import { OrderCompletionOutcome } from "../orders/dto/complete-order.dto";
 import { readyForReviewMessage } from "../orders/order-derive.util";
@@ -1261,20 +1262,17 @@ export class WhatsAppRouterService {
       return;
     }
 
-    if (kaspiBillerActive()) {
-      const invoice = await this.billing.issueInvoice(authUser.profileId);
-      const url = kaspiPayUrl(invoice.number, invoice.amountTenge);
-      await this.whatsapp.sendText(
-        phone,
-        `${body}\n\n` +
-          (lang === "kk"
-            ? `Шот №${invoice.number} — ${invoice.amountTenge} ₸.\n` +
-              (url ? `Төлеу: ${url}\nНемесе қолмен: ` : "") +
-              `Kaspi.kz → Төлемдер → «${env.kaspiServiceName}» → шот нөмірі: ${invoice.number}\nШотты кез келген адам төлей алады.`
-            : `Счёт №${invoice.number} — ${invoice.amountTenge} ₸.\n` +
-              (url ? `Оплатить: ${url}\nИли вручную: ` : "") +
-              `Kaspi.kz → Платежи → «${env.kaspiServiceName}» → номер счёта: ${invoice.number}\nСчёт может оплатить кто угодно.`),
-      );
+    if (kaspiBillerActive() || toleActive()) {
+      // Тот же текст, что и в напоминаниях о лимите и об окончании
+      // подписки. Раньше он был написан здесь отдельно и уже разошёлся с
+      // ними: человек видел два разных объяснения одной и той же оплаты.
+      //
+      // С включённым Tole этот же вызов и отправляет счёт в приложение
+      // Kaspi исполнителя — то есть «баланс» с просьбой о счёте делает
+      // ровно то, о чём просили, а не показывает номер, который некуда
+      // отнести.
+      const pay = await this.billing.invoicePayload(authUser.profileId, phone);
+      await this.whatsapp.sendText(phone, `${body}\n\n` + howToPay(pay, lang));
       return;
     }
 

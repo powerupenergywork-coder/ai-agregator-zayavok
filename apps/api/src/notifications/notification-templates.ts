@@ -28,6 +28,42 @@ export type NotificationEvent =
   | "prospect_outreach"
   | "supplier_cold_invite";
 
+/**
+ * Как заплатить. Один и тот же абзац в трёх сообщениях: лимит исчерпан,
+ * подписка заканчивается, подписка закончилась.
+ *
+ * Способов три, и они не сводятся друг к другу. Счёт Tole сам прилетает в
+ * приложение Kaspi на номер исполнителя — номер счёта ему не нужен и только
+ * путает. У биллера наоборот: номер счёта — это всё, что есть, зато
+ * оплатить его может кто угодно. А когда платить нечем, единственный
+ * честный ответ — телефон живого человека.
+ *
+ * Раньше эти три ветки были переписаны в каждом шаблоне заново, и когда
+ * добавился четвёртый способ, менять пришлось бы в шести местах.
+ */
+export function howToPay(p: any, lang: Language): string {
+  if (p.toleInvoice) {
+    return lang === "kk"
+      ? `Шот ${p.priceTenge} ₸ — ${p.periodDays} күнге — Kaspi қосымшаңызға жіберілді.\nKaspi.kz ашып, төлемді растаңыз.\nСұрақтар: ${p.supportPhone}`
+      : `Счёт на ${p.priceTenge} ₸ за ${p.periodDays} дней отправлен в ваше приложение Kaspi.\nОткройте Kaspi.kz и подтвердите оплату.\nВопросы: ${p.supportPhone}`;
+  }
+  if (p.invoiceNumber) {
+    return lang === "kk"
+      ? `Шот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.\n` +
+          (p.payUrl ? `Төлеу: ${p.payUrl}\nНемесе қолмен: ` : "Төлеу: ") +
+          `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірі: ${p.invoiceNumber}\n\nШотты кез келген адам төлей алады — нөмірін жіберсеңіз болғаны.\nСұрақтар: ${p.supportPhone}`
+      : `Счёт №${p.invoiceNumber} — ${p.priceTenge} ₸ за ${p.periodDays} дней.\n` +
+          (p.payUrl ? `Оплатить: ${p.payUrl}\nИли вручную: ` : "Оплата: ") +
+          `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → номер счёта: ${p.invoiceNumber}\n\nСчёт может оплатить кто угодно — достаточно переслать ему этот номер.\nВопросы: ${p.supportPhone}`;
+  }
+  if (p.paymentUrl) {
+    return lang === "kk"
+      ? `Жазылым рәсімдеу: ${p.paymentUrl}`
+      : `Оформить подписку: ${p.paymentUrl}`;
+  }
+  return lang === "kk" ? `Бізге жазыңыз: ${p.supportPhone}` : `Напишите нам: ${p.supportPhone}`;
+}
+
 const templates: Record<NotificationEvent, (p: any, lang: Language) => string> = {
   // Sent from the web flow before publishing actually happens — requires an
   // explicit tap on the attached button (or, with no WhatsApp, a fallback
@@ -116,21 +152,9 @@ ${p.categoryName}, ${p.city}`,
   // формулировать вопрос он не может, тот зависит от категории.
   draft_nudge: (p) => `${p.head}\n${p.tail}\n\n${p.question}`,
   quota_exceeded: (p, lang) =>
-    p.invoiceNumber
-      ? lang === "kk"
-        ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды.\n\nШот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.\n` +
-          (p.payUrl ? `Төлеу: ${p.payUrl}\n\nНемесе қолмен: ` : "Төлеу: ") +
-          `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірін енгізіңіз: ${p.invoiceNumber}\n\nШотты кез келген адам төлей алады — нөмірін жіберсеңіз болғаны.\nСұрақтар: ${p.supportPhone}`
-        : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан.\n\nСчёт №${p.invoiceNumber} — ${p.priceTenge} ₸ за ${p.periodDays} дней.\n` +
-          (p.payUrl ? `Оплатить: ${p.payUrl}\n\nИли вручную: ` : "Оплата: ") +
-          `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → введите номер счёта: ${p.invoiceNumber}\n\nСчёт может оплатить кто угодно — достаточно переслать ему этот номер.\nВопросы: ${p.supportPhone}`
-      : p.paymentUrl
-        ? lang === "kk"
-          ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды. Өтінімдерді алуды жалғастыру үшін жазылым рәсімдеңіз: ${p.paymentUrl}`
-          : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан. Оформите подписку, чтобы продолжать получать заявки: ${p.paymentUrl}`
-        : lang === "kk"
-          ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды. Өтінімдерді алуды жалғастыру үшін бізге жазыңыз: ${p.supportPhone}`
-          : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан. Напишите нам, чтобы продолжать получать заявки: ${p.supportPhone}`,
+    (lang === "kk"
+      ? `Осы айдағы тегін өтінім лимиті (${p.freeQuota}) таусылды.\n\n`
+      : `Бесплатный лимит заявок в этом месяце (${p.freeQuota}) исчерпан.\n\n`) + howToPay(p, lang),
   // Дата окончания важнее числа дней: при продлении дни считаются от конца
   // текущего периода, и «на 30 дней» без даты человек прочитает как «с
   // сегодня», а это на неделю раньше правды.
@@ -143,48 +167,21 @@ ${p.categoryName}, ${p.city}`,
   // прикладываем сразу — «продлите подписку» без номера счёта это задача,
   // которую человек отложит и забудет.
   subscription_expiring: (p, lang) =>
-    lang === "kk"
-      ? `Жазылымыңыз ${p.expiresAt} аяқталады.
-
-Жалғастыру үшін шот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.
-` +
-        (p.payUrl ? `Төлеу: ${p.payUrl}
-Немесе қолмен: ` : "Төлеу: ") +
-        `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірі: ${p.invoiceNumber}
-
-Күндер қалған мерзімге қосылады — ерте төлесеңіз де ештеңе жоғалтпайсыз.`
-      : `Ваша подписка заканчивается ${p.expiresAt}.
-
-Чтобы продлить — счёт №${p.invoiceNumber} на ${p.priceTenge} ₸ за ${p.periodDays} дней.
-` +
-        (p.payUrl ? `Оплатить: ${p.payUrl}
-Или вручную: ` : "Оплата: ") +
-        `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → номер счёта: ${p.invoiceNumber}
-
-Дни добавятся к остатку — заплатив заранее, вы ничего не теряете.`,
+    (lang === "kk"
+      ? `Жазылымыңыз ${p.expiresAt} аяқталады.\n\nЖалғастыру үшін:\n`
+      : `Ваша подписка заканчивается ${p.expiresAt}.\n\nЧтобы продлить:\n`) +
+    howToPay(p, lang) +
+    (lang === "kk"
+      ? "\n\nКүндер қалған мерзімге қосылады — ерте төлесеңіз де ештеңе жоғалтпайсыз."
+      : "\n\nДни добавятся к остатку — заплатив заранее, вы ничего не теряете."),
   // Второе сообщение существует потому, что первое могли не заметить, а
   // «заявки перестали приходить» человек замечает всегда — и должен сразу
   // видеть, что это не поломка и что с этим делать.
   subscription_expired: (p, lang) =>
-    lang === "kk"
-      ? `Жазылым аяқталды. Өтінімдер айына ${p.freeQuota} тегін лимитпен келеді.
-
-Шектеусіз алу үшін шот №${p.invoiceNumber} — ${p.priceTenge} ₸, ${p.periodDays} күнге.
-` +
-        (p.payUrl ? `Төлеу: ${p.payUrl}
-Немесе қолмен: ` : "Төлеу: ") +
-        `Kaspi.kz → Төлемдер → «${p.kaspiServiceName}» → шот нөмірі: ${p.invoiceNumber}
-
-Сұрақтар: ${p.supportPhone}`
-      : `Подписка закончилась. Заявки продолжат приходить, но по бесплатному лимиту — ${p.freeQuota} в месяц.
-
-Чтобы снова без ограничений — счёт №${p.invoiceNumber} на ${p.priceTenge} ₸ за ${p.periodDays} дней.
-` +
-        (p.payUrl ? `Оплатить: ${p.payUrl}
-Или вручную: ` : "Оплата: ") +
-        `Kaspi.kz → Платежи → «${p.kaspiServiceName}» → номер счёта: ${p.invoiceNumber}
-
-Вопросы: ${p.supportPhone}`,
+    (lang === "kk"
+      ? `Жазылым аяқталды. Өтінімдер айына ${p.freeQuota} тегін лимитпен келеді.\n\nШектеусіз алу үшін:\n`
+      : `Подписка закончилась. Заявки продолжат приходить, но по бесплатному лимиту — ${p.freeQuota} в месяц.\n\nЧтобы снова без ограничений:\n`) +
+    howToPay(p, lang),
   // Cold outreach to a phone that has never messaged the bot — we don't yet
   // know their language, so unlike every other template this one ignores
   // `lang` and always renders both blocks. See whatsapp-templates.ts for the

@@ -236,6 +236,28 @@ export const env = {
   // Отсчёт именно от конца: левые записи подделываются клиентом целиком.
   trustedProxyHops: num("TRUSTED_PROXY_HOPS", 0),
 
+  // ── Tole (tolepay.kz): счета Kaspi, пока банк молчит ────────────────────
+  //
+  // Сторонний сервис: он входит в наш Kaspi Business под ролью «Кассир» и
+  // выставляет удалённые счета от нашего имени. Не официальный API Kaspi —
+  // они сами это пишут, — поэтому включается отдельным флагом и живёт рядом
+  // с биллером, а не вместо него: когда Kaspi ответит по протоколу биллера,
+  // достаточно будет выключить TOLE_ENABLED.
+  toleEnabled: bool("TOLE_ENABLED", false),
+  toleBaseUrl: str("TOLE_BASE_URL", "https://api.tolepay.kz/v1"),
+  // tole_sk_test_v1… в песочнице, tole_sk_live_v1… на бою. Ключ определяет
+  // среду — отдельного переключателя у них нет.
+  toleApiKey: str("TOLE_API_KEY", ""),
+  // UUID подключения. В песочнице обязателен, на бою нужен только если
+  // подключений больше одного.
+  toleConnectionId: str("TOLE_CONNECTION_ID", ""),
+  // whsec_… — выдаётся один раз при создании вебхука и больше не показывается.
+  toleWebhookSecret: str("TOLE_WEBHOOK_SECRET", ""),
+  toleTimeoutMs: num("TOLE_TIMEOUT_MS", 15000),
+  // Насколько старое событие вебхука ещё принимаем. Перехваченное событие
+  // иначе оставалось бы годным вечно: подпись у него настоящая.
+  toleWebhookToleranceSeconds: num("TOLE_WEBHOOK_TOLERANCE_SECONDS", 300),
+
   // Защита от ботов: сколько запросов с одного адреса за окно.
   //
   // В настройках, а не в коде, потому что подобрать эти числа заранее нельзя:
@@ -321,10 +343,20 @@ export const env = {
  * поставщику значит раздать подписки даром.
  */
 export function paymentsEnabled(): boolean {
-  return env.kaspiBillerEnabled || env.paymentProvider !== "mock";
+  return env.kaspiBillerEnabled || toleActive() || env.paymentProvider !== "mock";
 }
 
 /** Оплата идёт внутри Kaspi: платёж создаёт банк, а не мы. */
+/**
+ * Выставляем ли счета через Tole.
+ *
+ * Ключ проверяется вместе с флагом: включённый TOLE_ENABLED без ключа дал бы
+ * исполнителю обещание счёта, который никуда не уйдёт.
+ */
+export function toleActive(): boolean {
+  return env.toleEnabled && !!env.toleApiKey;
+}
+
 export function kaspiBillerActive(): boolean {
   return env.kaspiBillerEnabled;
 }
