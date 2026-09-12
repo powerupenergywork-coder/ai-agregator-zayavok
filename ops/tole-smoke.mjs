@@ -13,24 +13,41 @@
  *
  * Живые счета этим скриптом не выставляются: все маршруты — /sandbox/*,
  * настоящий Kaspi при этом не вызывается.
+ *
+ * Если тестового ключа в кабинете нет, есть второй режим — только чтение:
+ *
+ *   TOLE_API_KEY=tole_sk_live_v1_… node ops/tole-smoke.mjs --read-only
+ *
+ * Он ходит боевым ключом, но исключительно методом GET: тариф, история
+ * операций. Ни одного счёта при этом не появляется — POST в этом режиме
+ * физически запрещён, а не «не вызывается по договорённости».
  */
 
 const BASE = process.env.TOLE_BASE_URL ?? "https://api.tolepay.kz/v1";
 const KEY = process.env.TOLE_API_KEY ?? "";
 const PHONE = process.env.TOLE_TEST_PHONE ?? "+77001234567";
 
+const READ_ONLY = process.argv.includes("--read-only");
+
 if (!KEY) {
-  console.error("Нет TOLE_API_KEY. Нужен тестовый ключ из кабинета Tole (tole_sk_test_v1…).");
+  console.error("Нет TOLE_API_KEY. Нужен ключ из кабинета Tole.");
   process.exit(1);
 }
-if (!KEY.includes("test")) {
-  console.error("Это боевой ключ. Смоук запускается только тестовым — иначе счёт уйдёт живому человеку.");
+if (!KEY.includes("test") && !READ_ONLY) {
+  console.error("Это боевой ключ. Полный смоук запускается только тестовым — иначе счёт уйдёт живому человеку.");
+  console.error("Проверить связь боевым ключом можно так: node ops/tole-smoke.mjs --read-only");
   process.exit(1);
 }
 
 let connectionId = process.env.TOLE_CONNECTION_ID ?? "";
 
 async function call(method, path, { body, idempotencyKey } = {}) {
+  // Запрет, а не договорённость: в режиме чтения любой изменяющий запрос —
+  // это ошибка скрипта, и лучше упасть здесь, чем выставить счёт живому
+  // человеку, который его не ждёт.
+  if (READ_ONLY && method !== "GET") {
+    throw new Error(`Режим только для чтения: ${method} ${path} запрещён`);
+  }
   const headers = { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" };
   if (connectionId) headers["X-Tole-Connection-Id"] = connectionId;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
@@ -51,6 +68,19 @@ async function call(method, path, { body, idempotencyKey } = {}) {
   console.log(JSON.stringify(json, null, 2).slice(0, 1200));
   console.log("");
   return { status: res.status, json };
+}
+
+if (READ_ONLY) {
+  console.log("Режим только для чтения: счета не выставляются.\n");
+  // Тариф — первое, обо что спотыкается интеграция: без активной подписки
+  // Tole отвечает 402 на первом же счёте.
+  await call("GET", "/billing/overview");
+  // История операций подтверждает, что ключ, подключение и их сторона
+  // сходятся: пустой список — нормальный ответ, важен код 200.
+  await call("GET", "/invoices/history?limit=5");
+  console.log("Если оба ответа 200 — ключ, подключение и связь в порядке.");
+  console.log("403 — не хватает прав ключу; 401 — ключ; 402 — тариф не оплачен.");
+  process.exit(0);
 }
 
 if (!connectionId) {
