@@ -8,10 +8,11 @@ import { ToleBillerService } from "./tole-biller.service";
 import { ToleWebhookController } from "./tole-webhook.controller";
 import { PaymentProviderModule } from "./payment-provider.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { OrdersModule } from "../orders/orders.module";
 import { AuthOtpModule } from "../auth-otp/auth-otp.module";
 
 @Module({
-  imports: [PaymentProviderModule, NotificationsModule, AuthOtpModule],
+  imports: [PaymentProviderModule, NotificationsModule, AuthOtpModule, OrdersModule],
   controllers: [BillingController, KaspiBillerController, ToleWebhookController],
   providers: [BillingService, KaspiBillerService, ToleClient, ToleBillerService],
   exports: [BillingService],

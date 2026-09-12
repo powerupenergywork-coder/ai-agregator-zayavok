@@ -6,6 +6,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { env, kaspiBillerActive, kaspiPayUrl, paymentsEnabled, toleActive } from "../config/env";
 import { PAYMENT_PROVIDER, PaymentProvider } from "./payment-provider.interface";
 import { ToleBillerService } from "./tole-biller.service";
+import { NewOrderAlertService } from "../orders/new-order-alert.service";
 
 interface SubscriptionLike {
   status: string;
@@ -20,6 +21,7 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly toleBiller: ToleBillerService,
+    private readonly ownerAlert: NewOrderAlertService,
     @Inject(PAYMENT_PROVIDER) private readonly payment: PaymentProvider,
   ) {}
 
@@ -316,7 +318,51 @@ export class BillingService {
       where: { id: supplierId, notificationsUsedThisMonth: { lt: env.freeNotificationsPerMonth } },
       data: { notificationsUsedThisMonth: { increment: 1 } },
     });
+    if (result.count > 0) await this.warnOwnerIfNearQuota(supplierId);
     return result.count > 0;
+  }
+
+  /**
+   * Сказать владельцу, что исполнитель подходит к бесплатному лимиту.
+   *
+   * Смысл предупреждения в запасе времени: когда лимит кончится, бот
+   * предложит платить, а подключить приём денег за один вечер не выйдет.
+   *
+   * Один раз на исполнителя в месяц. Замок — условие `quotaAlertAt: null`
+   * в самом updateMany: две заявки, дошедшие до порога одновременно, иначе
+   * дали бы два одинаковых сообщения. Отметка сбрасывается первого числа
+   * вместе со счётчиком.
+   *
+   * Ошибка здесь не должна остановить рассылку заявки: человек ждёт
+   * заказ, а не наше уведомление самим себе.
+   */
+  private async warnOwnerIfNearQuota(supplierId: string): Promise<void> {
+    if (env.quotaAlertThreshold <= 0) return;
+    try {
+      const claimed = await this.prisma.supplierProfile.updateMany({
+        where: {
+          id: supplierId,
+          quotaAlertAt: null,
+          notificationsUsedThisMonth: { gte: env.quotaAlertThreshold },
+        },
+        data: { quotaAlertAt: new Date() },
+      });
+      if (claimed.count === 0) return;
+
+      const supplier = await this.prisma.supplierProfile.findUniqueOrThrow({
+        where: { id: supplierId },
+        include: { user: true },
+      });
+      await this.ownerAlert.alertQuotaNearLimit({
+        companyName: supplier.companyName,
+        phone: supplier.user.phone,
+        used: supplier.notificationsUsedThisMonth,
+        quota: env.freeNotificationsPerMonth,
+      });
+      this.logger.log(`Владельцу сказано о лимите: ${supplierId}`);
+    } catch (err) {
+      this.logger.error(`Оповещение о лимите не удалось: ${(err as Error).message}`);
+    }
   }
 
   /** Rate-limited to once/day per supplier so a busy category doesn't spam them. */
@@ -442,8 +488,11 @@ export class BillingService {
   /** 1st of every month — resets everyone's free-tier counter. Active paid subscriptions are untouched (they run on their own 30-day clock). */
   @Cron("0 0 1 * *")
   async resetMonthlyQuotas(): Promise<void> {
+    // quotaAlertAt сбрасывается вместе со счётчиком: иначе предупреждение
+    // об исполнителе, дошедшем до порога однажды, больше не повторилось бы
+    // никогда.
     const result = await this.prisma.supplierProfile.updateMany({
-      data: { notificationsUsedThisMonth: 0, quotaResetAt: new Date() },
+      data: { notificationsUsedThisMonth: 0, quotaResetAt: new Date(), quotaAlertAt: null },
     });
     this.logger.log(`Monthly quota reset for ${result.count} suppliers`);
   }

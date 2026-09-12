@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { LocalizedText } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
-import { env } from "../config/env";
+import { env, kaspiBillerActive, toleActive } from "../config/env";
 import { WHATSAPP_PROVIDER, WhatsAppProvider } from "../whatsapp/whatsapp-provider.interface";
 
 /**
@@ -143,6 +143,42 @@ export class NewOrderAlertService {
       await this.whatsapp.sendText(this.recipient, lines.join("\n"));
     } catch (err) {
       this.logger.error(`Оповещение о недозвоне не ушло: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Исполнитель подходит к бесплатному лимиту.
+   *
+   * Это сообщение не про него, а про нас: когда лимит кончится, бот
+   * предложит платить, и к этому моменту деньги должно быть чем принять.
+   * Подключение тарифа и счетов занимает не час, поэтому предупреждаем за
+   * десяток заявок, а не в день исчерпания.
+   *
+   * Отдельной строкой — можем ли мы вообще выставить счёт прямо сейчас.
+   * Без неё владелец прочитает предупреждение как «всё под контролем».
+   */
+  async alertQuotaNearLimit(opts: {
+    companyName: string | null;
+    phone: string;
+    used: number;
+    quota: number;
+  }): Promise<void> {
+    if (!this.recipient) return;
+    try {
+      const who = opts.companyName?.trim() || opts.phone;
+      const canInvoice = kaspiBillerActive() || toleActive();
+      await this.whatsapp.sendText(
+        this.recipient,
+        `⚠️ Лимит на исходе: ${who}` +
+          "\n\n" +
+          `${opts.phone} — ${opts.used} из ${opts.quota} бесплатных заявок за месяц.` +
+          "\n\n" +
+          (canInvoice
+            ? "Когда лимит кончится, счёт уйдёт ему автоматически."
+            : "Принять оплату сейчас нечем: ни счёт Kaspi, ни Tole не включены. Успеть бы до конца лимита."),
+      );
+    } catch (err) {
+      this.logger.error(`Оповещение о лимите не ушло: ${(err as Error).message}`);
     }
   }
 

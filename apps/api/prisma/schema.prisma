@@ -171,6 +171,10 @@ model SupplierProfile {
   // See billing/billing.service.ts.
   notificationsUsedThisMonth Int                    @default(0)
   quotaResetAt               DateTime               @default(now())
+  /// Когда предупредили владельца, что этот исполнитель подходит к
+  /// бесплатному лимиту. Одно предупреждение на месяц: сбрасывается
+  /// вместе со счётчиком заявок первого числа.
+  quotaAlertAt          DateTime?
   lastQuotaReminderAt        DateTime?
   /// Что поставщик написал о себе своими словами: «У меня автокран 25тн,
   /// стрела 42 метра». Такой текст приходит в ответ на приглашение и раньше
