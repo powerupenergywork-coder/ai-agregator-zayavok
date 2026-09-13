@@ -28,7 +28,7 @@ jobs:
     name: Уязвимые зависимости
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -45,7 +45,7 @@ jobs:
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Правила по нашему коду: p/secrets — захардкоженные ключи, p/nodejs и
       # p/typescript — небезопасные паттерны бэкенда. p/default намеренно НЕ
       # берём: он тянет CI/Docker/nginx-гигиену (пины экшенов по SHA, USER в
@@ -81,7 +81,7 @@ jobs:
     name: Секреты в коде (Gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Вся история: секрет мог быть закоммичен и «убран» позже — в истории
           # он остаётся и остаётся утечкой.
