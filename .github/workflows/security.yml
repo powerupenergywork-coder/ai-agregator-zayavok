@@ -32,12 +32,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # Читает package-lock.json, установка не нужна. --omit=dev: в проде важны
-      # только рабочие зависимости; dev-инструменты в рантайм не попадают.
-      # Порог high: moderate на транзитивных пакетах слишком шумит и блокирует
-      # PR по мелочам — до high дорастём осознанно.
-      - name: npm audit
-        run: npm audit --omit=dev --audit-level=high
+      # audit-ci вместо голого npm audit — ради allowlist: известные и
+      # осознанно принятые транзитивы (audit-ci.jsonc) не краснят CI, всё
+      # остальное high/critical в рабочих зависимостях валит сборку. Порог и
+      # skip-dev заданы в конфиге.
+      - name: audit-ci
+        run: npx --yes audit-ci@^7 --config audit-ci.jsonc
 
   semgrep:
     name: Статический анализ (Semgrep)

@@ -17,9 +17,8 @@
     "docker:down": "docker compose down"
   },
   "overrides": {
-    "@nestjs/platform-express": {
-      "multer": "2.3.0"
-    },
-    "multer": "2.3.0"
+    "multer": "2.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }
