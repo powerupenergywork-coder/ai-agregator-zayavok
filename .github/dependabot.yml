@@ -1,0 +1,20 @@
+# Dependabot — бесплатные авто-PR на обновление уязвимых и устаревших пакетов.
+# Часть постоянного слоя безопасности (см. docs/security.md).
+version: 2
+updates:
+  # npm-зависимости монорепозитория. Корневой package-lock покрывает воркспейсы.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Мелкие обновления одним PR, чтобы не заваливать ревью.
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # Экшены в самих workflow тоже стареют и тоже бывают уязвимы.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

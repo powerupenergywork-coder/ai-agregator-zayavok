@@ -20,3 +20,7 @@ apps/api/uploads/*
 
 # Артефакт инкрементальной сборки tsc — появляется от tsc --noEmit
 *.tsbuildinfo
+
+# Отчёты локальных прогонов Strix
+strix_runs/
+.strix/

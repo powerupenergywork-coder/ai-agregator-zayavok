@@ -1,0 +1,189 @@
+# Strix — активный пентест стенда KerekTap. РУЧНОЙ запуск, не на каждый PR.
+#
+# Почему вручную: Strix гоняет платную LLM и на дешёвых аккаунтах упирается в
+# лимиты провайдера (TPM у OpenAI, in-flight budget у OpenRouter) — на каждый
+# PR это дорого и капризно. Постоянную защиту держит security.yml (бесплатные
+# статические сканеры без LLM). Strix — тяжёлая артиллерия по случаю: перед
+# крупным релизом или раз в квартал, с достаточным балансом провайдера.
+#
+# Запуск: вкладка Actions → strix-pentest → Run workflow.
+#
+# Strix поднимает свой Docker-sandbox и РЕАЛЬНО атакует цель, поэтому цель —
+# только одноразовый стенд в этом job, где WhatsApp/SMS/оплаты замоканы. Прод
+# сюда не попадает никогда: у него нет ни доступа из CI, ни ключей.
+#
+# Нужны два секрета репозитория (Settings → Secrets and variables → Actions):
+#   LLM_API_KEY — ключ провайдера модели (OpenAI sk-… или OpenRouter sk-or-…)
+#   STRIX_LLM   — имя модели, например openrouter/z-ai/glm-5.3 (дешевле) или
+#                 openai/gpt-5.4
+# Без них job не падает, а помечается пропущенным. Настройка и выбор модели —
+# docs/strix-security.md.
+
+name: strix-pentest
+
+on:
+  workflow_dispatch:
+
+# Один прогон на ветку: новый пуш отменяет предыдущий, чтобы не жечь бюджет
+# модели на устаревшем коде.
+concurrency:
+  group: strix-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Быстрый режим — минуты, а не часы: это проверка на каждый PR, а не полный
+  # аудит. Полный (deep) запускают вручную, см. docs/strix-security.md.
+  STRIX_SCAN_MODE: quick
+  # Потолок трат на модель за прогон, USD. Strix останавливается, дойдя до него.
+  STRIX_MAX_BUDGET: "3"
+  # Падает ли PR на найденных уязвимостях. Смысл проверки в том, чтобы падал;
+  # поставьте переменную репозитория STRIX_FAIL_ON_FINDINGS=false, чтобы на
+  # первых порах только собирать отчёт, не блокируя мерж.
+  FAIL_ON_FINDINGS: ${{ vars.STRIX_FAIL_ON_FINDINGS != 'false' }}
+  STRIX_TELEMETRY: "0"
+
+jobs:
+  pentest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: ai_zayavki
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      # Стенд смотрит на сервисы job по стандартным портам, а провайдеры —
+      # безопасные заглушки. Настоящих сообщений и списаний быть не может.
+      DATABASE_URL: postgresql://app:app@localhost:5432/ai_zayavki
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-only-not-a-secret
+      NODE_ENV: production
+      SMS_PROVIDER: console
+      AI_PROVIDER: mock
+      WHATSAPP_PROVIDER: console
+      PAYMENT_PROVIDER: mock
+      STORAGE_PROVIDER: local
+      API_PORT: "3001"
+      API_URL: http://localhost:3001
+      WEB_URL: http://localhost:3100
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Секреты модели заданы?
+        id: guard
+        run: |
+          if [ -z "${{ secrets.LLM_API_KEY }}" ] || [ -z "${{ secrets.STRIX_LLM }}" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::LLM_API_KEY или STRIX_LLM не заданы — пентест пропущен. См. docs/strix-security.md"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Установка зависимостей
+        if: steps.guard.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Сборка и миграции
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          npm run build -w packages/shared
+          npm run prisma:generate -w apps/api
+          npm run prisma:deploy -w apps/api
+          npm run build:only -w apps/api
+
+      - name: Поднять стенд
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          node apps/api/dist/main.js > api.log 2>&1 &
+          ( cd apps/web && npx next dev -H 0.0.0.0 -p 3100 > ../../web.log 2>&1 ) &
+          # Ждём, пока оба ответят, но не бесконечно.
+          for i in $(seq 1 40); do
+            api=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://localhost:3001/categories || echo 000)
+            web=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://localhost:3100/ || echo 000)
+            echo "[$i] api=$api web=$web"
+            if [ "$api" = "200" ] && [ "$web" = "200" ]; then echo "стенд готов"; exit 0; fi
+            sleep 3
+          done
+          echo "::error::Стенд не поднялся"; tail -30 api.log web.log; exit 1
+
+      - name: Установка Strix
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          curl -sSL https://strix.ai/install | bash
+          echo "$HOME/.strix/bin" >> "$GITHUB_PATH"
+
+      - name: Пентест
+        if: steps.guard.outputs.ready == 'true'
+        id: scan
+        env:
+          STRIX_LLM: ${{ secrets.STRIX_LLM }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          # Адрес хоста раннера, видимый из Docker-sandbox Strix: не localhost
+          # (внутри контейнера это он сам) и не host.docker.internal (на Linux
+          # не резолвится), а реальный IP интерфейса раннера.
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "Цель: $HOST_IP (api :3001, web :3100)"
+          set +e
+          strix -n \
+            --target "http://$HOST_IP:3001" \
+            --target "http://$HOST_IP:3100" \
+            --scan-mode "$STRIX_SCAN_MODE" \
+            --max-budget "$STRIX_MAX_BUDGET" \
+            --instruction-file ops/strix/instructions.md
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "Strix завершился с кодом $code (0 — чисто, 2 — есть находки, 1 — ошибка)"
+          exit 0
+
+      - name: Отчёт в артефакты
+        if: ${{ always() && steps.guard.outputs.ready == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: strix-report
+          path: strix_runs/
+          if-no-files-found: ignore
+
+      - name: Итог
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          code="${{ steps.scan.outputs.exit }}"
+          if [ "$code" = "1" ]; then
+            echo "::error::Strix не смог выполнить прогон (код 1) — смотрите лог шага «Пентест»"
+            exit 1
+          fi
+          if [ "$code" = "2" ]; then
+            if [ "${{ env.FAIL_ON_FINDINGS }}" = "true" ]; then
+              echo "::error::Найдены уязвимости — отчёт в артефакте strix-report"
+              exit 1
+            fi
+            echo "::warning::Найдены уязвимости, но блокировка выключена (STRIX_FAIL_ON_FINDINGS=false)"
+          fi
+          echo "Пентест пройден."

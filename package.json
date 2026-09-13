@@ -15,5 +15,11 @@
     "prisma:seed": "npm run prisma:seed -w apps/api",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down"
+  },
+  "overrides": {
+    "@nestjs/platform-express": {
+      "multer": "2.3.0"
+    },
+    "multer": "2.3.0"
   }
 }
