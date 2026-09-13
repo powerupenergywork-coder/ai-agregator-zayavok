@@ -93,6 +93,7 @@ function negatesCategory(text: string, categoryNameRu: string): boolean {
     .filter((w) => w.length >= 5)
     .map((w) => w.slice(0, 5));
   return stems.some((stem) =>
+    // nosemgrep  (stem из названия категории, не из ввода)
     new RegExp(`(^|\\s)не\\s+[а-яё]*${stem}|${stem}[а-яё]*\\s+не\\s*(пойд|подход|нужн|надо|та|то|тот)`, "i").test(text),
   );
 }

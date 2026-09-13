@@ -46,14 +46,16 @@ jobs:
       image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v4
-      # Наборы правил под наш стек. p/secrets ловит захардкоженные ключи в коде,
-      # остальные — небезопасные паттерны Node/TypeScript. --error: ненулевой
-      # код при находке, чтобы PR покраснел. SARIF кладём в артефакт всегда.
+      # Правила по нашему коду: p/secrets — захардкоженные ключи, p/nodejs и
+      # p/typescript — небезопасные паттерны бэкенда. p/default намеренно НЕ
+      # берём: он тянет CI/Docker/nginx-гигиену (пины экшенов по SHA, USER в
+      # Dockerfile, h2c в nginx) — полезно, но это отдельный инфраслой, а не
+      # уязвимости кода, и оно топило сигнал шумом. --error: ненулевой код при
+      # находке. SARIF кладём в артефакт всегда.
       - name: Semgrep scan
         run: |
           set +e
           semgrep scan \
-            --config p/default \
             --config p/secrets \
             --config p/nodejs \
             --config p/typescript \
@@ -91,6 +93,7 @@ jobs:
             | tar -xz gitleaks
           set +e
           ./gitleaks detect --source . --redact -v \
+            --config .gitleaks.toml \
             --report-format sarif --report-path gitleaks.sarif
           echo "code=$?" >> "$GITHUB_ENV"
       - name: Отчёт в артефакты

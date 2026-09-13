@@ -113,6 +113,7 @@ function mentions(text: string, keyword: string): boolean {
   // Ключ с квадратными скобками — короткое выражение, а не подстрока.
   // Граница слева проверяется тем же правилом, что и для обычных ключей.
   if (keyword.includes("[")) {
+    // nosemgrep  (regex из справочника категорий, не из пользовательского ввода)
     return new RegExp(`(^|[^a-zа-яёәғқңөұүһі])(${keyword})`, "i").test(text);
   }
   for (let from = 0; ; ) {
@@ -284,6 +285,7 @@ function extractDate(text: string): string | null {
 function extractNumber(text: string, unit?: string): number | null {
   if (/не знаю/.test(text)) return null; // handled as "unknown" via explicit chip, not free text
   const unitPattern = unit
+    // nosemgrep  (unit из описания поля категории, не из ввода)
     ? new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(?:${escapeRegex(unit)})`, "i")
     : null;
   if (unitPattern) {
