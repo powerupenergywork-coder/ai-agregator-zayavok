@@ -20,6 +20,7 @@ import {
   findCitiesInText,
   isQuestionNotAnswer,
   looksLikeCityAnswer,
+  looksLikeQuestion,
   resolveCity,
 } from "@ai-zayavki/shared";
 import { PrismaService } from "../prisma/prisma.service";
@@ -66,6 +67,34 @@ function looksInformative(text: string): boolean {
   if (t.length < 6) return false;
   const words = t.split(/\s+/).filter(Boolean);
   return words.length >= 3 || /\d/.test(t);
+}
+
+/**
+ * Длинное сообщение уходит в пояснение целиком, даже если из него что-то
+ * извлекли в поля. Заявка №179, 10 сентября: голосовое на минуту — тридцать
+ * мешков, кафель, девятый этаж, лифт работает; извлечение достало только
+ * город, и всё остальное пропало, потому что «что-то извлечено — значит
+ * сообщение использовано».
+ */
+const LONG_MESSAGE_CHARS = 80;
+
+/**
+ * Человек отказывается от категории, которую мы ему приписали.
+ *
+ * Заявка №186, 13 сентября: «пищевой мусор», потом «Не строительный» — и
+ * оба раза та же карточка «Вывоз строительного мусора». Ищем отрицание
+ * рядом с корнем слова из названия категории: «не строительный», «газель
+ * не пойдёт». Корень — первые пять букв, чтобы сошлись падежи.
+ */
+function negatesCategory(text: string, categoryNameRu: string): boolean {
+  const stems = categoryNameRu
+    .toLowerCase()
+    .split(/[\s,]+/)
+    .filter((w) => w.length >= 5)
+    .map((w) => w.slice(0, 5));
+  return stems.some((stem) =>
+    new RegExp(`(^|\\s)не\\s+[а-яё]*${stem}|${stem}[а-яё]*\\s+не\\s*(пойд|подход|нужн|надо|та|то|тот)`, "i").test(text),
+  );
 }
 
 /** Сколько пояснения храним. Исполнитель читает заявку с телефона, и простыня
@@ -185,18 +214,31 @@ export class OrdersService {
     lang: Language = "ru",
     opts: { fromPhoto?: boolean; questionAnswered?: boolean } = {},
   ): Promise<ChatTurnResponse> {
+    // Первая реплика клиента — момент, когда владельцу стоит о заявке узнать.
+    // Ждать публикации нельзя: заявки 102, 103 и 104 до неё не дошли, и в
+    // вечернюю сводку попали, когда звонить было уже поздно.
+    //
+    // Но оповещаем ПОСЛЕ разбора реплики, а не до: раньше владелец на каждую
+    // заявку читал «категория не определена, город не указан» — даже на
+    // «Нужен манипулятор, Астана», где определено и указано всё. Оба поля
+    // появляются в базе через секунду после сообщения; секунда того стоит.
+    const before = await this.prisma.chatMessage.count({ where: { orderId, role: "USER" } });
+    try {
+      return await this.chatTurn(orderId, message, lang, opts);
+    } finally {
+      if (before === 0) await this.newOrderAlert.alert(orderId, message);
+    }
+  }
+
+  private async chatTurn(
+    orderId: string,
+    message: string,
+    lang: Language,
+    opts: { fromPhoto?: boolean; questionAnswered?: boolean },
+  ): Promise<ChatTurnResponse> {
     const order = await this.getRawOrThrow(orderId);
     this.assertEditable(order);
     await this.prisma.chatMessage.create({ data: { orderId, role: "USER", content: message } });
-
-    // Первая реплика клиента — момент, когда владельцу стоит о заявке узнать.
-    // Считаем после записи, поэтому единица означает «эта реплика и есть
-    // первая». Ждать публикации нельзя: заявки 102, 103 и 104 до неё не
-    // дошли, и в вечернюю сводку попали, когда звонить было уже поздно.
-    const userMessages = await this.prisma.chatMessage.count({ where: { orderId, role: "USER" } });
-    if (userMessages === 1) {
-      await this.newOrderAlert.alert(orderId, message);
-    }
 
     let categoryRow = order.categoryId ? await this.categories.findByIdOrThrow(order.categoryId) : null;
     const categoryJustDetermined = !categoryRow;
@@ -224,6 +266,19 @@ export class OrdersService {
 
     const fields = categoryRow.fields as unknown as CategoryField[];
     const knownFields = (order.fieldsData ?? {}) as Record<string, unknown>;
+
+    // «Не строительный» — не уточнение, а отказ от категории, которую мы
+    // выбрали за человека. Гадать, какую он имел в виду, не надо: список
+    // короткий, пусть выберет сам. Только не на той реплике, по которой
+    // категорию только что определили: там «не» относится к чему-то ещё.
+    if (!categoryJustDetermined && negatesCategory(message, (categoryRow.name as unknown as LocalizedText).ru)) {
+      await this.appendDescription(orderId, message);
+      return this.respondNeedsCategoryPick(orderId, await this.categories.listForClassification(), lang);
+    }
+
+    // Карточка уже собрана и ждёт подтверждения. Всё, что человек пишет
+    // сюда словами, — уточнение к заявке, а не ответ на вопрос поля.
+    const atReview = !categoryJustDetermined && nextQuestionFields(fields, knownFields).length === 0;
 
     let extracted: Record<string, unknown> = {};
     try {
@@ -284,7 +339,23 @@ export class OrdersService {
     // Фраза, которую не принял ни один справочник, идёт в пояснение и оттуда
     // в рассылку исполнителям — вместо того чтобы пропасть.
     const gained = Object.keys(extracted).filter((k) => extracted[k] !== knownFields[k]);
-    if (informative && gained.length === 0 && !opts.fromPhoto) {
+    // Три случая, когда слова клиента обязаны дойти до исполнителя:
+    // — содержательная фраза, которую не принял ни один справочник;
+    // — длинное сообщение, из которого поля взяли только часть (№179:
+    //   голосовое про тридцать мешков и девятый этаж свелось к городу);
+    // — уточнение к готовой карточке. Заявка №188, 13 сентября: «Газель
+    //   непойдет», «Обьем большой» — два слова, ниже порога «содержательно»,
+    //   и карточка показывалась без изменений, пока бот не сдался с «я вас
+    //   не понимаю». Заявка ушла четырнадцати исполнителям без слова про
+    //   объём. На подтверждении порог не нужен: вопрос уже не задаётся, и
+    //   любой текст здесь — про заявку.
+    // Вопрос клиента исполнителю не нужен: «а сколько стоит?» в пояснении —
+    // шум. Кроме длинного: голосовое №179 начиналось с «сколько будет
+    // стоить», а дальше шли тридцать мешков и девятый этаж.
+    const long = message.trim().length >= LONG_MESSAGE_CHARS;
+    const question = looksLikeQuestion(message) && !long;
+    const clarification = atReview && message.trim().length >= 4;
+    if (!opts.fromPhoto && !question && ((informative && (gained.length === 0 || long)) || (clarification && gained.length === 0))) {
       await this.appendDescription(orderId, message);
     }
 
@@ -477,6 +548,16 @@ export class OrdersService {
         // вопрос про город: он всё равно идёт следующим.
         unknownCity = looksLikeCityAnswer(validatedFields.city) ? validatedFields.city : undefined;
         delete validatedFields.city;
+        // Город уже известен, а новое значение — не город: район, берег,
+        // ЖК. Заявка №179, 10 сентября: «Левый берег» из голосового затёр
+        // Астану, человек получил «Не узнал город Левый берег» и ушёл.
+        // Район — уточнение к городу, а не его замена: город оставляем,
+        // слова — в пояснение, исполнителю они как раз полезны.
+        if (typeof previousValues.city === "string" && previousValues.city) {
+          if (unknownCity) await this.appendDescription(orderId, unknownCity);
+          validatedFields.city = previousValues.city;
+          unknownCity = undefined;
+        }
       }
     }
     const progress = calculateProgressPercent(fields, validatedFields);

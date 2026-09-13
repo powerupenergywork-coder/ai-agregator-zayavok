@@ -96,7 +96,10 @@ const src = readCompiled("whatsapp/whatsapp-router.service.js");
     svc.whatsapp = { sendText: async (_p, body) => sent.push(body) };
     svc.logger = { log() {}, warn() {}, error() {} };
     svc.prisma = {
-      supplierOrderReply: { create: async ({ data }) => rows.push(data) },
+      supplierOrderReply: {
+        create: async ({ data }) => rows.push(data),
+        findFirst: async () => rows[rows.length - 1] ?? null,
+      },
       notificationLog: { findMany: async () => [{ orderId: "o173" }] },
       order: { findFirst: async () => ({ id: "o173", number: 173 }) },
     };
