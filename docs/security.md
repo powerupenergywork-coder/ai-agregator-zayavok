@@ -55,13 +55,17 @@ strix-pentest → Run workflow), не на каждый PR: гоняет пла�
   async-`params` уже были, нет middleware/route handlers/Radix): правок кода не
   потребовалось, 657 тестов API и рантайм веба зелёные. React 19 форсирован
   через `overrides` — иначе next тянул вложенный React 18.
-- **lodash** — единственная оставшаяся high, в allowlist (`audit-ci.jsonc`):
-  транзитив через `@nestjs/config`, напрямую не вызываем (`_.template` с
-  недоверенным вводом у нас нет). Уйдёт с апгрейдом Nest (`@nestjs/config@12`
-  тянет Nest 11 — отдельная задача, не срочная).
+- **Nest 10 → 11 + Express 4 → 5** — **сделано.** Обновлены `@nestjs/*` до 11.2.3
+  (throttler держит потолок 11, поэтому не 12), `config`/`schedule`/`bullmq` до
+  12 (обратно совместимы с 11), `@types/express` до 5 (Nest 11 несёт Express 5).
+  Правок кода не потребовалось: TypeScript компилируется чисто, 657 тестов и
+  рантайм API зелёные (роуты, вебхуки, throttler на Express 5 работают). Это
+  закрыло последнюю high — **lodash** (тянулся через старый `@nestjs/config`), и
+  четыре отложенных Dependabot-PR.
+- Активных high/critical в прод-зависимостях: **0**. `audit-ci.jsonc` — с пустым
+  allowlist.
 
-Порог CI — `high`, известные принятые исключения — в `audit-ci.jsonc` с
-причиной у каждого. Так `deps` зелёный на известном и краснеет только на новом.
+Порог CI — `high`. `deps` зелёный, краснеет только на новом.
 
 ## Инфра-замечания на потом (из Semgrep p/default)
 
