@@ -145,25 +145,12 @@ const ICONS: Record<string, React.ReactNode> = {
 };
 
 /**
- * Порядок ЖЁСТКО совпадает с t.landing.services в словарях ru/kk: иконка
- * берётся по тому же индексу. Добавляя услугу, добавьте её в оба словаря и
- * сюда — в одно и то же место, иначе у карточек разъедутся картинки.
+ * Ключ иконки хранится у самой услуги в словарях (t.landing.serviceGroups),
+ * а не в параллельном списке по индексу: раньше порядок двух списков
+ * приходилось держать в голове, и любая перестановка разъезжала картинки.
+ * Неизвестный ключ рисует фургон, а не ломает страницу.
  */
-export const SERVICE_ICON_KEYS = [
-  "crane_truck",
-  "crane",
-  "dump_truck",
-  "van",
-  "loaders",
-  "waste",
-  "aerial_platform",
-  "front_loader",
-  "spray",
-  "bolt",
-  "pipe",
-  "broom",
-  "tow",
-] as const;
+export type ServiceIconName = keyof typeof ICONS;
 
 export function ServiceIcon({ name, className = "" }: { name: string; className?: string }) {
   return (
