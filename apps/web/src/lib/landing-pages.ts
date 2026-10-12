@@ -21,6 +21,9 @@ export interface LandingCity {
 
 export const LANDING_CITIES: LandingCity[] = [
   { slug: "astana", name: "Астана", inCity: "в Астане" },
+  // Алматы открыт 13 октября 2026, когда туда загрузили 75 исполнителей.
+  // Название несклоняемое, поэтому предложный падеж совпадает с именительным.
+  { slug: "almaty", name: "Алматы", inCity: "в Алматы" },
 ];
 
 export interface LandingCategory {
@@ -28,6 +31,17 @@ export interface LandingCategory {
   slug: string;
   /** Слаг категории в базе: им создаётся заявка сразу нужного типа. */
   categorySlug: string;
+  /**
+   * Города, где показывается эта услуга, — слаги из LANDING_CITIES.
+   *
+   * Раньше страницы собирались как все категории × все города, и пока город
+   * был один, это совпадало с реальностью. С Алматы перестало: исполнители
+   * приходят туда неравномерно, манипуляторов и газелей уже по полтора
+   * десятка, а автокран один — страница под него собирала бы клики, на
+   * которые некому ответить. Город добавляется сюда, когда в нём набралось
+   * хотя бы с десяток исполнителей именно этой услуги.
+   */
+  cities: string[];
   /** Заголовок страницы, он же основной поисковый запрос. */
   h1: (city: LandingCity) => string;
   title: (city: LandingCity) => string;
@@ -49,6 +63,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "vyvoz-musora",
     categorySlug: "construction-waste",
+    cities: ["astana", "almaty"],
     h1: (c) => `Вывоз строительного мусора ${c.inCity}`,
     title: (c) => `Вывоз строительного мусора ${c.inCity} — заявка за минуту | KerekTap`,
     description: (c) =>
@@ -65,6 +80,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "samosval",
     categorySlug: "dump-truck",
+    cities: ["astana", "almaty"],
     h1: (c) => `Услуги самосвала ${c.inCity}`,
     title: (c) => `Самосвал ${c.inCity} — заказать за минуту | KerekTap`,
     description: (c) =>
@@ -81,6 +97,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "avtokran",
     categorySlug: "crane",
+    cities: ["astana"],
     h1: (c) => `Аренда автокрана ${c.inCity}`,
     title: (c) => `Автокран ${c.inCity} — аренда с оператором | KerekTap`,
     description: (c) =>
@@ -97,6 +114,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "manipulyator",
     categorySlug: "crane-truck",
+    cities: ["astana", "almaty"],
     h1: (c) => `Услуги манипулятора ${c.inCity}`,
     title: (c) => `Манипулятор ${c.inCity} — заказать кран-борт | KerekTap`,
     description: (c) =>
@@ -113,6 +131,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "gazel-gruzchiki",
     categorySlug: "gazelle",
+    cities: ["astana", "almaty"],
     h1: (c) => `Газель с грузчиками ${c.inCity}`,
     title: (c) => `Газель с грузчиками ${c.inCity} — грузоперевозки | KerekTap`,
     description: (c) =>
@@ -129,6 +148,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "gruzchiki",
     categorySlug: "loaders",
+    cities: ["astana", "almaty"],
     h1: (c) => `Услуги грузчиков ${c.inCity}`,
     title: (c) => `Грузчики ${c.inCity} — заказать на час | KerekTap`,
     description: (c) => `Нужны грузчики ${c.inCity}? Опишите задачу — исполнители позвонят и назовут цену.`,
@@ -147,6 +167,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "avtovyshka",
     categorySlug: "aerial-platform",
+    cities: ["astana"],
     h1: (c) => `Аренда автовышки ${c.inCity}`,
     title: (c) => `Автовышка ${c.inCity} — заказать с оператором | KerekTap`,
     description: (c) =>
@@ -163,6 +184,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "pogruzchik",
     categorySlug: "front-loader",
+    cities: ["astana"],
     h1: (c) => `Аренда фронтального погрузчика ${c.inCity}`,
     title: (c) => `Фронтальный погрузчик ${c.inCity} — уборка снега, погрузка | KerekTap`,
     description: (c) =>
@@ -179,6 +201,7 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   {
     slug: "dezinfekciya",
     categorySlug: "disinfection",
+    cities: ["astana"],
     h1: (c) => `Дезинфекция помещений ${c.inCity}`,
     title: (c) => `Дезинфекция ${c.inCity} — обработка от тараканов и клопов | KerekTap`,
     description: (c) =>
@@ -194,8 +217,27 @@ export const LANDING_CATEGORIES: LandingCategory[] = [
   },
 ];
 
+/**
+ * Все существующие страницы «услуга + город» — один источник и для сборки
+ * (generateStaticParams), и для карты сайта. Раньше обе стороны перемножали
+ * категории на города сами, и расхождение между ними означало бы страницу,
+ * которой нет в карте, или ссылку в карте на 404.
+ */
+export function landingPairs(): { category: LandingCategory; city: LandingCity }[] {
+  return LANDING_CATEGORIES.flatMap((category) =>
+    category.cities.flatMap((slug) => {
+      const city = LANDING_CITIES.find((c) => c.slug === slug);
+      return city ? [{ category, city }] : [];
+    }),
+  );
+}
+
 export function findLanding(categorySlug: string, citySlug: string) {
   const category = LANDING_CATEGORIES.find((c) => c.slug === categorySlug);
   const city = LANDING_CITIES.find((c) => c.slug === citySlug);
-  return category && city ? { category, city } : null;
+  // Город должен быть открыт именно для этой услуги: пара «автокран + Алматы»
+  // складывается из существующей категории и существующего города, но такой
+  // страницы у нас нет.
+  if (!category || !city || !category.cities.includes(city.slug)) return null;
+  return { category, city };
 }

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { LANDING_CATEGORIES, LANDING_CITIES, findLanding } from "@/lib/landing-pages";
+import { findLanding, landingPairs } from "@/lib/landing-pages";
 import { BOT_PHONE_PRETTY } from "@/lib/site";
 import { WhatsAppButton } from "./whatsapp-button";
 import { LandingOrderForm } from "./order-form";
@@ -20,9 +20,7 @@ import { LandingOrderForm } from "./order-form";
 export const dynamicParams = false;
 
 export function generateStaticParams() {
-  return LANDING_CATEGORIES.flatMap((category) =>
-    LANDING_CITIES.map((city) => ({ category: category.slug, city: city.slug })),
-  );
+  return landingPairs().map(({ category, city }) => ({ category: category.slug, city: city.slug }));
 }
 
 export async function generateMetadata({
@@ -97,13 +95,19 @@ export default async function LandingCityPage({
       <nav className="mt-10 border-t border-slate-200 pt-6 text-sm">
         <h2 className="mb-2 font-medium text-slate-900">Другие услуги {city.inCity}</h2>
         <ul className="flex flex-wrap gap-x-4 gap-y-2">
-          {LANDING_CATEGORIES.filter((c) => c.slug !== category.slug).map((c) => (
-            <li key={c.slug}>
-              <a className="text-brand-600 underline" href={`/u/${c.slug}/${city.slug}`}>
-                {c.h1(city)}
-              </a>
-            </li>
-          ))}
+          {/* Только услуги, открытые в этом городе. Полный список категорий
+              здесь давал бы ссылки на страницы, которых нет: в Алматы открыты
+              пять услуг из девяти, а страницы собираются статически
+              (dynamicParams = false), так что остальное — честный 404. */}
+          {landingPairs()
+            .filter((p) => p.city.slug === city.slug && p.category.slug !== category.slug)
+            .map(({ category: c }) => (
+              <li key={c.slug}>
+                <a className="text-brand-600 underline" href={`/u/${c.slug}/${city.slug}`}>
+                  {c.h1(city)}
+                </a>
+              </li>
+            ))}
         </ul>
       </nav>
     </main>

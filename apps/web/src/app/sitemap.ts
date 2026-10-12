@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { LANDING_CATEGORIES, LANDING_CITIES } from "@/lib/landing-pages";
+import { landingPairs } from "@/lib/landing-pages";
 import { SITE_URL } from "@/lib/site";
 
 /**
@@ -10,14 +10,12 @@ import { SITE_URL } from "@/lib/site";
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
 
-  const landings = LANDING_CATEGORIES.flatMap((category) =>
-    LANDING_CITIES.map((city) => ({
-      url: `${SITE_URL}/u/${category.slug}/${city.slug}`,
-      lastModified: now,
-      changeFrequency: "weekly" as const,
-      priority: 0.8,
-    })),
-  );
+  const landings = landingPairs().map(({ category, city }) => ({
+    url: `${SITE_URL}/u/${category.slug}/${city.slug}`,
+    lastModified: now,
+    changeFrequency: "weekly" as const,
+    priority: 0.8,
+  }));
 
   return [
     { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
