@@ -136,9 +136,26 @@ export function missingRequiredFields(
 }
 
 /**
+ * Город и дата спрашиваются одним вопросом.
+ *
+ * Обязательных полей у всех категорий ровно два — город и дата, — но до сих
+ * пор они шли по одному, и путь от «нужен вывоз мусора» до карточки занимал
+ * три хода: город, дата, подтверждение. За два месяца на этом отвалились 53
+ * заявки с причиной «данные не уточнены больше 24 ч» — больше, чем по всем
+ * остальным причинам вместе.
+ *
+ * Пара зашита в коде, а не в combineGroup категорий, намеренно: поля лежат в
+ * базе (сиды применяются только к пустой), и ради одной связки пришлось бы
+ * мигрировать тринадцать категорий на проде и помнить про это в каждой
+ * новой. Правило же одно и то же для всех: спрашиваем, где и когда.
+ */
+const ASK_TOGETHER = ["city", "date"];
+
+/**
  * Picks what to ask next: at most 2 fields, and only bundles them together
- * when they share a combineGroup (e.g. loading + unloading address) — see
- * ТЗ п.4.2 "не более двух вопросов... допускается объединение связанных".
+ * when they share a combineGroup (e.g. loading + unloading address) or form
+ * the city+date pair — см. ТЗ п.4.2 "не более двух вопросов... допускается
+ * объединение связанных".
  */
 export function nextQuestionFields(
   fields: CategoryField[],
@@ -147,9 +164,16 @@ export function nextQuestionFields(
   const missing = missingRequiredFields(fields, knownFields);
   if (missing.length === 0) return [];
   const first = missing[0];
-  if (!first.combineGroup) return [first];
-  const grouped = missing.filter((f) => f.combineGroup === first.combineGroup).slice(0, 2);
-  return grouped;
+  if (first.combineGroup) {
+    return missing.filter((f) => f.combineGroup === first.combineGroup).slice(0, 2);
+  }
+  if (ASK_TOGETHER.includes(first.key)) {
+    const pair = missing.filter((f) => ASK_TOGETHER.includes(f.key)).slice(0, 2);
+    // Один из пары уже заполнен — спрашиваем оставшийся обычным вопросом с
+    // кнопками: объединённый текстовый шаблон на одно поле только мешает.
+    if (pair.length === 2) return pair;
+  }
+  return [first];
 }
 
 export function calculateProgressPercent(
